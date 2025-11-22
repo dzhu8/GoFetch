@@ -1,6 +1,76 @@
 import { ChatOllama, OllamaEmbeddings } from "@langchain/ollama";
-import { Model } from "@/lib/models/types";
+import { ConfigModelProvider, Model } from "@/lib/models/types";
 import { BaseModelProvider, ProviderModelMetadata } from "./BaseModelProvider";
+import { listOllamaModels, OllamaTag } from "../ollamaClient";
+
+//#region Get all Ollama Models
+export type ModelFamily = "Llama" | "Qwen" | "Gemma" | "Mistral" | "Phi" | "Granite" | "Other";
+
+interface OllamaProviderMetadata extends ProviderModelMetadata {
+     family: ModelFamily;
+}
+
+function bytesToGB(bytes: number | undefined): number | undefined {
+     if (bytes == null) return undefined;
+     return bytes / 1024 ** 3; // GiB
+}
+
+function inferFamilyFromName(name: string): ModelFamily {
+     const lower = name.toLowerCase();
+     if (lower.includes("llama")) return "Llama";
+     if (lower.includes("qwen")) return "Qwen";
+     if (lower.includes("gemma")) return "Gemma";
+     if (lower.includes("mistral")) return "Mistral";
+     if (lower.includes("phi")) return "Phi";
+     if (lower.includes("granite")) return "Granite";
+     return "Other";
+}
+
+function inferFamily(tag: OllamaTag): ModelFamily {
+     const d = tag.details;
+     // if Ollama already tells us the family, use it
+     if (d?.family) {
+          return inferFamilyFromName(d.family);
+     }
+     if (d?.families && d.families.length > 0) {
+          return inferFamilyFromName(d.families[0]);
+     }
+     // fallback to model name
+     return inferFamilyFromName(tag.name);
+}
+
+/**
+ * Build a metadata map for all local Ollama models.
+ * Static metadata values override the auto-generated ones.
+ */
+export async function buildProviderMetadata(): Promise<Record<string, OllamaProviderMetadata>> {
+     const tags = await listOllamaModels();
+
+     const result: Record<string, OllamaProviderMetadata> = {};
+
+     for (const tag of tags) {
+          const key = tag.name;
+
+          const auto: OllamaProviderMetadata = {
+               key,
+               displayName: key, // can be refined later
+               sizeGB: bytesToGB(tag.size),
+               description: "", // optional, we’ll override with hand-written text
+               family: inferFamily(tag),
+          };
+
+          result[key] = {
+               ...auto,
+               // ensure required fields exist even if override omits them
+               key,
+               displayName: auto.displayName,
+               family: auto.family,
+          };
+     }
+
+     return result;
+}
+//#endregion
 
 type OllamaConfig = {
      baseUrl?: string;
@@ -10,35 +80,31 @@ type OllamaConfig = {
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 
 export class OllamaProvider extends BaseModelProvider<ChatOllama, OllamaEmbeddings> {
-     private readonly metadata: Record<string, ProviderModelMetadata> = {
-          "llama3.2": {
-               key: "llama3.2",
-               displayName: "Llama 3.2 3B",
-               parameters: 3000000000,
-               sizeGB: 2.1,
-               description: "Fast local chat model shipping with Ollama.",
-          },
-          "llama3.1": {
-               key: "llama3.1",
-               displayName: "Llama 3.1 8B",
-               parameters: 8000000000,
-               sizeGB: 4.8,
-               description: "Balanced Meta model optimised for on-device inference.",
-          },
-          mistral: {
-               key: "mistral",
-               displayName: "Mistral 7B",
-               parameters: 7000000000,
-               sizeGB: 4.1,
-               description: "General-purpose local model from Mistral AI.",
-          },
-          "nomic-embed-text": {
-               key: "nomic-embed-text",
-               displayName: "Nomic Embed Text",
-               sizeGB: 1.8,
-               description: "High-quality general text embedding model.",
-          },
-     };
+     private metadata: Record<string, ProviderModelMetadata> = {};
+     private metadataReady: Promise<void>;
+
+     constructor(definition: ConfigModelProvider) {
+          super(definition);
+          this.metadataReady = this.populateMetadata();
+     }
+
+     private async populateMetadata() {
+          try {
+               this.metadata = await buildProviderMetadata();
+          } catch (err) {
+               console.error(`Ollama metadata build failed for ${this.id}`, err);
+               this.metadata = {};
+          }
+     }
+
+     private async ensureMetadata() {
+          await this.metadataReady;
+     }
+
+     async getModelMetadataAsync(modelKey: string) {
+          await this.ensureMetadata();
+          return this.metadata[modelKey];
+     }
 
      getAvailableChatModels(): Model[] {
           return this.definition.chatModels ?? [];

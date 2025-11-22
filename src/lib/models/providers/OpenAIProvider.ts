@@ -1,5 +1,5 @@
 import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
-import { Model } from "@/lib/models/types";
+import { ConfigModelProvider, Model } from "@/lib/models/types";
 import { BaseModelProvider, ProviderModelMetadata } from "./BaseModelProvider";
 
 type OpenAIConfig = {
@@ -7,35 +7,93 @@ type OpenAIConfig = {
      baseUrl?: string;
      temperature?: number;
      maxTokens?: number;
+     apiVersion?: string;
 };
 
+type OpenAIModelListResponse = {
+     data?: Array<{
+          id: string;
+          display_name?: string;
+          context_window?: number;
+          context_length?: number;
+     }>;
+};
+
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+
+function formatModelDisplayName(modelId: string): string {
+     return modelId
+          .split(/[-_]/)
+          .filter(Boolean)
+          .map((segment) => {
+               if (segment.length <= 3) {
+                    return segment.toUpperCase();
+               }
+               return segment.charAt(0).toUpperCase() + segment.slice(1);
+          })
+          .join(" ");
+}
+
+async function buildOpenAIProviderMetadata(config?: OpenAIConfig): Promise<Record<string, ProviderModelMetadata>> {
+     if (!config?.apiKey) {
+          return {};
+     }
+
+     const baseUrl = (config.baseUrl ?? DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "");
+     const query = config.apiVersion ? `?api-version=${config.apiVersion}` : "";
+     const endpoint = `${baseUrl}/models${query}`;
+     const metadata: Record<string, ProviderModelMetadata> = {};
+
+     const res = await fetch(endpoint, {
+          headers: {
+               Authorization: `Bearer ${config.apiKey}`,
+               "Content-Type": "application/json",
+          },
+     });
+
+     if (!res.ok) {
+          throw new Error(`Failed to list OpenAI models: ${res.status} ${res.statusText}`);
+     }
+
+     const payload = (await res.json()) as OpenAIModelListResponse;
+     for (const model of payload.data ?? []) {
+          const contextWindow = model.context_window ?? model.context_length;
+          metadata[model.id] = {
+               key: model.id,
+               displayName: model.display_name ?? formatModelDisplayName(model.id),
+               contextWindow: typeof contextWindow === "number" ? contextWindow : undefined,
+          };
+     }
+
+     return metadata;
+}
+
 export class OpenAIProvider extends BaseModelProvider<ChatOpenAI, OpenAIEmbeddings> {
-     private readonly metadata: Record<string, ProviderModelMetadata> = {
-          "gpt-4o-mini": {
-               key: "gpt-4o-mini",
-               displayName: "GPT-4o Mini",
-               contextWindow: 128000,
-               description: "Cost-effective GPT-4o variant for fast general chat.",
-          },
-          "gpt-4.1": {
-               key: "gpt-4.1",
-               displayName: "GPT-4.1",
-               contextWindow: 200000,
-               description: "Latest flagship OpenAI reasoning model.",
-          },
-          "text-embedding-3-small": {
-               key: "text-embedding-3-small",
-               displayName: "Text Embedding 3 Small",
-               sizeGB: 1.5,
-               description: "Lightweight embedding model optimised for search.",
-          },
-          "text-embedding-3-large": {
-               key: "text-embedding-3-large",
-               displayName: "Text Embedding 3 Large",
-               sizeGB: 3.8,
-               description: "Highest quality OpenAI embedding model.",
-          },
-     };
+     private metadata: Record<string, ProviderModelMetadata> = {};
+     private metadataReady: Promise<void>;
+
+     constructor(definition: ConfigModelProvider) {
+          super(definition);
+          this.metadataReady = this.populateMetadata();
+     }
+
+     private async populateMetadata() {
+          try {
+               this.metadata = await buildOpenAIProviderMetadata((this.config ?? {}) as OpenAIConfig);
+          } catch (err) {
+               console.error(`OpenAI metadata build failed for ${this.id}`, err);
+               this.metadata = {};
+          }
+     }
+
+     private async ensureMetadata() {
+          await this.metadataReady;
+     }
+
+     async getModelMetadataAsync(modelKey: string) {
+          await this.ensureMetadata();
+          return this.metadata[modelKey];
+     }
 
      getAvailableChatModels(): Model[] {
           return this.definition.chatModels ?? [];
