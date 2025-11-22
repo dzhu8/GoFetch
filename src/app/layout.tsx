@@ -36,7 +36,7 @@ export default async function RootLayout({
                <body className={cn("h-full", montserrat.className)}>
                     <ThemeProvider>
                          {setupComplete ? (
-                              <ChatProvider>
+                              <FoldersViewProvider>
                                    <Sidebar>{children}</Sidebar>
                                    <Toaster
                                         toastOptions={{
@@ -46,7 +46,7 @@ export default async function RootLayout({
                                              },
                                         }}
                                    />
-                              </ChatProvider>
+                              </FoldersViewProvider>
                          ) : (
                               <SetupWizard configSections={configSections} />
                          )}

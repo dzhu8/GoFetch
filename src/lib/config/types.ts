@@ -1,3 +1,4 @@
+import { Switch } from "@headlessui/react";
 import { ConfigModelProvider } from "../models/types";
 
 // Appearance of various UI config fields- can have input box that accepts string, a selection menu,
@@ -6,7 +7,8 @@ import { ConfigModelProvider } from "../models/types";
 export type UIConfigField =
      | StringUIConfigField
      | SelectUIConfigField
-     | TextareaUIConfigField;
+     | TextareaUIConfigField
+     | SwitchUIConfigField;
 
 type BaseUIConfigField = {
      name: string;
@@ -40,6 +42,10 @@ export type TextareaUIConfigField = BaseUIConfigField & {
      default?: string;
 };
 
+export type SwitchUIConfigField = BaseUIConfigField & {
+     type: "switch";
+     default?: boolean;
+};
 
 export type ModelProviderUISection = {
      name: string;
