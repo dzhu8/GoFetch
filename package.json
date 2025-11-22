@@ -1,0 +1,46 @@
+{
+     "name": "GoFetch",
+     "version": "0.1.0",
+     "license": "MIT",
+     "author": "Daniel Zhu",
+     "description": "Live index of your codebase to identify the correct files to pass as context to local AI models.",
+     "scripts": {
+          "dev": "next dev",
+          "format:write": "prettier . --write"
+     },
+     "dependencies": {
+          "@headlessui/react": "^2.2.9",
+          "@headlessui/tailwindcss": "^0.2.2",
+          "@langchain/core": "^1.0.1",
+          "@langchain/ollama": "^1.0.0",
+          "@langchain/openai": "^1.0.0",
+          "@tailwindcss/typography": "^0.5.12",
+          "axios": "^1.13.1",
+          "better-sqlite3": "^12.4.1",
+          "clsx": "^2.1.1",
+          "drizzle-orm": "^0.44.7",
+          "framer-motion": "^12.23.24",
+          "lucide-react": "^0.552.0",
+          "markdown-to-jsx": "^8.0.0",
+          "next": "^16.0.1",
+          "next-themes": "^0.4.6",
+          "react": "^19.2.0",
+          "react-dom": "^19.2.0",
+          "react-textarea-autosize": "^8.5.9",
+          "sonner": "2.0.7",
+          "tailwind-merge": "^2.2.2",
+          "zod": "^4.1.12"
+     },
+     "devDependencies": {
+          "@types/better-sqlite3": "^7.6.13",
+          "@types/node": "^20.4.2",
+          "@types/react": "^19.2.2",
+          "@types/react-dom": "^19.2.2",
+          "autoprefixer": "^10.0.1",
+          "prettier": "^3.2.5",
+          "prettier-plugin-jsdoc": "^1.5.0",
+          "prettier-plugin-organize-imports": "^4.3.0",
+          "tailwindcss": "^3.3.0",
+          "typescript": "5.9.3"
+     }
+}
