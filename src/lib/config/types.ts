@@ -4,11 +4,7 @@ import { ConfigModelProvider } from "../models/types";
 // Appearance of various UI config fields- can have input box that accepts string, a selection menu,
 // box w/ special properties for passwords, switch, text area fields that are equivalent to string config
 // fields, but for long-form entry
-export type UIConfigField =
-     | StringUIConfigField
-     | SelectUIConfigField
-     | TextareaUIConfigField
-     | SwitchUIConfigField;
+export type UIConfigField = StringUIConfigField | SelectUIConfigField | TextareaUIConfigField | SwitchUIConfigField;
 
 type BaseUIConfigField = {
      name: string;

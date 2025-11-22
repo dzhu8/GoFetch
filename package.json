@@ -12,6 +12,7 @@
           "@headlessui/react": "^2.2.9",
           "@headlessui/tailwindcss": "^0.2.2",
           "@langchain/core": "^1.0.1",
+          "@langchain/anthropic": "^1.0.0",
           "@langchain/ollama": "^1.0.0",
           "@langchain/openai": "^1.0.0",
           "@tailwindcss/typography": "^0.5.12",

@@ -5,6 +5,7 @@
 import path from "node:path";
 import fs from "fs";
 import { UIConfigField, UIConfigSections } from "@/lib/config/types";
+import { ConfigModelProvider } from "@/lib/models/types";
 
 // config file is initially nonexistent, and is created and populated at start up at run time
 class ConfigManager {
@@ -15,6 +16,7 @@ class ConfigManager {
           setupComplete: false,
           preferences: {},
           personalization: {},
+          modelProviders: [],
           ollama: {
                baseURL: "http://localhost:11434",
           },
@@ -117,6 +119,9 @@ class ConfigManager {
           } else {
                try {
                     this.currentConfig = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
+                    if (!Array.isArray(this.currentConfig.modelProviders)) {
+                         this.currentConfig.modelProviders = [];
+                    }
                } catch (err) {
                     if (err instanceof SyntaxError) {
                          console.error(`Error parsing config file at ${this.configPath}:`, err);
@@ -127,6 +132,12 @@ class ConfigManager {
                          console.log("Unknown error reading config file:", err);
                     }
                }
+          }
+     }
+
+     private ensureModelProvidersArray() {
+          if (!Array.isArray(this.currentConfig.modelProviders)) {
+               this.currentConfig.modelProviders = [];
           }
      }
 
@@ -190,6 +201,16 @@ class ConfigManager {
      public setOllamaURL(baseURL: string) {
           if (!this.currentConfig.ollama) this.currentConfig.ollama = {};
           this.currentConfig.ollama.baseURL = baseURL;
+          this.saveConfig();
+     }
+
+     public getModelProviders(): ConfigModelProvider[] {
+          this.ensureModelProvidersArray();
+          return this.currentConfig.modelProviders;
+     }
+
+     public setModelProviders(providers: ConfigModelProvider[]): void {
+          this.currentConfig.modelProviders = providers;
           this.saveConfig();
      }
 }
