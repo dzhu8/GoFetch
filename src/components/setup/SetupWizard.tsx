@@ -42,7 +42,7 @@ const SetupWizard = ({ configSections }: { configSections: UIConfigSections }) =
                                         className="text-4xl md:text-6xl xl:text-8xl font-normal font-['Instrument_Serif'] tracking-tight"
                                    >
                                         Welcome to{" "}
-                                        <span className="text-[#00FFB2] italic font-['PP_Editorial']">GoFetch</span>
+                                        <span className="text-[#00FFB2] font-['Big Softie']">GoFetch</span>
                                    </motion.h2>
                                    <motion.p
                                         transition={{ delay: 0.8, duration: 0.7 }}
@@ -83,7 +83,9 @@ const SetupWizard = ({ configSections }: { configSections: UIConfigSections }) =
                                              className="text-2xl md:text-4xl xl:text-6xl font-normal font-['Instrument_Serif'] tracking-tight"
                                         >
                                              Let's set{" "}
-                                             <span className="text-[#00FFB2] italic font-['PP_Editorial']">GoFetch</span>{" "}
+                                             <span className="text-[#00FFB2] italic font-['PP_Editorial']">
+                                                  GoFetch
+                                             </span>{" "}
                                              up by connecting to an embedding model!
                                         </motion.p>
                                    )}

@@ -97,3 +97,11 @@
           font-size: 16px !important;
      }
 }
+
+@font-face {
+     font-family: "Big Softie";
+     src: url("/assets/fonts/BigSoftie-Fat.otf") format("opentype");
+     font-weight: 700;
+     font-style: normal;
+     font-display: swap;
+}

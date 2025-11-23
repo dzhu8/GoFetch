@@ -115,7 +115,7 @@ class ConfigManager {
      private initializeConfig() {
           const exists = fs.existsSync(this.configPath);
           if (!exists) {
-               fs.writeFileSync(this.configPath, JSON.stringify(this.currentConfig, null, 2));
+               this.saveConfig();
           } else {
                try {
                     this.currentConfig = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
@@ -126,7 +126,7 @@ class ConfigManager {
                     if (err instanceof SyntaxError) {
                          console.error(`Error parsing config file at ${this.configPath}:`, err);
                          console.log("Loading default config and overwriting the existing file.");
-                         fs.writeFileSync(this.configPath, JSON.stringify(this.currentConfig, null, 2));
+                         this.saveConfig();
                          return;
                     } else {
                          console.log("Unknown error reading config file:", err);

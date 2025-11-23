@@ -32,8 +32,8 @@ export default async function RootLayout({
      const configSections = configManager.getUIConfigSections();
 
      return (
-          <html className="h-full" lang="en" suppressHydrationWarning>
-               <body className={cn("h-full", montserrat.className)}>
+          <html className={cn("h-full", montserrat.className)} lang="en" suppressHydrationWarning>
+               <body className="h-full">
                     <ThemeProvider>
                          {setupComplete ? (
                               <ChatProvider>

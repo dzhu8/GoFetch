@@ -1,4 +1,6 @@
 **/test/*
 node_modules/
+next-env.d.ts
 .prettierrc
+.next/
 .vscode/

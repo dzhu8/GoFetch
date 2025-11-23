@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "setupComplete": false,
+  "preferences": {},
+  "personalization": {},
+  "modelProviders": [],
+  "ollama": {
+    "baseURL": "http://localhost:11434"
+  },
+  "folder": {
+    "path": ""
+  }
+}
