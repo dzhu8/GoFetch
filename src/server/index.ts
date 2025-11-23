@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 import path from "node:path";
 import fs from "fs";
-import { UIConfigField, UIConfigSections } from "@/lib/config/types";
+import { UIConfigSections } from "@/lib/config/types";
 import { ConfigModelProvider } from "@/lib/models/types";
 
 // config file is initially nonexistent, and is created and populated at start up at run time
@@ -180,6 +180,27 @@ class ConfigManager {
           }
 
           return obj === undefined ? defaultValue : obj;
+     }
+
+     public updateConfig(key: string, value: any): void {
+          const nested = key.split(".");
+          let obj: any = this.currentConfig;
+
+          // Traverse to the parent of the target key
+          for (let i = 0; i < nested.length - 1; i++) {
+               const part = nested[i];
+               if (obj[part] == null || typeof obj[part] !== "object") {
+                    obj[part] = {};  // Ensure intermediate objects exist
+               }
+               obj = obj[part];
+          }
+
+          // Set the value on the final key
+          const finalKey = nested[nested.length - 1];
+          obj[finalKey] = value;
+
+          // Persist the changes
+          this.saveConfig();
      }
 
      public isSetupComplete() {

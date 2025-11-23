@@ -8,6 +8,7 @@ export type ModelFamily = "Llama" | "Qwen" | "Gemma" | "Mistral" | "Phi" | "Gran
 
 interface OllamaProviderMetadata extends ProviderModelMetadata {
      family: ModelFamily;
+     recommended?: boolean;
 }
 
 function bytesToGB(bytes: number | undefined): number | undefined {
@@ -15,7 +16,7 @@ function bytesToGB(bytes: number | undefined): number | undefined {
      return bytes / 1024 ** 3; // GiB
 }
 
-function inferFamilyFromName(name: string): ModelFamily {
+export function inferOllamaFamilyFromName(name: string): ModelFamily {
      const lower = name.toLowerCase();
      if (lower.includes("llama")) return "Llama";
      if (lower.includes("qwen")) return "Qwen";
@@ -30,13 +31,20 @@ function inferFamily(tag: OllamaTag): ModelFamily {
      const d = tag.details;
      // if Ollama already tells us the family, use it
      if (d?.family) {
-          return inferFamilyFromName(d.family);
+          return inferOllamaFamilyFromName(d.family);
      }
      if (d?.families && d.families.length > 0) {
-          return inferFamilyFromName(d.families[0]);
+          return inferOllamaFamilyFromName(d.families[0]);
      }
      // fallback to model name
-     return inferFamilyFromName(tag.name);
+     return inferOllamaFamilyFromName(tag.name);
+}
+
+const RECOMMENDED_KEYWORDS = ["qwen3-embedding:8b", "gpt-oss:20b", "gemma3:27b"];
+
+export function isRecommendedOllamaModel(name: string): boolean {
+     const lower = name.toLowerCase();
+     return RECOMMENDED_KEYWORDS.some((keyword) => lower.includes(keyword));
 }
 
 /**
@@ -57,6 +65,7 @@ export async function buildProviderMetadata(): Promise<Record<string, OllamaProv
                sizeGB: bytesToGB(tag.size),
                description: "", // optional, we’ll override with hand-written text
                family: inferFamily(tag),
+               recommended: isRecommendedOllamaModel(tag.name),
           };
 
           result[key] = {
@@ -65,6 +74,7 @@ export async function buildProviderMetadata(): Promise<Record<string, OllamaProv
                key,
                displayName: auto.displayName,
                family: auto.family,
+               recommended: auto.recommended,
           };
      }
 
