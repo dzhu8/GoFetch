@@ -1,6 +1,9 @@
 **/test/*
+data/*
 node_modules/
 next-env.d.ts
 .prettierrc
+yarn.lock
+
 .next/
 .vscode/

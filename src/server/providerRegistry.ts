@@ -80,6 +80,7 @@ export class ModelRegistry {
                     providers.push({
                          id: registered.id,
                          name: registered.name,
+                         type: registered.type,
                          chatModels: modelList.chat,
                          embeddingModels: modelList.embedding,
                     });

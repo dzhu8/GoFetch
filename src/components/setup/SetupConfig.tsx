@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, Loader2, PlugZap, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, PlugZap, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfigModelProvider } from "@/lib/models/types";
 import { UIConfigSections } from "@/lib/config/types";
 import OllamaModels from "./modelsView/OllamaModels";
+import ModelSelect from "./modelsView/ModelSelect";
 import AddProvider from "../models/AddProvider";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -84,15 +85,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
 
      const providerTypeNames = (configSections.modelProviders ?? []).map((section) => section.name);
 
-     const getProviderByType = useCallback(
-          (type: string) => visibleProviders.find((provider) => (provider.type ?? "").toLowerCase() === type),
-          [visibleProviders]
-     );
-
-     const ollamaProvider = getProviderByType("ollama");
-     const openAIProvider = getProviderByType("openai");
-     const anthropicProvider = getProviderByType("anthropic");
-
      const resolveEndpoint = (provider?: ConfigModelProvider): string | undefined => {
           if (!provider) return undefined;
           const candidate =
@@ -105,48 +97,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                provider.config?.endpoint;
           return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : undefined;
      };
-
-     const activationPanels = [
-          {
-               key: "ollama",
-               title: "Ollama",
-               description: "Download and activate local Ollama models for offline use.",
-               provider: ollamaProvider,
-               content: <OllamaModels ollamaBaseUrl={resolveEndpoint(ollamaProvider)} />,
-               statusWhenMissing: "Not Connected",
-               statusWhenReady: "Connected",
-          },
-          {
-               key: "openai",
-               title: "OpenAI",
-               description: "Connect to hosted GPT models using your OpenAI credentials.",
-               provider: openAIProvider,
-               content: (
-                    <PlaceholderBlock
-                         providerName="OpenAI"
-                         provider={openAIProvider}
-                         message="Model activation UI coming soon."
-                    />
-               ),
-               statusWhenMissing: "Not Connected",
-               statusWhenReady: "Connected",
-          },
-          {
-               key: "anthropic",
-               title: "Anthropic",
-               description: "Enable Claude models to augment your workflows.",
-               provider: anthropicProvider,
-               content: (
-                    <PlaceholderBlock
-                         providerName="Anthropic"
-                         provider={anthropicProvider}
-                         message="Model activation UI coming soon."
-                    />
-               ),
-               statusWhenMissing: "Not Connected",
-               statusWhenReady: "Connected",
-          },
-     ];
 
      return (
           <div className="w-[95vw] md:w-[80vw] lg:w-[65vw] mx-auto px-2 sm:px-4 md:px-6 flex flex-col space-y-6">
@@ -225,10 +175,10 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               <div className="flex flex-row justify-between items-center mb-4 md:mb-6 pb-3 md:pb-4 border-b border-light-200 dark:border-dark-200">
                                    <div>
                                         <p className="text-xs sm:text-sm font-medium text-black dark:text-white">
-                                             Activate Models
+                                             Select Models
                                         </p>
                                         <p className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 mt-0.5">
-                                             Download or enable the models you plan to use.
+                                             Select models which you wish to use.
                                         </p>
                                    </div>
                               </div>
@@ -237,42 +187,23 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                    <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
                                         <Loader2 className="w-5 h-5 animate-spin text-black/60 dark:text-white/60" />
                                         <p className="text-xs sm:text-sm text-black/60 dark:text-white/60">
-                                             Checking providers...
+                                             Loading models...
+                                        </p>
+                                   </div>
+                              ) : visibleProviders.length === 0 || !hasConfiguredProviders ? (
+                                   <div className="flex flex-col items-center justify-center py-8 text-center space-y-3 border border-dashed border-light-200 dark:border-dark-200 rounded-xl">
+                                        <PlugZap className="w-8 h-8 text-black/50 dark:text-white/50" />
+                                        <p className="text-sm font-medium text-black dark:text-white">
+                                             No models configured yet
+                                        </p>
+                                        <p className="text-[11px] text-black/60 dark:text-white/60">
+                                             Use the Back button to configure and register models on the previous page.
                                         </p>
                                    </div>
                               ) : (
-                                   <div className="space-y-4 md:space-y-5">
-                                        {activeProviders.length === 0 && (
-                                             <div className="flex flex-col items-center justify-center py-8 text-center space-y-3 border border-dashed border-light-200 dark:border-dark-200 rounded-xl">
-                                                  <PlugZap className="w-8 h-8 text-black/50 dark:text-white/50" />
-                                                  <p className="text-sm font-medium text-black dark:text-white">
-                                                       No active providers yet
-                                                  </p>
-                                                  <p className="text-[11px] text-black/60 dark:text-white/60">
-                                                       Use the Back button to configure providers on the previous page.
-                                                  </p>
-                                             </div>
-                                        )}
-                                        {activationPanels.map((panel) => (
-                                             <ProviderActivationPanel
-                                                  key={panel.key}
-                                                  title={panel.title}
-                                                  description={panel.description}
-                                                  status={
-                                                       panel.provider ? panel.statusWhenReady : panel.statusWhenMissing
-                                                  }
-                                             >
-                                                  {panel.provider ? (
-                                                       panel.content
-                                                  ) : (
-                                                       <PlaceholderBlock
-                                                            providerName={panel.title}
-                                                            provider={panel.provider}
-                                                            message="Connect this provider on the previous step to activate its models."
-                                                       />
-                                                  )}
-                                             </ProviderActivationPanel>
-                                        ))}
+                                   <div className="space-y-3 md:space-y-4">
+                                        <ModelSelect providers={visibleProviders} type="chat" />
+                                        <ModelSelect providers={visibleProviders} type="embedding" />
                                    </div>
                               )}
                          </div>
@@ -349,9 +280,33 @@ const ProviderCard = ({
      endpoint?: string;
      onDelete: () => void;
 }) => {
-     const chatModelCount = provider.chatModels?.length ?? 0;
-     const embeddingModelCount = provider.embeddingModels?.length ?? 0;
+     const [localProvider, setLocalProvider] = useState(provider);
      const [isDeleting, setIsDeleting] = useState(false);
+     const [isModelsExpanded, setIsModelsExpanded] = useState(false);
+
+     // Update local provider when prop changes
+     useEffect(() => {
+          setLocalProvider(provider);
+     }, [provider]);
+
+     const chatModelCount = localProvider.chatModels?.length ?? 0;
+     const embeddingModelCount = localProvider.embeddingModels?.length ?? 0;
+
+     const handleModelUpdate = useCallback(async () => {
+          // Fetch just this provider's updated info without re-rendering parent
+          try {
+               const res = await fetch("/api/providers");
+               if (res.ok) {
+                    const { providers } = await res.json();
+                    const updated = providers.find((p: ConfigModelProvider) => p.id === provider.id);
+                    if (updated) {
+                         setLocalProvider(updated);
+                    }
+               }
+          } catch (error) {
+               console.error("Error refreshing provider:", error);
+          }
+     }, [provider.id]);
 
      const handleDelete = async () => {
           if (!confirm(`Are you sure you want to delete "${provider.name}"?`)) {
@@ -379,6 +334,21 @@ const ProviderCard = ({
           }
      };
 
+     const renderModelsInterface = () => {
+          const providerType = (provider.type || "").toLowerCase();
+          
+          if (providerType === "ollama") {
+               return <OllamaModels ollamaBaseUrl={endpoint} providerId={provider.id} onModelUpdate={handleModelUpdate} />;
+          }
+          
+          // Placeholder for other provider types
+          return (
+               <div className="bg-light-primary dark:bg-dark-primary border border-dashed border-light-200 dark:border-dark-200 rounded-lg p-4 text-xs text-black/70 dark:text-white/70">
+                    Model management UI for {provider.type} coming soon.
+               </div>
+          );
+     };
+
      return (
           <div className="bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-xl p-4 flex gap-3">
                <button
@@ -397,9 +367,9 @@ const ProviderCard = ({
                <div className="flex-1">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                          <div>
-                              <p className="text-sm font-medium text-black dark:text-white">{provider.name}</p>
+                              <p className="text-sm font-medium text-black dark:text-white">{localProvider.name}</p>
                               <p className="text-[11px] text-black/60 dark:text-white/60 uppercase tracking-wide">
-                                   {(provider.type || "Custom").toUpperCase()}
+                                   {(localProvider.type || "Custom").toUpperCase()}
                               </p>
                          </div>
                          <div className="text-[11px] text-black/60 dark:text-white/60 flex flex-col sm:items-end">
@@ -416,6 +386,40 @@ const ProviderCard = ({
                               Endpoint: {endpoint}
                          </p>
                     )}
+                    
+                    {/* Manage Models Button */}
+                    <button
+                         type="button"
+                         onClick={() => setIsModelsExpanded(!isModelsExpanded)}
+                         className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 text-xs font-medium"
+                    >
+                         {isModelsExpanded ? (
+                              <>
+                                   <ChevronUp className="w-3.5 h-3.5" />
+                                   Hide Models
+                              </>
+                         ) : (
+                              <>
+                                   <ChevronDown className="w-3.5 h-3.5" />
+                                   Manage Models
+                              </>
+                         )}
+                    </button>
+
+                    {/* Collapsible Models Section */}
+                    {isModelsExpanded && (
+                         <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.3 }}
+                              className="mt-3 overflow-hidden"
+                         >
+                              <div className="max-h-[400px] overflow-y-auto border border-light-200 dark:border-dark-200 rounded-lg p-3 bg-light-primary dark:bg-dark-primary">
+                                   {renderModelsInterface()}
+                              </div>
+                         </motion.div>
+                    )}
                </div>
           </div>
      );
@@ -427,55 +431,5 @@ const NeutralState = ({ message, detail }: { message: string; detail?: string })
           {detail && <p className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 mt-1">{detail}</p>}
      </div>
 );
-
-type ProviderActivationPanelProps = {
-     title: string;
-     description: string;
-     status: string;
-     children?: ReactNode;
-};
-
-const statusToneClasses: Record<string, string> = {
-     Connected: "bg-emerald-100 text-emerald-700",
-     "Not Connected": "bg-amber-100 text-amber-700",
-};
-
-const ProviderActivationPanel = ({ title, description, status, children }: ProviderActivationPanelProps) => {
-     return (
-          <div className="bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-xl p-4 md:p-5">
-               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div>
-                         <p className="text-sm font-medium text-black dark:text-white">{title}</p>
-                         <p className="text-xs text-black/60 dark:text-white/60">{description}</p>
-                    </div>
-                    <span
-                         className={`text-xs font-medium px-2.5 py-1 rounded-lg ${
-                              statusToneClasses[status] ||
-                              "bg-light-200 dark:bg-dark-200 text-black/60 dark:text-white/60"
-                         }`}
-                    >
-                         {status}
-                    </span>
-               </div>
-               {children && <div className="mt-4">{children}</div>}
-          </div>
-     );
-};
-
-const PlaceholderBlock = ({
-     providerName,
-     provider,
-     message,
-}: {
-     providerName: string;
-     provider?: ConfigModelProvider;
-     message: string;
-}) => {
-     return (
-          <div className="bg-light-primary dark:bg-dark-primary border border-dashed border-light-200 dark:border-dark-200 rounded-lg p-4 text-[11px] text-black/70 dark:text-white/70">
-               <p>{provider ? message : `${providerName} is not configured yet. ${message}`}</p>
-          </div>
-     );
-};
 
 export default SetupConfig;

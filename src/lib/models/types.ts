@@ -17,6 +17,7 @@ export type ConfigModelProvider = {
 export type MinimalProvider = {
      id: string;
      name: string;
+     type: string;
      chatModels: Model[];
      embeddingModels: Model[];
 };
