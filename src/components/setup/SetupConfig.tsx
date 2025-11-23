@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, Loader2, PlugZap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Loader2, PlugZap, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfigModelProvider } from "@/lib/models/types";
 import { UIConfigSections } from "@/lib/config/types";
 import OllamaModels from "./modelsView/OllamaModels";
+import AddProvider from "../models/AddProvider";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -20,6 +21,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [providers, setProviders] = useState<ConfigModelProvider[]>([]);
      const [isLoading, setIsLoading] = useState(true);
      const [isFinishing, setIsFinishing] = useState(false);
+     const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
 
      const fetchProviders = useCallback(async () => {
           try {
@@ -148,6 +150,13 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
 
      return (
           <div className="w-[95vw] md:w-[80vw] lg:w-[65vw] mx-auto px-2 sm:px-4 md:px-6 flex flex-col space-y-6">
+               <AddProvider
+                    isOpen={isAddProviderOpen}
+                    setIsOpen={setIsAddProviderOpen}
+                    providerSections={configSections.modelProviders ?? []}
+                    onProviderAdded={fetchProviders}
+               />
+
                {setupState === 2 && (
                     <motion.div
                          initial={{ opacity: 0, y: 20 }}
@@ -171,14 +180,9 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                    </div>
                                    <button
                                         type="button"
-                                        onClick={() =>
-                                             toast.info("Adding providers from the setup wizard is coming soon", {
-                                                  description:
-                                                       "You can configure providers directly in config.json for now.",
-                                             })
-                                        }
+                                        onClick={() => setIsAddProviderOpen(true)}
                                         disabled={isLoading}
-                                        className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 rounded-lg bg-[#00FFB2] text-white hover:bg-[#1e8fd1] active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                                        className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
                                    >
                                         Add Connection
                                    </button>
@@ -198,6 +202,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                                   key={`provider-${provider.id}`}
                                                   provider={provider}
                                                   endpoint={resolveEndpoint(provider)}
+                                                  onDelete={fetchProviders}
                                              />
                                         ))
                                    )}
@@ -284,9 +289,9 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                    transition: { duration: 0.5 },
                               }}
                               type="button"
-                              disabled={setupState === 1 || isFinishing}
+                              disabled={setupState <= 2 || isFinishing}
                               onClick={() => setSetupState(Math.max(1, setupState - 1))}
-                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg border border-light-200 dark:border-dark-200 text-black dark:text-white hover:bg-light-100 dark:hover:bg-dark-200/50 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium disabled:text-black/40 dark:disabled:text-white/40 disabled:border-light-200/50 dark:disabled:border-dark-200/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg border border-light-200 dark:border-dark-200 bg-[#F8B692] text-black active:scale-95 hover:bg-[#e6ad82] transition-all duration-200 text-xs sm:text-sm font-medium disabled:text-black/40 dark:disabled:text-white/40 disabled:border-light-200/50 dark:disabled:border-dark-200/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
                               <ArrowLeft className="w-4 h-4" />
                               Back
@@ -306,7 +311,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               type="button"
                               onClick={() => setSetupState(3)}
                               disabled={!hasConfiguredProviders || isLoading}
-                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#24A0ED] text-white hover:bg-[#1e8fd1] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
                               <span>Next</span>
                               <ArrowRight className="w-4 h-4 md:w-[18px] md:h-[18px]" />
@@ -324,7 +329,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               type="button"
                               onClick={handleFinish}
                               disabled={!hasConfiguredProviders || isLoading || isFinishing}
-                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#24A0ED] text-white hover:bg-[#1e8fd1] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
                               <span>{isFinishing ? "Finishing..." : "Finish"}</span>
                               <Check className="w-4 h-4 md:w-[18px] md:h-[18px]" />
@@ -335,31 +340,83 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      );
 };
 
-const ProviderCard = ({ provider, endpoint }: { provider: ConfigModelProvider; endpoint?: string }) => {
+const ProviderCard = ({
+     provider,
+     endpoint,
+     onDelete,
+}: {
+     provider: ConfigModelProvider;
+     endpoint?: string;
+     onDelete: () => void;
+}) => {
      const chatModelCount = provider.chatModels?.length ?? 0;
      const embeddingModelCount = provider.embeddingModels?.length ?? 0;
+     const [isDeleting, setIsDeleting] = useState(false);
+
+     const handleDelete = async () => {
+          if (!confirm(`Are you sure you want to delete "${provider.name}"?`)) {
+               return;
+          }
+
+          setIsDeleting(true);
+          try {
+               const res = await fetch(`/api/providers/${provider.id}`, {
+                    method: "DELETE",
+               });
+
+               if (!res.ok) {
+                    const error = await res.json();
+                    throw new Error(error.message || "Failed to delete provider");
+               }
+
+               toast.success("Provider deleted successfully");
+               onDelete();
+          } catch (error) {
+               console.error("Error deleting provider:", error);
+               toast.error(error instanceof Error ? error.message : "Failed to delete provider");
+          } finally {
+               setIsDeleting(false);
+          }
+     };
 
      return (
-          <div className="bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-xl p-4">
-               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div>
-                         <p className="text-sm font-medium text-black dark:text-white">{provider.name}</p>
-                         <p className="text-[11px] text-black/60 dark:text-white/60 uppercase tracking-wide">
-                              {(provider.type || "Custom").toUpperCase()}
+          <div className="bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-xl p-4 flex gap-3">
+               <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                    className="flex-shrink-0 text-black/50 dark:text-white/50 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Delete provider"
+               >
+                    {isDeleting ? (
+                         <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                         <Trash2 className="w-4 h-4" />
+                    )}
+               </button>
+               <div className="flex-1">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                         <div>
+                              <p className="text-sm font-medium text-black dark:text-white">{provider.name}</p>
+                              <p className="text-[11px] text-black/60 dark:text-white/60 uppercase tracking-wide">
+                                   {(provider.type || "Custom").toUpperCase()}
+                              </p>
+                         </div>
+                         <div className="text-[11px] text-black/60 dark:text-white/60 flex flex-col sm:items-end">
+                              <span>
+                                   {chatModelCount} chat {chatModelCount === 1 ? "model" : "models"}
+                              </span>
+                              <span>
+                                   {embeddingModelCount} embedding {embeddingModelCount === 1 ? "model" : "models"}
+                              </span>
+                         </div>
+                    </div>
+                    {endpoint && (
+                         <p className="text-[11px] text-black/50 dark:text-white/50 mt-2 break-all">
+                              Endpoint: {endpoint}
                          </p>
-                    </div>
-                    <div className="text-[11px] text-black/60 dark:text-white/60 flex flex-col sm:items-end">
-                         <span>
-                              {chatModelCount} chat {chatModelCount === 1 ? "model" : "models"}
-                         </span>
-                         <span>
-                              {embeddingModelCount} embedding {embeddingModelCount === 1 ? "model" : "models"}
-                         </span>
-                    </div>
+                    )}
                </div>
-               {endpoint && (
-                    <p className="text-[11px] text-black/50 dark:text-white/50 mt-2 break-all">Endpoint: {endpoint}</p>
-               )}
           </div>
      );
 };

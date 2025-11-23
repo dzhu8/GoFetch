@@ -57,14 +57,14 @@ class ConfigManager {
           // placed at top-level so no model-provider generic UI is required
           modelProviders: [
                {
-                    name: "Ollama URL",
-                    key: "ollamaURL",
+                    name: "Ollama",
+                    key: "ollama",
                     fields: [
                          {
-                              name: "Ollama API URL",
-                              key: "ollamaURL",
+                              name: "Base URL",
+                              key: "baseURL",
                               type: "string",
-                              required: false,
+                              required: true,
                               description: "The base URL for your Ollama instance",
                               placeholder: "http://localhost:11434",
                               default: "http://localhost:11434",
@@ -190,7 +190,7 @@ class ConfigManager {
           for (let i = 0; i < nested.length - 1; i++) {
                const part = nested[i];
                if (obj[part] == null || typeof obj[part] !== "object") {
-                    obj[part] = {};  // Ensure intermediate objects exist
+                    obj[part] = {}; // Ensure intermediate objects exist
                }
                obj = obj[part];
           }
