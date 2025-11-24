@@ -10,7 +10,7 @@ type SaveConfigBody = {
 
 export const GET = async (req: NextRequest) => {
      try {
-          const values = configManager.currentConfig();
+          const values = configManager.currentConfig;
           const fields = configManager.getUIConfigSections();
 
           const modelProviders = await ModelRegistry.getActiveProviders();
