@@ -29,12 +29,14 @@ export const PATCH = async (req: NextRequest, { params }: { params: { id: string
           // Regenerate hash
           updatedProvider.hash = crypto
                .createHash("sha256")
-               .update(JSON.stringify({ 
-                    id: updatedProvider.id, 
-                    name: updatedProvider.name, 
-                    type: updatedProvider.type, 
-                    config: updatedProvider.config 
-               }))
+               .update(
+                    JSON.stringify({
+                         id: updatedProvider.id,
+                         name: updatedProvider.name,
+                         type: updatedProvider.type,
+                         config: updatedProvider.config,
+                    })
+               )
                .digest("hex")
                .substring(0, 16);
 

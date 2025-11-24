@@ -43,12 +43,12 @@ const formatBytes = (bytes?: number) => {
 
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
-const OllamaModels = ({ 
-     ollamaBaseUrl, 
+const OllamaModels = ({
+     ollamaBaseUrl,
      providerId,
-     onModelUpdate 
-}: { 
-     ollamaBaseUrl?: string; 
+     onModelUpdate,
+}: {
+     ollamaBaseUrl?: string;
      providerId?: string;
      onModelUpdate?: () => void;
 }) => {
@@ -140,10 +140,10 @@ const OllamaModels = ({
                // Get current provider state
                const res = await fetch("/api/providers");
                if (!res.ok) throw new Error("Failed to fetch providers");
-               
+
                const { providers } = await res.json();
                const provider = providers.find((p: any) => p.id === providerId);
-               
+
                if (!provider) {
                     throw new Error("Provider not found");
                }
@@ -189,12 +189,12 @@ const OllamaModels = ({
 
                // Refresh the model list to get updated states
                await fetchModels();
-               
+
                // Notify parent component
                if (onModelUpdate) {
                     onModelUpdate();
                }
-               
+
                toast.success(`Model ${currentValue ? "removed from" : "added to"} ${modelType} models`);
           } catch (error) {
                console.error("Error updating model:", error);
@@ -381,14 +381,17 @@ const OllamaModels = ({
                                                                                 </div>
                                                                                 <span className="text-[11px] text-black/70 dark:text-white/70">
                                                                                      {Math.round(progress.progress)}% (
-                                                                                     {formatBytes(progress.downloaded)} MB /{" "}
-                                                                                     {formatBytes(progress.total)} MB)
+                                                                                     {formatBytes(progress.downloaded)}{" "}
+                                                                                     MB / {formatBytes(progress.total)}{" "}
+                                                                                     MB)
                                                                                 </span>
                                                                            </div>
                                                                       ) : (
                                                                            <button
                                                                                 type="button"
-                                                                                onClick={() => handleDownload(model.name)}
+                                                                                onClick={() =>
+                                                                                     handleDownload(model.name)
+                                                                                }
                                                                                 disabled={isDownloading}
                                                                                 className="w-full md:w-auto flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#F8B692] text-black hover:bg-[#1e8fd1] active:scale-95 transition-all duration-200 text-xs font-medium disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
                                                                            >
@@ -407,46 +410,68 @@ const OllamaModels = ({
                                                                       )}
                                                                  </div>
                                                             </div>
-                                                            
+
                                                             {/* Model Type Checkboxes - only show if installed and providerId exists */}
-                                                            {isInstalled && providerId && (model.supportsChat || model.supportsEmbedding) && (
-                                                                 <div className="flex flex-wrap gap-3 pt-2 border-t border-light-200 dark:border-dark-200">
-                                                                      {model.supportsChat && (
-                                                                           <label className="flex items-center gap-2 cursor-pointer">
-                                                                                <input
-                                                                                     type="checkbox"
-                                                                                     checked={model.isChatModel || false}
-                                                                                     onChange={() => handleModelToggle(model.name, "chat", model.isChatModel || false)}
-                                                                                     disabled={isChatUpdating}
-                                                                                     className="w-4 h-4 rounded border-light-200 dark:border-dark-200 text-[#F8B692] focus:ring-[#F8B692] focus:ring-offset-0 cursor-pointer disabled:opacity-50"
-                                                                                />
-                                                                                <span className="text-xs text-black/70 dark:text-white/70">
-                                                                                     {isChatUpdating ? (
-                                                                                          <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
-                                                                                     ) : null}
-                                                                                     Register as Chat Model
-                                                                                </span>
-                                                                           </label>
-                                                                      )}
-                                                                      {model.supportsEmbedding && (
-                                                                           <label className="flex items-center gap-2 cursor-pointer">
-                                                                                <input
-                                                                                     type="checkbox"
-                                                                                     checked={model.isEmbeddingModel || false}
-                                                                                     onChange={() => handleModelToggle(model.name, "embedding", model.isEmbeddingModel || false)}
-                                                                                     disabled={isEmbeddingUpdating}
-                                                                                     className="w-4 h-4 rounded border-light-200 dark:border-dark-200 text-[#F8B692] focus:ring-[#F8B692] focus:ring-offset-0 cursor-pointer disabled:opacity-50"
-                                                                                />
-                                                                                <span className="text-xs text-black/70 dark:text-white/70">
-                                                                                     {isEmbeddingUpdating ? (
-                                                                                          <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
-                                                                                     ) : null}
-                                                                                     Register as Embedding Model
-                                                                                </span>
-                                                                           </label>
-                                                                      )}
-                                                                 </div>
-                                                            )}
+                                                            {isInstalled &&
+                                                                 providerId &&
+                                                                 (model.supportsChat || model.supportsEmbedding) && (
+                                                                      <div className="flex flex-wrap gap-3 pt-2 border-t border-light-200 dark:border-dark-200">
+                                                                           {model.supportsChat && (
+                                                                                <label className="flex items-center gap-2 cursor-pointer">
+                                                                                     <input
+                                                                                          type="checkbox"
+                                                                                          checked={
+                                                                                               model.isChatModel ||
+                                                                                               false
+                                                                                          }
+                                                                                          onChange={() =>
+                                                                                               handleModelToggle(
+                                                                                                    model.name,
+                                                                                                    "chat",
+                                                                                                    model.isChatModel ||
+                                                                                                         false
+                                                                                               )
+                                                                                          }
+                                                                                          disabled={isChatUpdating}
+                                                                                          className="w-4 h-4 rounded border-light-200 dark:border-dark-200 text-[#F8B692] focus:ring-[#F8B692] focus:ring-offset-0 cursor-pointer disabled:opacity-50"
+                                                                                     />
+                                                                                     <span className="text-xs text-black/70 dark:text-white/70">
+                                                                                          {isChatUpdating ? (
+                                                                                               <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
+                                                                                          ) : null}
+                                                                                          Register as Chat Model
+                                                                                     </span>
+                                                                                </label>
+                                                                           )}
+                                                                           {model.supportsEmbedding && (
+                                                                                <label className="flex items-center gap-2 cursor-pointer">
+                                                                                     <input
+                                                                                          type="checkbox"
+                                                                                          checked={
+                                                                                               model.isEmbeddingModel ||
+                                                                                               false
+                                                                                          }
+                                                                                          onChange={() =>
+                                                                                               handleModelToggle(
+                                                                                                    model.name,
+                                                                                                    "embedding",
+                                                                                                    model.isEmbeddingModel ||
+                                                                                                         false
+                                                                                               )
+                                                                                          }
+                                                                                          disabled={isEmbeddingUpdating}
+                                                                                          className="w-4 h-4 rounded border-light-200 dark:border-dark-200 text-[#F8B692] focus:ring-[#F8B692] focus:ring-offset-0 cursor-pointer disabled:opacity-50"
+                                                                                     />
+                                                                                     <span className="text-xs text-black/70 dark:text-white/70">
+                                                                                          {isEmbeddingUpdating ? (
+                                                                                               <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
+                                                                                          ) : null}
+                                                                                          Register as Embedding Model
+                                                                                     </span>
+                                                                                </label>
+                                                                           )}
+                                                                      </div>
+                                                                 )}
                                                        </div>
                                                   </div>
                                              );

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, PlugZap, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Plus, PlugZap, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfigModelProvider } from "@/lib/models/types";
 import { UIConfigSections } from "@/lib/config/types";
@@ -23,6 +23,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [isLoading, setIsLoading] = useState(true);
      const [isFinishing, setIsFinishing] = useState(false);
      const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
+     const [folderPath, setFolderPath] = useState("");
 
      const fetchProviders = useCallback(async () => {
           try {
@@ -153,6 +154,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                                   provider={provider}
                                                   endpoint={resolveEndpoint(provider)}
                                                   onDelete={fetchProviders}
+                                                  onUpdate={fetchProviders}
                                              />
                                         ))
                                    )}
@@ -210,6 +212,80 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     </motion.div>
                )}
 
+               {setupState === 4 && (
+                    <motion.div
+                         initial={{ opacity: 0, y: 20 }}
+                         animate={{
+                              opacity: 1,
+                              y: 0,
+                              transition: { duration: 0.5, delay: 0.1 },
+                         }}
+                         className="w-full h-[calc(95vh-80px)] bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-xl shadow-sm flex flex-col overflow-hidden"
+                    >
+                         <div className="flex-1 overflow-y-auto px-3 sm:px-4 md:px-6 py-4 md:py-6">
+                              <div className="flex flex-col mb-4 md:mb-6 pb-3 md:pb-4 border-b border-light-200 dark:border-dark-200">
+                                   <div>
+                                        <p className="text-xs sm:text-sm font-medium text-black dark:text-white">
+                                             Register Folder
+                                        </p>
+                                        <p className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 mt-0.5">
+                                             Select a folder to register with the application
+                                        </p>
+                                   </div>
+                              </div>
+
+                              <div className="space-y-4">
+                                   <div className="flex flex-col gap-2">
+                                        <label className="text-xs font-medium text-black dark:text-white">
+                                             Folder Path
+                                        </label>
+                                        <div className="flex flex-row gap-2">
+                                             <input
+                                                  type="text"
+                                                  value={folderPath}
+                                                  onChange={(e) => setFolderPath(e.target.value)}
+                                                  placeholder="Select or enter folder path..."
+                                                  className="flex-1 px-3 py-2 text-xs sm:text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white placeholder:text-black/40 dark:placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#F8B692] focus:border-transparent"
+                                             />
+                                             <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                       const input = document.createElement("input");
+                                                       input.type = "file";
+                                                       input.webkitdirectory = true;
+                                                       input.onchange = (e) => {
+                                                            const target = e.target as HTMLInputElement;
+                                                            if (target.files && target.files[0]) {
+                                                                 const path =
+                                                                      target.files[0].webkitRelativePath.split("/")[0];
+                                                                 setFolderPath(path);
+                                                            }
+                                                       };
+                                                       input.click();
+                                                  }}
+                                                  className="flex items-center justify-center px-3 py-2 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200"
+                                                  title="Browse for folder"
+                                             >
+                                                  <Plus className="w-4 h-4" />
+                                             </button>
+                                        </div>
+                                   </div>
+
+                                   {folderPath && (
+                                        <div className="p-3 bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg">
+                                             <p className="text-[11px] font-medium text-black dark:text-white mb-1">
+                                                  Selected Path:
+                                             </p>
+                                             <p className="text-[11px] text-black/70 dark:text-white/70 break-all font-mono">
+                                                  {folderPath}
+                                             </p>
+                                        </div>
+                                   )}
+                              </div>
+                         </div>
+                    </motion.div>
+               )}
+
                <div className="flex flex-row items-center justify-between pt-2">
                     {setupState > 1 ? (
                          <motion.button
@@ -221,7 +297,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               }}
                               type="button"
                               disabled={setupState <= 2 || isFinishing}
-                              onClick={() => setSetupState(Math.max(1, setupState - 1))}
+                              onClick={() => setSetupState(Math.max(2, setupState - 1))}
                               className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg border border-light-200 dark:border-dark-200 bg-[#F8B692] text-black active:scale-95 hover:bg-[#e6ad82] transition-all duration-200 text-xs sm:text-sm font-medium disabled:text-black/40 dark:disabled:text-white/40 disabled:border-light-200/50 dark:disabled:border-dark-200/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
                               <ArrowLeft className="w-4 h-4" />
@@ -258,8 +334,26 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                    transition: { duration: 0.5 },
                               }}
                               type="button"
+                              onClick={() => setSetupState(4)}
+                              disabled={!hasConfiguredProviders || isLoading}
+                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                         >
+                              <span>Next</span>
+                              <ArrowRight className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                         </motion.button>
+                    )}
+
+                    {setupState === 4 && (
+                         <motion.button
+                              initial={{ opacity: 0, x: 10 }}
+                              animate={{
+                                   opacity: 1,
+                                   x: 0,
+                                   transition: { duration: 0.5 },
+                              }}
+                              type="button"
                               onClick={handleFinish}
-                              disabled={!hasConfiguredProviders || isLoading || isFinishing}
+                              disabled={!hasConfiguredProviders || isFinishing}
                               className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
                               <span>{isFinishing ? "Finishing..." : "Finish"}</span>
@@ -275,10 +369,12 @@ const ProviderCard = ({
      provider,
      endpoint,
      onDelete,
+     onUpdate,
 }: {
      provider: ConfigModelProvider;
      endpoint?: string;
      onDelete: () => void;
+     onUpdate: () => void;
 }) => {
      const [localProvider, setLocalProvider] = useState(provider);
      const [isDeleting, setIsDeleting] = useState(false);
@@ -293,7 +389,7 @@ const ProviderCard = ({
      const embeddingModelCount = localProvider.embeddingModels?.length ?? 0;
 
      const handleModelUpdate = useCallback(async () => {
-          // Fetch just this provider's updated info without re-rendering parent
+          // Fetch all providers to update parent state and enable Next button
           try {
                const res = await fetch("/api/providers");
                if (res.ok) {
@@ -302,11 +398,13 @@ const ProviderCard = ({
                     if (updated) {
                          setLocalProvider(updated);
                     }
+                    // Call parent's fetchProviders to update hasConfiguredProviders
+                    onUpdate();
                }
           } catch (error) {
                console.error("Error refreshing provider:", error);
           }
-     }, [provider.id]);
+     }, [provider.id, onUpdate]);
 
      const handleDelete = async () => {
           if (!confirm(`Are you sure you want to delete "${provider.name}"?`)) {
@@ -336,11 +434,13 @@ const ProviderCard = ({
 
      const renderModelsInterface = () => {
           const providerType = (provider.type || "").toLowerCase();
-          
+
           if (providerType === "ollama") {
-               return <OllamaModels ollamaBaseUrl={endpoint} providerId={provider.id} onModelUpdate={handleModelUpdate} />;
+               return (
+                    <OllamaModels ollamaBaseUrl={endpoint} providerId={provider.id} onModelUpdate={handleModelUpdate} />
+               );
           }
-          
+
           // Placeholder for other provider types
           return (
                <div className="bg-light-primary dark:bg-dark-primary border border-dashed border-light-200 dark:border-dark-200 rounded-lg p-4 text-xs text-black/70 dark:text-white/70">
@@ -358,11 +458,7 @@ const ProviderCard = ({
                     className="flex-shrink-0 text-black/50 dark:text-white/50 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Delete provider"
                >
-                    {isDeleting ? (
-                         <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                         <Trash2 className="w-4 h-4" />
-                    )}
+                    {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                </button>
                <div className="flex-1">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -386,7 +482,7 @@ const ProviderCard = ({
                               Endpoint: {endpoint}
                          </p>
                     )}
-                    
+
                     {/* Manage Models Button */}
                     <button
                          type="button"
