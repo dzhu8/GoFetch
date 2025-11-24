@@ -1,11 +1,17 @@
 {
      "name": "GoFetch",
      "version": "0.1.0",
+     "private": true,
      "license": "MIT",
      "author": "Daniel Zhu",
      "description": "Live index of your codebase to identify the correct files to pass as context to local AI models.",
+     "workspaces": [
+          "cli"
+     ],
      "scripts": {
-          "dev": "next dev",
+          "dev": "concurrently \"yarn dev:web\" \"yarn dev:cli\"",
+          "dev:web": "next dev",
+          "dev:cli": "yarn workspace gofetch-cli dev",
           "format:write": "prettier . --write"
      },
      "dependencies": {
@@ -38,6 +44,7 @@
           "@types/react": "^19.2.2",
           "@types/react-dom": "^19.2.2",
           "autoprefixer": "^10.0.1",
+          "concurrently": "^9.1.0",
           "prettier": "^3.2.5",
           "prettier-plugin-jsdoc": "^1.5.0",
           "prettier-plugin-organize-imports": "^4.3.0",

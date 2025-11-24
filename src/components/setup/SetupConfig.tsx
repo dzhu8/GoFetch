@@ -24,10 +24,16 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [isFinishing, setIsFinishing] = useState(false);
      const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
      const [folderPath, setFolderPath] = useState("");
+     const [cliWatcherConsent, setCliWatcherConsent] = useState(false);
+     const [isCliConsentLoading, setIsCliConsentLoading] = useState(true);
+     const [isCliConsentSaving, setIsCliConsentSaving] = useState(false);
 
-     const fetchProviders = useCallback(async () => {
+     const fetchProviders = useCallback(async (options?: { suppressSpinner?: boolean }) => {
+          const showSpinner = !options?.suppressSpinner;
           try {
-               setIsLoading(true);
+               if (showSpinner) {
+                    setIsLoading(true);
+               }
                const res = await fetch("/api/providers");
                if (!res.ok) throw new Error("Failed to fetch providers");
 
@@ -37,14 +43,73 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                console.error("Error fetching providers:", error);
                toast.error("Failed to load providers");
           } finally {
-               setIsLoading(false);
+               if (showSpinner) {
+                    setIsLoading(false);
+               }
           }
      }, []);
 
      useEffect(() => {
-          if (setupState < 2) return;
+          if (setupState < 3) return;
           fetchProviders();
      }, [setupState, fetchProviders]);
+
+     useEffect(() => {
+          const fetchCliConsent = async () => {
+               try {
+                    const res = await fetch("/api/config");
+                    if (!res.ok) throw new Error("Failed to load configuration");
+                    const data = await res.json();
+                    setCliWatcherConsent(Boolean(data.values?.preferences?.cliFolderWatcher));
+               } catch (error) {
+                    console.error("Error loading CLI consent:", error);
+               } finally {
+                    setIsCliConsentLoading(false);
+               }
+          };
+
+          fetchCliConsent();
+     }, []);
+
+     const handleCliConsentChange = async (value: boolean) => {
+          setIsCliConsentSaving(true);
+          try {
+               const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ key: "preferences.cliFolderWatcher", value }),
+               });
+
+               if (!res.ok) throw new Error("Failed to update preference");
+
+               setCliWatcherConsent(value);
+               if (value) {
+                    await window.GoFetchCLI?.requestWatcherConsent?.();
+               }
+
+               return true;
+          } catch (error) {
+               console.error("Error saving CLI consent:", error);
+               toast.error("Failed to update CLI folder watcher preference");
+               return false;
+          } finally {
+               setIsCliConsentSaving(false);
+          }
+     };
+
+     const handleCliConsentSelection = async (value: boolean) => {
+          if (isCliConsentLoading || isCliConsentSaving) return;
+
+          if (cliWatcherConsent === value) {
+               setSetupState(3);
+               return;
+          }
+
+          const success = await handleCliConsentChange(value);
+          if (success) {
+               setSetupState(3);
+          }
+     };
 
      const handleFinish = useCallback(async () => {
           try {
@@ -105,10 +170,64 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     isOpen={isAddProviderOpen}
                     setIsOpen={setIsAddProviderOpen}
                     providerSections={configSections.modelProviders ?? []}
-                    onProviderAdded={fetchProviders}
+                    onProviderAdded={() => fetchProviders()}
                />
 
                {setupState === 2 && (
+                    <motion.div
+                         initial={{ opacity: 0, y: 20 }}
+                         animate={{
+                              opacity: 1,
+                              y: 0,
+                              transition: { duration: 0.5, delay: 0.1 },
+                         }}
+                         className="w-full flex items-center justify-center"
+                    >
+                         <div className="w-[90vw] max-w-md bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-xl p-5 sm:p-6 space-y-4 text-center">
+                              <div>
+                                   <p className="text-sm font-medium text-black dark:text-white">
+                                        Enable CLI Folder Watcher
+                                   </p>
+                                   <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
+                                        Let the GoFetch CLI capture folder selections directly from your computer's file
+                                        explorer.
+                                   </p>
+                              </div>
+                              <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
+                                   <p className="text-[11px] text-black/60 dark:text-white/60">
+                                        {isCliConsentLoading
+                                             ? "Checking CLI helper status..."
+                                             : cliWatcherConsent
+                                               ? "CLI helper is ready. Keep it enabled to streamline folder registration."
+                                               : "Enable this to avoid needing to type folder paths manually when adding folders."}
+                                   </p>
+                                   <div className="flex flex-col gap-2">
+                                        <button
+                                             type="button"
+                                             onClick={() => handleCliConsentSelection(true)}
+                                             disabled={isCliConsentLoading || isCliConsentSaving}
+                                             className="w-full px-3 py-1.5 text-xs rounded-lg bg-[#F8B692] text-black font-medium hover:bg-[#e6ad82] disabled:opacity-60 disabled:cursor-not-allowed"
+                                        >
+                                             Enable CLI
+                                        </button>
+                                        <button
+                                             type="button"
+                                             onClick={() => handleCliConsentSelection(false)}
+                                             disabled={isCliConsentLoading || isCliConsentSaving}
+                                             className="w-full px-3 py-1.5 text-xs rounded-lg border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-60"
+                                        >
+                                             {cliWatcherConsent ? "Disable" : "Skip for now"}
+                                        </button>
+                                   </div>
+                                   <p className="text-[10px] text-black/50 dark:text-white/50">
+                                        You can change this later in Settings.
+                                   </p>
+                              </div>
+                         </div>
+                    </motion.div>
+               )}
+
+               {setupState === 3 && (
                     <motion.div
                          initial={{ opacity: 0, y: 20 }}
                          animate={{
@@ -153,8 +272,8 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                                   key={`provider-${provider.id}`}
                                                   provider={provider}
                                                   endpoint={resolveEndpoint(provider)}
-                                                  onDelete={fetchProviders}
-                                                  onUpdate={fetchProviders}
+                                                  onDelete={() => fetchProviders()}
+                                                  onUpdate={() => fetchProviders({ suppressSpinner: true })}
                                              />
                                         ))
                                    )}
@@ -163,7 +282,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     </motion.div>
                )}
 
-               {setupState === 3 && (
+               {setupState === 4 && (
                     <motion.div
                          initial={{ opacity: 0, y: 20 }}
                          animate={{
@@ -212,7 +331,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     </motion.div>
                )}
 
-               {setupState === 4 && (
+               {setupState === 5 && (
                     <motion.div
                          initial={{ opacity: 0, y: 20 }}
                          animate={{
@@ -287,7 +406,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                )}
 
                <div className="flex flex-row items-center justify-between pt-2">
-                    {setupState > 1 ? (
+                    {setupState > 2 ? (
                          <motion.button
                               initial={{ opacity: 0, x: -10 }}
                               animate={{
@@ -296,7 +415,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                    transition: { duration: 0.5 },
                               }}
                               type="button"
-                              disabled={setupState <= 2 || isFinishing}
+                              disabled={isFinishing}
                               onClick={() => setSetupState(Math.max(2, setupState - 1))}
                               className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg border border-light-200 dark:border-dark-200 bg-[#F8B692] text-black active:scale-95 hover:bg-[#e6ad82] transition-all duration-200 text-xs sm:text-sm font-medium disabled:text-black/40 dark:disabled:text-white/40 disabled:border-light-200/50 dark:disabled:border-dark-200/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
@@ -305,24 +424,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                          </motion.button>
                     ) : (
                          <span />
-                    )}
-
-                    {setupState === 2 && (
-                         <motion.button
-                              initial={{ opacity: 0, x: 10 }}
-                              animate={{
-                                   opacity: 1,
-                                   x: 0,
-                                   transition: { duration: 0.5 },
-                              }}
-                              type="button"
-                              onClick={() => setSetupState(3)}
-                              disabled={!hasConfiguredProviders || isLoading}
-                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
-                         >
-                              <span>Next</span>
-                              <ArrowRight className="w-4 h-4 md:w-[18px] md:h-[18px]" />
-                         </motion.button>
                     )}
 
                     {setupState === 3 && (
@@ -344,6 +445,24 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     )}
 
                     {setupState === 4 && (
+                         <motion.button
+                              initial={{ opacity: 0, x: 10 }}
+                              animate={{
+                                   opacity: 1,
+                                   x: 0,
+                                   transition: { duration: 0.5 },
+                              }}
+                              type="button"
+                              onClick={() => setSetupState(5)}
+                              disabled={!hasConfiguredProviders || isLoading}
+                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                         >
+                              <span>Next</span>
+                              <ArrowRight className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                         </motion.button>
+                    )}
+
+                    {setupState === 5 && (
                          <motion.button
                               initial={{ opacity: 0, x: 10 }}
                               animate={{
