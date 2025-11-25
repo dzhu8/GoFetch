@@ -1,20 +1,22 @@
 "use client";
 
-import Select from "../../Select";
-import { ConfigModelProvider } from "@/lib/models/types";
-import { useChat } from "@/lib/chat/Chat";
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import Select from "../Select";
+import { ConfigModelProvider } from "@/lib/models/types";
 import { ModelPreference, persistModelPreference } from "@/lib/models/modelPreference";
+import { toast } from "sonner";
+import { useChat } from "@/lib/chat/Chat";
 
-type ModelSelectProps = {
-     providers: ConfigModelProvider[];
+export type SettingsDropdownProps = {
+     label: string;
+     description: string;
      type: "chat" | "embedding";
+     providers: ConfigModelProvider[];
      value?: ModelPreference | null;
      onChange?: (preference: ModelPreference) => void;
 };
 
-const ModelSelect = ({ providers, type, value, onChange }: ModelSelectProps) => {
+const SettingsDropdown = ({ label, description, type, providers, value, onChange }: SettingsDropdownProps) => {
      const deriveLocalValue = () => {
           if (value?.providerId && value?.modelKey) {
                return `${value.providerId}/${value.modelKey}`;
@@ -22,15 +24,13 @@ const ModelSelect = ({ providers, type, value, onChange }: ModelSelectProps) => 
 
           if (typeof window === "undefined") return "";
 
-          if (type === "chat") {
-               const providerId = localStorage.getItem("chatModelProviderId") ?? "";
-               const modelKey = localStorage.getItem("chatModelKey") ?? "";
-               return providerId && modelKey ? `${providerId}/${modelKey}` : "";
-          }
+          const providerKey = type === "chat" ? "chatModelProviderId" : "embeddingModelProviderId";
+          const modelKey = type === "chat" ? "chatModelKey" : "embeddingModelKey";
 
-          const providerId = localStorage.getItem("embeddingModelProviderId") ?? "";
-          const modelKey = localStorage.getItem("embeddingModelKey") ?? "";
-          return providerId && modelKey ? `${providerId}/${modelKey}` : "";
+          const storedProvider = localStorage.getItem(providerKey) ?? "";
+          const storedModel = localStorage.getItem(modelKey) ?? "";
+
+          return storedProvider && storedModel ? `${storedProvider}/${storedModel}` : "";
      };
 
      const [selectedModel, setSelectedModel] = useState<string>(deriveLocalValue);
@@ -81,8 +81,8 @@ const ModelSelect = ({ providers, type, value, onChange }: ModelSelectProps) => 
                     setEmbeddingModelProvider({ providerId, key: modelKey });
                }
 
-               onChange?.({ providerId, modelKey });
                setSelectedModel(newValue);
+               onChange?.({ providerId, modelKey });
           } catch (error) {
                console.error("Error saving config:", error);
                toast.error("Failed to save configuration.");
@@ -95,26 +95,25 @@ const ModelSelect = ({ providers, type, value, onChange }: ModelSelectProps) => 
           <section className="rounded-xl border border-light-200 bg-light-primary/80 p-4 lg:p-6 transition-colors dark:border-dark-200 dark:bg-dark-primary/80">
                <div className="space-y-3 lg:space-y-5">
                     <div>
-                         <h4 className="text-sm lg:text-sm text-black dark:text-white">
-                              Select {type === "chat" ? "Chat Model" : "Embedding Model"}
-                         </h4>
-                         <p className="text-[11px] lg:text-xs text-black/50 dark:text-white/50">
-                              {type === "chat"
-                                   ? "Choose which model to use for generating responses"
-                                   : "Choose which model to use for generating embeddings"}
-                         </p>
+                         <h4 className="text-sm lg:text-sm text-black dark:text-white">{label}</h4>
+                         <p className="text-[11px] lg:text-xs text-black/50 dark:text-white/50">{description}</p>
                     </div>
                     <Select
                          value={selectedModel}
                          onChange={(event) => handleSave(event.target.value)}
                          options={options}
-                         className="!text-xs lg:!text-[13px]"
+                         className="!text-xs lg:!text-sm"
                          loading={loading}
                          disabled={loading || options.length === 0}
                     />
+                    {options.length === 0 && (
+                         <p className="text-[11px] text-black/50 dark:text-white/50">
+                              No {type} models available. Configure a provider first.
+                         </p>
+                    )}
                </div>
           </section>
      );
 };
 
-export default ModelSelect;
+export default SettingsDropdown;

@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Plus, Pl
 import { toast } from "sonner";
 import { ConfigModelProvider } from "@/lib/models/types";
 import { UIConfigSections } from "@/lib/config/types";
+import { ModelPreference } from "@/lib/models/modelPreference";
 import OllamaModels from "./modelsView/OllamaModels";
 import ModelSelect from "./modelsView/ModelSelect";
 import AddProvider from "../models/AddProvider";
@@ -27,6 +28,8 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [cliWatcherConsent, setCliWatcherConsent] = useState(false);
      const [isCliConsentLoading, setIsCliConsentLoading] = useState(true);
      const [isCliConsentSaving, setIsCliConsentSaving] = useState(false);
+     const [defaultChatModel, setDefaultChatModel] = useState<ModelPreference | null>(null);
+     const [defaultEmbeddingModel, setDefaultEmbeddingModel] = useState<ModelPreference | null>(null);
 
      const fetchProviders = useCallback(async (options?: { suppressSpinner?: boolean }) => {
           const showSpinner = !options?.suppressSpinner;
@@ -61,6 +64,16 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     if (!res.ok) throw new Error("Failed to load configuration");
                     const data = await res.json();
                     setCliWatcherConsent(Boolean(data.values?.preferences?.cliFolderWatcher));
+
+                    const chatPreference = data.values?.preferences?.defaultChatModel;
+                    if (chatPreference?.providerId && chatPreference?.modelKey) {
+                         setDefaultChatModel(chatPreference);
+                    }
+
+                    const embeddingPreference = data.values?.preferences?.defaultEmbeddingModel;
+                    if (embeddingPreference?.providerId && embeddingPreference?.modelKey) {
+                         setDefaultEmbeddingModel(embeddingPreference);
+                    }
                } catch (error) {
                     console.error("Error loading CLI consent:", error);
                } finally {
@@ -323,8 +336,18 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                    </div>
                               ) : (
                                    <div className="space-y-3 md:space-y-4">
-                                        <ModelSelect providers={visibleProviders} type="chat" />
-                                        <ModelSelect providers={visibleProviders} type="embedding" />
+                                        <ModelSelect
+                                             providers={visibleProviders}
+                                             type="chat"
+                                             value={defaultChatModel}
+                                             onChange={setDefaultChatModel}
+                                        />
+                                        <ModelSelect
+                                             providers={visibleProviders}
+                                             type="embedding"
+                                             value={defaultEmbeddingModel}
+                                             onChange={setDefaultEmbeddingModel}
+                                        />
                                    </div>
                               )}
                          </div>

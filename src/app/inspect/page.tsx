@@ -391,7 +391,7 @@ export default function InspectPage() {
                                              return (
                                                   <div
                                                        key={folder.name}
-                                                       className="border border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm"
+                                                       className="border-2 border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm"
                                                   >
                                                        <div>
                                                             <p className="text-sm font-semibold text-black dark:text-white">

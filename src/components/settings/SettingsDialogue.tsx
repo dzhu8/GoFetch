@@ -15,7 +15,6 @@ const sections = [
           name: "Preferences",
           description: "Customize your application preferences.",
           icon: Sliders,
-          component: Preferences,
           dataAdd: "preferences",
      },
      {
@@ -23,7 +22,6 @@ const sections = [
           name: "Personalization",
           description: "Customize the behavior and tone of the model.",
           icon: ToggleRight,
-          component: Personalization,
           dataAdd: "personalization",
      },
 ];
@@ -37,6 +35,35 @@ const SettingsDialogue = ({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (
      useEffect(() => {
           setSelectedSection(sections.find((s) => s.key === activeSection)!);
      }, [activeSection]);
+
+     const renderSectionContent = () => {
+          if (!config) {
+               return null;
+          }
+
+          if (activeSection === "preferences") {
+               return (
+                    <Preferences
+                         fields={config.fields?.preferences ?? []}
+                         values={config.values?.preferences ?? {}}
+                         modelProviders={config.values?.modelProviders ?? []}
+                         defaultChatModel={config.values?.preferences?.defaultChatModel}
+                         defaultEmbeddingModel={config.values?.preferences?.defaultEmbeddingModel}
+                    />
+               );
+          }
+
+          if (activeSection === "personalization") {
+               return (
+                    <Personalization
+                         fields={config.fields?.personalization ?? []}
+                         values={config.values?.personalization ?? {}}
+                    />
+               );
+          }
+
+          return null;
+     };
 
      useEffect(() => {
           if (isOpen) {
@@ -137,26 +164,19 @@ const SettingsDialogue = ({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (
                                                   className="!text-xs lg:!text-sm"
                                              />
                                         </div>
-                                        {selectedSection.component && (
-                                             <div className="flex flex-1 flex-col overflow-hidden">
-                                                  <div className="border-b border-light-200/60 px-6 pb-6 lg:pt-6 dark:border-dark-200/60 flex-shrink-0">
-                                                       <div className="flex flex-col">
-                                                            <h4 className="font-medium text-black dark:text-white text-sm lg:text-sm">
-                                                                 {selectedSection.name}
-                                                            </h4>
-                                                            <p className="text-[11px] lg:text-xs text-black/50 dark:text-white/50">
-                                                                 {selectedSection.description}
-                                                            </p>
-                                                       </div>
-                                                  </div>
-                                                  <div className="flex-1 overflow-y-auto">
-                                                       <selectedSection.component
-                                                            fields={config.fields[selectedSection.dataAdd]}
-                                                            values={config.values[selectedSection.dataAdd]}
-                                                       />
+                                        <div className="flex flex-1 flex-col overflow-hidden">
+                                             <div className="border-b border-light-200/60 px-6 pb-6 lg:pt-6 dark:border-dark-200/60 flex-shrink-0">
+                                                  <div className="flex flex-col">
+                                                       <h4 className="font-medium text-black dark:text-white text-sm lg:text-sm">
+                                                            {selectedSection.name}
+                                                       </h4>
+                                                       <p className="text-[11px] lg:text-xs text-black/50 dark:text-white/50">
+                                                            {selectedSection.description}
+                                                       </p>
                                                   </div>
                                              </div>
-                                        )}
+                                             <div className="flex-1 overflow-y-auto">{renderSectionContent()}</div>
+                                        </div>
                                    </div>
                               </div>
                          )}

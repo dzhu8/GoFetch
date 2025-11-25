@@ -77,6 +77,34 @@ const checkConfig = async (
           let embeddingModelKey = localStorage.getItem("embeddingModelKey");
           let embeddingModelProviderId = localStorage.getItem("embeddingModelProviderId");
 
+          if (!chatModelKey || !chatModelProviderId || !embeddingModelKey || !embeddingModelProviderId) {
+               try {
+                    const configRes = await fetch(`/api/config`, {
+                         headers: {
+                              "Content-Type": "application/json",
+                         },
+                    });
+
+                    if (configRes.ok) {
+                         const configData = await configRes.json();
+                         const preferences = configData.values?.preferences ?? {};
+
+                         if ((!chatModelKey || !chatModelProviderId) && preferences.defaultChatModel) {
+                              chatModelKey = preferences.defaultChatModel.modelKey ?? chatModelKey;
+                              chatModelProviderId = preferences.defaultChatModel.providerId ?? chatModelProviderId;
+                         }
+
+                         if ((!embeddingModelKey || !embeddingModelProviderId) && preferences.defaultEmbeddingModel) {
+                              embeddingModelKey = preferences.defaultEmbeddingModel.modelKey ?? embeddingModelKey;
+                              embeddingModelProviderId =
+                                   preferences.defaultEmbeddingModel.providerId ?? embeddingModelProviderId;
+                         }
+                    }
+               } catch (configError) {
+                    console.error("Failed to fetch config defaults:", configError);
+               }
+          }
+
           const res = await fetch(`/api/providers`, {
                headers: {
                     "Content-Type": "application/json",

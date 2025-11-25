@@ -16,6 +16,8 @@ class ConfigManager {
           setupComplete: false,
           preferences: {
                cliFolderWatcher: false,
+               defaultChatModel: null,
+               defaultEmbeddingModel: null,
           },
           personalization: {},
           modelProviders: [],
@@ -139,6 +141,12 @@ class ConfigManager {
                     }
                     if (this.currentConfig.preferences.cliFolderWatcher === undefined) {
                          this.currentConfig.preferences.cliFolderWatcher = false;
+                    }
+                    if (this.currentConfig.preferences.defaultChatModel === undefined) {
+                         this.currentConfig.preferences.defaultChatModel = null;
+                    }
+                    if (this.currentConfig.preferences.defaultEmbeddingModel === undefined) {
+                         this.currentConfig.preferences.defaultEmbeddingModel = null;
                     }
                } catch (err) {
                     if (err instanceof SyntaxError) {

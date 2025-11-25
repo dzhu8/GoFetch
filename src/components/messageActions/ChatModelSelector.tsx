@@ -6,6 +6,8 @@ import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/re
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { MinimalProvider } from "@/lib/models/types";
 import { useChat } from "@/lib/chat/Chat";
+import { persistModelPreference } from "@/lib/models/modelPreference";
+import { toast } from "sonner";
 
 const ModelSelector = () => {
      const [providers, setProviders] = useState<MinimalProvider[]>([]);
@@ -51,10 +53,15 @@ const ModelSelector = () => {
           return [selectedProvider, ...remainingProviders];
      }, [providers, chatModelProvider]);
 
-     const handleModelSelect = (providerId: string, modelKey: string) => {
+     const handleModelSelect = async (providerId: string, modelKey: string) => {
           setChatModelProvider({ providerId, key: modelKey });
-          localStorage.setItem("chatModelProviderId", providerId);
-          localStorage.setItem("chatModelKey", modelKey);
+
+          try {
+               await persistModelPreference("chat", { providerId, modelKey });
+          } catch (error) {
+               console.error("Failed to persist chat model preference:", error);
+               toast.error("Unable to save chat model preference");
+          }
      };
 
      const filteredProviders = orderedProviders
