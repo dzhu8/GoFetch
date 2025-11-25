@@ -12,7 +12,8 @@
           "dev": "concurrently \"yarn dev:web\" \"yarn dev:cli\"",
           "dev:web": "next dev",
           "dev:cli": "yarn workspace gofetch-cli dev",
-          "format:write": "prettier . --write"
+          "format:write": "prettier . --write",
+          "db:migrate": "drizzle-kit push --config drizzle.config.ts"
      },
      "dependencies": {
           "@headlessui/react": "^2.2.9",
@@ -52,6 +53,7 @@
           "@types/react-dom": "^19.2.2",
           "autoprefixer": "^10.0.1",
           "concurrently": "^9.1.0",
+          "drizzle-kit": "^0.31.7",
           "prettier": "^3.2.5",
           "prettier-plugin-jsdoc": "^1.5.0",
           "prettier-plugin-organize-imports": "^4.3.0",

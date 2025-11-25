@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { IGNORED_DIRECTORY_NAMES, IGNORED_FILE_NAMES } from "./folderIgnore";
+import { indexFolder, removeFolderIndex } from "./merkle/service";
+import merkleMonitor from "./merkle/monitor";
 
 //@ts-ignore
 export type FolderTree = Record<string, FolderTree | null>;
@@ -9,21 +12,6 @@ export interface FolderRegistration {
      rootPath: string;
      tree: FolderTree;
 }
-
-const IGNORED_DIRECTORY_NAMES = new Set([
-     "node_modules",
-     ".git",
-     ".next",
-     "dist",
-     "build",
-     "coverage",
-     "__pycache__",
-     ".turbo",
-     ".vercel",
-     ".cache",
-]);
-
-const IGNORED_FILE_NAMES = new Set([".DS_Store", "Thumbs.db"]);
 
 export class FolderRegistry {
      private folders: Map<string, FolderRegistration> = new Map();
@@ -48,6 +36,8 @@ export class FolderRegistry {
 
           const registration = this.buildRegistration(name, rootPath);
           this.folders.set(name, registration);
+          this.safeIndexFolder(registration);
+          merkleMonitor.registerFolder(registration);
           return registration;
      }
 
@@ -67,11 +57,15 @@ export class FolderRegistry {
 
           const registration = this.buildRegistration(name, rootPath);
           this.folders.set(name, registration);
+          this.safeIndexFolder(registration);
+          merkleMonitor.updateFolder(registration);
           return registration;
      }
 
      removeFolder(name: string): void {
           this.folders.delete(name);
+          removeFolderIndex(name);
+          merkleMonitor.unregisterFolder(name);
      }
 
      private buildRegistration(name: string, rootPath: string): FolderRegistration {
@@ -84,6 +78,14 @@ export class FolderRegistry {
                rootPath: absoluteRoot,
                tree,
           };
+     }
+
+     private safeIndexFolder(registration: FolderRegistration): void {
+          try {
+               indexFolder(registration);
+          } catch (error) {
+               console.error(`[folderRegistry] Failed to build Merkle DAG for ${registration.name}:`, error);
+          }
      }
 
      private assertDirectoryExists(dirPath: string): void {
