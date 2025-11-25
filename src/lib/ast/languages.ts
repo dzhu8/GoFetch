@@ -1,20 +1,16 @@
 import path from "path";
-import Parser from "tree-sitter";
-import JavaScript from "tree-sitter-javascript";
-import Python from "tree-sitter-python";
-import Rust from "tree-sitter-rust";
-import TypeScriptLanguages from "tree-sitter-typescript";
-import * as CSS from "tree-sitter-css";
-import HTML from "tree-sitter-html";
+import type { LRParser } from "@lezer/lr";
+import { parser as javascriptParser } from "@lezer/javascript";
+import { parser as pythonParser } from "@lezer/python";
+import { parser as rustParser } from "@lezer/rust";
+import { parser as cssParser } from "@lezer/css";
+import { parser as htmlParser } from "@lezer/html";
 
 import type { SupportedLanguage } from "./types";
 
-type LanguageModule = {
-     typescript: Parser.Language;
-     tsx: Parser.Language;
-};
-
-const { typescript, tsx } = TypeScriptLanguages as unknown as LanguageModule;
+const JAVASCRIPT_WITH_JSX = javascriptParser.configure({ dialect: "jsx" });
+const TYPESCRIPT_ONLY = javascriptParser.configure({ dialect: "ts" });
+const TSX_WITH_TS_JSX = javascriptParser.configure({ dialect: "ts jsx" });
 
 const LANGUAGE_BY_EXTENSION: Record<string, SupportedLanguage> = {
      ".js": "javascript",
@@ -33,33 +29,23 @@ const LANGUAGE_BY_EXTENSION: Record<string, SupportedLanguage> = {
      ".htm": "html",
 };
 
-const LANGUAGE_TO_MODULE: Record<SupportedLanguage, Parser.Language> = {
-     javascript: JavaScript as unknown as Parser.Language,
-     typescript,
-     tsx,
-     python: Python as unknown as Parser.Language,
-     rust: Rust as unknown as Parser.Language,
-     css: CSS as unknown as Parser.Language,
-     html: HTML as unknown as Parser.Language,
+const LANGUAGE_TO_PARSER: Record<SupportedLanguage, LRParser> = {
+     javascript: JAVASCRIPT_WITH_JSX,
+     typescript: TYPESCRIPT_ONLY,
+     tsx: TSX_WITH_TS_JSX,
+     python: pythonParser,
+     rust: rustParser,
+     css: cssParser,
+     html: htmlParser,
 };
-
-const PARSER_CACHE = new Map<SupportedLanguage, Parser>();
 
 export function detectLanguage(filePath: string): SupportedLanguage | null {
      const ext = path.extname(filePath).toLowerCase();
      return LANGUAGE_BY_EXTENSION[ext] ?? null;
 }
 
-export function getParser(language: SupportedLanguage): Parser {
-     const cached = PARSER_CACHE.get(language);
-     if (cached) {
-          return cached;
-     }
-
-     const parser = new Parser();
-     parser.setLanguage(LANGUAGE_TO_MODULE[language]);
-     PARSER_CACHE.set(language, parser);
-     return parser;
+export function getParser(language: SupportedLanguage): LRParser {
+     return LANGUAGE_TO_PARSER[language];
 }
 
 export function isSupportedFile(filePath: string): boolean {

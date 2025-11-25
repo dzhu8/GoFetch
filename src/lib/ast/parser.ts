@@ -1,9 +1,15 @@
 import fs from "fs";
 
-import Parser from "tree-sitter";
+import type { SyntaxNode } from "@lezer/common";
 
 import { detectLanguage, getParser } from "./languages";
-import type { FileEntry, ParsedFileAst, ParserOptions, SerializedNode } from "./types";
+import type {
+     FileEntry,
+     ParsedFileAst,
+     ParserOptions,
+     SerializedNode,
+     SerializedPosition,
+} from "./types";
 
 interface NormalizedParserOptions {
      includeText: boolean;
@@ -31,10 +37,11 @@ export function parseFile(entry: FileEntry, options?: ParserOptions): ParsedFile
      }
 
      const parser = getParser(language);
-     parser.reset();
      const tree = parser.parse(source);
      const normalizedOptions = normalizeOptions(options);
-     const ast = serializeNode(tree.rootNode, normalizedOptions);
+     const positions = new PositionLookup(source);
+     const ast = serializeNode(tree.topNode, source, positions, normalizedOptions);
+     const errorCount = countErrorNodes(tree.topNode);
 
      return {
           filePath: entry.absolutePath,
@@ -42,8 +49,8 @@ export function parseFile(entry: FileEntry, options?: ParserOptions): ParsedFile
           language,
           ast,
           diagnostics: {
-               hasError: tree.rootNode.hasError,
-               errorCount: countErrorNodes(tree.rootNode),
+               hasError: errorCount > 0,
+               errorCount,
           },
      };
 }
@@ -63,8 +70,14 @@ function normalizeOptions(options?: ParserOptions): NormalizedParserOptions {
      };
 }
 
-function serializeNode(node: Parser.SyntaxNode, options: NormalizedParserOptions, depth = 0): SerializedNode {
-     const namedChildren = node.namedChildren ?? [];
+function serializeNode(
+     node: SyntaxNode,
+     source: string,
+     positions: PositionLookup,
+     options: NormalizedParserOptions,
+     depth = 0,
+): SerializedNode {
+     const namedChildren = collectNamedChildren(node);
      const shouldTraverse = depth < options.maxDepth;
      const childLimit = options.maxChildrenPerNode;
      const effectiveLimit = childLimit === Number.POSITIVE_INFINITY ? namedChildren.length : childLimit;
@@ -72,23 +85,25 @@ function serializeNode(node: Parser.SyntaxNode, options: NormalizedParserOptions
 
      if (shouldTraverse) {
           for (let i = 0; i < namedChildren.length && i < effectiveLimit; i += 1) {
-               children.push(serializeNode(namedChildren[i], options, depth + 1));
+               children.push(serializeNode(namedChildren[i], source, positions, options, depth + 1));
           }
      }
 
      const truncatedByDepth = !shouldTraverse && namedChildren.length > 0;
      const truncatedByChildLimit = shouldTraverse && namedChildren.length > effectiveLimit;
-     const textSnippet = options.includeText ? trimText(node.text, options.maxTextLength) : undefined;
+     const textSnippet = options.includeText
+          ? trimText(source.slice(node.from, node.to), options.maxTextLength)
+          : undefined;
 
      return {
-          type: node.type,
-          named: node.isNamed,
-          hasError: node.hasError,
-          childCount: node.namedChildCount,
-          startIndex: node.startIndex,
-          endIndex: node.endIndex,
-          startPosition: { ...node.startPosition },
-          endPosition: { ...node.endPosition },
+          type: node.type.name,
+          named: !node.type.isAnonymous,
+          hasError: node.type.isError,
+          childCount: namedChildren.length,
+          startIndex: node.from,
+          endIndex: node.to,
+          startPosition: positions.toPosition(node.from),
+          endPosition: positions.toPosition(node.to),
           textSnippet,
           truncatedByDepth: truncatedByDepth || undefined,
           truncatedByChildLimit: truncatedByChildLimit || undefined,
@@ -96,12 +111,65 @@ function serializeNode(node: Parser.SyntaxNode, options: NormalizedParserOptions
      };
 }
 
-function countErrorNodes(node: Parser.SyntaxNode): number {
-     let count = node.isError ? 1 : 0;
-     for (const child of node.children ?? []) {
+function countErrorNodes(node: SyntaxNode): number {
+     let count = node.type.isError ? 1 : 0;
+     for (let child = node.firstChild; child; child = child.nextSibling) {
           count += countErrorNodes(child);
      }
      return count;
+}
+
+function collectNamedChildren(node: SyntaxNode): SyntaxNode[] {
+     const namedChildren: SyntaxNode[] = [];
+     for (let child = node.firstChild; child; child = child.nextSibling) {
+          if (!child.type.isAnonymous) {
+               namedChildren.push(child);
+          }
+     }
+     return namedChildren;
+}
+
+class PositionLookup {
+     private readonly lineOffsets: number[] = [0];
+
+     constructor(text: string) {
+          for (let i = 0; i < text.length; i += 1) {
+               if (text[i] === "\n") {
+                    this.lineOffsets.push(i + 1);
+               }
+          }
+     }
+
+     toPosition(index: number): SerializedPosition {
+          const lineIndex = this.findLineIndex(index);
+          const lineStart = this.lineOffsets[lineIndex] ?? 0;
+          return {
+               row: lineIndex,
+               column: index - lineStart,
+          };
+     }
+
+     private findLineIndex(index: number): number {
+          let low = 0;
+          let high = this.lineOffsets.length - 1;
+
+          while (low <= high) {
+               const mid = Math.floor((low + high) / 2);
+               const offset = this.lineOffsets[mid];
+
+               if (offset === index) {
+                    return mid;
+               }
+
+               if (offset < index) {
+                    low = mid + 1;
+               } else {
+                    high = mid - 1;
+               }
+          }
+
+          return Math.max(0, low - 1);
+     }
 }
 
 function trimText(text: string, limit: number): string {
