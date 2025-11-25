@@ -3,7 +3,7 @@ import os from "node:os";
 
 const trimOutput = (value: string | null | undefined) => value?.toString().trim() ?? "";
 
-const deriveFolderName = (folderPath: string) => {
+export const deriveFolderName = (folderPath: string) => {
      const normalized = folderPath.replace(/\\+/g, "/").replace(/\/+$/, "");
      const segments = normalized.split("/").filter(Boolean);
      return segments[segments.length - 1] ?? normalized;

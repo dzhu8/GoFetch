@@ -8,6 +8,7 @@ type FolderSyncData = {
      name: string;
      rootPath: string;
      githubUrl?: string | null;
+     isGitConnected: boolean;
      filesChanged: number;
      filesAdded: number;
      filesDeleted: number;
@@ -111,10 +112,8 @@ export default function SyncPage() {
                if (!res.ok) throw new Error("Failed to fetch folders");
 
                const data = await res.json();
-               // Filter to only show folders with valid GitHub URLs
-               const githubFolders = (data.folders || []).filter(
-                    (folder: FolderSyncData) =>
-                         folder.githubUrl && folder.githubUrl !== null && !folder.githubUrl.includes("unknown/unknown")
+               const githubFolders = (data.folders || []).filter((folder: FolderSyncData) =>
+                    Boolean(folder.isGitConnected && folder.githubUrl)
                );
                setFolders(githubFolders);
           } catch (error) {
@@ -154,7 +153,7 @@ export default function SyncPage() {
                     (folder: FolderSyncData) => folder.name === trimmedName
                );
 
-               if (!addedFolder || !addedFolder.githubUrl || addedFolder.githubUrl.includes("unknown/unknown")) {
+               if (!addedFolder || !addedFolder.isGitConnected || !addedFolder.githubUrl) {
                     await fetch(`/api/folders/${encodeURIComponent(trimmedName)}`, { method: "DELETE" });
                     setErrorModalMessage(
                          "The selected folder does not have a GitHub remote. Please connect it to GitHub before adding."
@@ -166,8 +165,8 @@ export default function SyncPage() {
                setNewFolderName("");
                setNewFolderPath("");
                setFolders(
-                    (verifyData.folders || []).filter(
-                         (folder: FolderSyncData) => folder.githubUrl && !folder.githubUrl.includes("unknown/unknown")
+                    (verifyData.folders || []).filter((folder: FolderSyncData) =>
+                         Boolean(folder.isGitConnected && folder.githubUrl)
                     )
                );
                return true;

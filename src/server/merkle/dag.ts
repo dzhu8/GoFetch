@@ -29,7 +29,8 @@ function buildDirectoryNode(currentPath: string, relativePath: string, nodes: Ma
           }
 
           const entryAbsolutePath = path.join(currentPath, entry.name);
-          const entryRelativePath = relativePath === ROOT_RELATIVE_PATH ? entry.name : path.join(relativePath, entry.name);
+          const entryRelativePath =
+               relativePath === ROOT_RELATIVE_PATH ? entry.name : path.join(relativePath, entry.name);
 
           if (entry.isDirectory()) {
                const childDirNode = buildDirectoryNode(entryAbsolutePath, entryRelativePath, nodes);

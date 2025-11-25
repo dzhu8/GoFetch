@@ -13,11 +13,7 @@ interface StoredMerkleNode {
 class MerkleStore {
      upsertFolderSnapshot(folderName: string, rootPath: string, rootHash: string): number {
           const now = new Date().toISOString();
-          const existing = db
-               .select()
-               .from(merkleFolders)
-               .where(eq(merkleFolders.folderName, folderName))
-               .get();
+          const existing = db.select().from(merkleFolders).where(eq(merkleFolders.folderName, folderName)).get();
 
           if (existing) {
                db.update(merkleFolders)
@@ -47,9 +43,7 @@ class MerkleStore {
      }
 
      replaceNodes(folderId: number, nodes: MerkleNode[]): void {
-          db.delete(merkleNodes)
-               .where(eq(merkleNodes.folderId, folderId))
-               .run();
+          db.delete(merkleNodes).where(eq(merkleNodes.folderId, folderId)).run();
 
           const now = new Date().toISOString();
           const rows = nodes.map((node) => ({
@@ -70,9 +64,7 @@ class MerkleStore {
                     continue;
                }
 
-               db.insert(merkleNodes)
-                    .values(chunk)
-                    .run();
+               db.insert(merkleNodes).values(chunk).run();
           }
      }
 
@@ -87,11 +79,7 @@ class MerkleStore {
           rootHash: string;
           nodes: Map<string, StoredMerkleNode>;
      } | null {
-          const folderRow = db
-               .select()
-               .from(merkleFolders)
-               .where(eq(merkleFolders.folderName, folderName))
-               .get();
+          const folderRow = db.select().from(merkleFolders).where(eq(merkleFolders.folderName, folderName)).get();
 
           if (!folderRow) {
                return null;
@@ -134,9 +122,7 @@ class MerkleStore {
                return;
           }
 
-          db.delete(merkleFolders)
-               .where(eq(merkleFolders.id, folderRow.id))
-               .run();
+          db.delete(merkleFolders).where(eq(merkleFolders.id, folderRow.id)).run();
      }
 
      touchFolderCheck(folderId: number): void {

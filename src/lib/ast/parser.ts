@@ -3,13 +3,7 @@ import fs from "fs";
 import type { SyntaxNode } from "@lezer/common";
 
 import { detectLanguage, getParser } from "./languages";
-import type {
-     FileEntry,
-     ParsedFileAst,
-     ParserOptions,
-     SerializedNode,
-     SerializedPosition,
-} from "./types";
+import type { FileEntry, ParsedFileAst, ParserOptions, SerializedNode, SerializedPosition } from "./types";
 
 interface NormalizedParserOptions {
      includeText: boolean;
@@ -75,7 +69,7 @@ function serializeNode(
      source: string,
      positions: PositionLookup,
      options: NormalizedParserOptions,
-     depth = 0,
+     depth = 0
 ): SerializedNode {
      const namedChildren = collectNamedChildren(node);
      const shouldTraverse = depth < options.maxDepth;

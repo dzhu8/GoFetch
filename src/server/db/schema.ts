@@ -35,6 +35,27 @@ export const chats = sqliteTable("chats", {
           .default(sql`'[]'`),
 });
 
+export const folders = sqliteTable(
+     "folders",
+     {
+          id: integer("id").primaryKey(),
+          name: text("name").notNull(),
+          rootPath: text("root_path").notNull(),
+          githubUrl: text("github_url"),
+          isGitConnected: integer("is_git_connected", { mode: "boolean" }).notNull().default(false),
+          createdAt: text("created_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+          updatedAt: text("updated_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+     },
+     (table) => ({
+          nameUniqueIdx: uniqueIndex("folders_name_idx").on(table.name),
+          rootPathUniqueIdx: uniqueIndex("folders_root_path_idx").on(table.rootPath),
+     })
+);
+
 type Metadata = Record<string, unknown>;
 
 export const embeddings = sqliteTable("embeddings", {
@@ -56,20 +77,24 @@ export const embeddings = sqliteTable("embeddings", {
 
 type ASTMetadata = Record<string, unknown>;
 
-const AST_LANGUAGE_ENUM = ["javascript", "typescript", "tsx", "python", "rust", "css", "html"] as const satisfies SupportedLanguage[];
+const AST_LANGUAGE_ENUM = [
+     "javascript",
+     "typescript",
+     "tsx",
+     "python",
+     "rust",
+     "css",
+     "html",
+] as const satisfies SupportedLanguage[];
 
 export const astFileSnapshots = sqliteTable("ast_file_snapshots", {
      id: integer("id").primaryKey(),
      folderName: text("folder_name").notNull(),
      filePath: text("file_path").notNull(),
      relativePath: text("relative_path").notNull(),
-     language: text("language", { enum: AST_LANGUAGE_ENUM })
-          .$type<SupportedLanguage>()
-          .notNull(),
+     language: text("language", { enum: AST_LANGUAGE_ENUM }).$type<SupportedLanguage>().notNull(),
      contentHash: text("content_hash").notNull(),
-     ast: text("ast", { mode: "json" })
-          .$type<SerializedNode>()
-          .notNull(),
+     ast: text("ast", { mode: "json" }).$type<SerializedNode>().notNull(),
      diagnostics: text("diagnostics", { mode: "json" })
           .$type<ASTParseDiagnostics>()
           .default(sql`'{}'`)
@@ -160,4 +185,17 @@ export const merkleNodes = sqliteTable(
      })
 );
 
-
+export const monitorEvents = sqliteTable("monitor_events", {
+     id: integer("id").primaryKey(),
+     folderId: integer("folder_id")
+          .notNull()
+          .references(() => folders.id, { onDelete: "cascade" }),
+     filePath: text("file_path").notNull(),
+     needsIndexed: integer("needs_indexed", { mode: "boolean" }).notNull().default(true),
+     createdAt: text("created_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+     updatedAt: text("updated_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});

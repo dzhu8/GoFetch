@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { selectFolderInteractive } from "./folderPicker";
+import path from "node:path";
+import { selectFolderInteractive, deriveFolderName } from "./folderPicker";
+import { findFolderByPath } from "./db";
 
 type FolderSelectionEvent = {
      path: string;
@@ -27,6 +29,28 @@ const sendJson = (res: ServerResponse, statusCode: number, payload: Record<strin
      res.statusCode = statusCode;
      res.setHeader("Content-Type", "application/json");
      res.end(JSON.stringify(payload));
+};
+
+const normalizeFolderPath = (folderPath: string): string => {
+     try {
+          return path.resolve(folderPath);
+     } catch {
+          return folderPath;
+     }
+};
+
+const resolveSelectionName = (folderPath: string, providedName?: string) => {
+     const trimmed = providedName?.trim();
+     if (trimmed) {
+          return trimmed;
+     }
+
+     const stored = findFolderByPath(folderPath);
+     if (stored?.name) {
+          return stored.name;
+     }
+
+     return deriveFolderName(folderPath);
 };
 
 const readJsonBody = async <T = Record<string, unknown>>(req: IncomingMessage): Promise<T> => {
@@ -86,10 +110,12 @@ const server = createServer(async (req, res) => {
                     return;
                }
 
+               const normalizedPath = normalizeFolderPath(selection.path);
+               const resolvedName = resolveSelectionName(normalizedPath, selection.name);
                selectionVersion += 1;
                latestSelection = {
-                    path: selection.path,
-                    name: selection.name,
+                    path: normalizedPath,
+                    name: resolvedName,
                     timestamp: Date.now(),
                     version: selectionVersion,
                };
@@ -112,10 +138,12 @@ const server = createServer(async (req, res) => {
                     return;
                }
 
+               const normalizedPath = normalizeFolderPath(body.path);
+               const resolvedName = resolveSelectionName(normalizedPath, body.name);
                selectionVersion += 1;
                latestSelection = {
-                    path: body.path,
-                    name: typeof body.name === "string" ? body.name : undefined,
+                    path: normalizedPath,
+                    name: resolvedName,
                     timestamp: Date.now(),
                     version: selectionVersion,
                };

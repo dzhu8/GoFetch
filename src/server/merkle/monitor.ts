@@ -3,17 +3,21 @@ import type { FolderRegistration } from "@/server/folderRegistry";
 import { buildMerkleDag } from "./dag";
 import { diffMerkleNodes } from "./diff";
 import merkleStore from "./store";
+import type { MerkleDiff } from "./types";
 
 interface TrackedFolder {
      name: string;
      rootPath: string;
 }
 
+type FolderDiffListener = (payload: { folderName: string; diff: MerkleDiff }) => void;
+
 class MerkleMonitor {
      private folders = new Map<string, TrackedFolder>();
      private timer: NodeJS.Timeout | null = null;
      private polling = false;
      private readonly intervalMs = 10_000;
+     private listeners = new Map<string, Set<FolderDiffListener>>();
 
      registerFolder(folder: FolderRegistration): void {
           this.folders.set(folder.name, { name: folder.name, rootPath: folder.rootPath });
@@ -26,20 +30,40 @@ class MerkleMonitor {
 
      unregisterFolder(name: string): void {
           this.folders.delete(name);
+          this.listeners.delete(name);
           if (this.folders.size === 0) {
                this.stopTimer();
           }
      }
 
-     private ensureTimer(): void {
-         if (this.timer) {
-              return;
-         }
+     subscribe(folderName: string, listener: FolderDiffListener): () => void {
+          const listenersForFolder = this.listeners.get(folderName) ?? new Set<FolderDiffListener>();
+          listenersForFolder.add(listener);
+          this.listeners.set(folderName, listenersForFolder);
+          this.ensureTimer();
 
-         this.timer = setInterval(() => this.poll(), this.intervalMs);
-         if (typeof this.timer.unref === "function") {
-              this.timer.unref();
-         }
+          return () => {
+               const current = this.listeners.get(folderName);
+               if (!current) {
+                    return;
+               }
+
+               current.delete(listener);
+               if (current.size === 0) {
+                    this.listeners.delete(folderName);
+               }
+          };
+     }
+
+     private ensureTimer(): void {
+          if (this.timer) {
+               return;
+          }
+
+          this.timer = setInterval(() => this.poll(), this.intervalMs);
+          if (typeof this.timer.unref === "function") {
+               this.timer.unref();
+          }
      }
 
      private stopTimer(): void {
@@ -81,12 +105,28 @@ class MerkleMonitor {
                               deleted: diff.deletedFiles,
                          })
                     );
+                    this.notifyListeners(folder.name, diff);
                }
 
                const folderId = merkleStore.persistBuild(folder.name, folder.rootPath, build);
                merkleStore.touchFolderCheck(folderId);
           } catch (error) {
                console.error(`[merkle] Failed to poll folder ${folder.name}:`, error);
+          }
+     }
+
+     private notifyListeners(folderName: string, diff: MerkleDiff): void {
+          const listenersForFolder = this.listeners.get(folderName);
+          if (!listenersForFolder) {
+               return;
+          }
+
+          for (const listener of listenersForFolder) {
+               try {
+                    listener({ folderName, diff });
+               } catch (error) {
+                    console.error(`[merkle] Failed to notify listener for ${folderName}:`, error);
+               }
           }
      }
 }

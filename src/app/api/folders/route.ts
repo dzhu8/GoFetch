@@ -22,21 +22,18 @@ export async function GET(req: NextRequest) {
           // Include GitHub sync data
           const foldersWithGitData = await Promise.all(
                folders.map(async (folder) => {
+                    if (!folder.isGitConnected) {
+                         return {
+                              ...folder,
+                              filesChanged: 0,
+                              filesAdded: 0,
+                              filesDeleted: 0,
+                              linesAdded: 0,
+                              linesDeleted: 0,
+                         };
+                    }
+
                     try {
-                         // Check if folder is a git repository
-                         const { stdout: remoteUrl } = await execAsync("git config --get remote.origin.url", {
-                              cwd: folder.rootPath,
-                         });
-
-                         // Get GitHub URL
-                         let githubUrl = remoteUrl.trim();
-                         if (githubUrl.startsWith("git@github.com:")) {
-                              githubUrl = githubUrl.replace("git@github.com:", "https://github.com/");
-                         }
-                         if (githubUrl.endsWith(".git")) {
-                              githubUrl = githubUrl.slice(0, -4);
-                         }
-
                          // Fetch from remote to get latest changes
                          await execAsync("git fetch origin", { cwd: folder.rootPath });
 
@@ -73,7 +70,6 @@ export async function GET(req: NextRequest) {
 
                          return {
                               ...folder,
-                              githubUrl,
                               filesChanged,
                               filesAdded,
                               filesDeleted,
@@ -85,7 +81,6 @@ export async function GET(req: NextRequest) {
                          console.error(`Error getting git data for ${folder.name}:`, error);
                          return {
                               ...folder,
-                              githubUrl: null,
                               filesChanged: 0,
                               filesAdded: 0,
                               filesDeleted: 0,

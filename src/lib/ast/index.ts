@@ -4,7 +4,7 @@ import { parseFiles } from "./parser";
 
 export function parseFolderRegistration(
      registration: FolderRegistrationLike,
-     options?: ParserOptions,
+     options?: ParserOptions
 ): ParsedFileAst[] {
      const files = listSupportedFiles(registration);
      return parseFiles(files, options);

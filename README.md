@@ -14,3 +14,4 @@ yarn db:migrate
 This command reads `drizzle.config.ts`, targets `data/db.sqlite`, and keeps generated migration SQL under the `drizzle/` directory.
 
 ## To-Dos
+Migrate from tempMonitor to an actual monitor component
