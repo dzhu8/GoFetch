@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import monitorService from "@/server/monitoring/monitorService";
+import folderRegistry from "@/server/folderRegistry";
 
 /*
 Note this is redundant but remains active for manual control if needed. 
@@ -18,7 +19,11 @@ export async function POST(req: NextRequest) {
           }
 
           if (enabled) {
-               monitorService.enable(folderName);
+               const folder = folderRegistry.getFolderByName(folderName);
+               if (!folder) {
+                    return NextResponse.json({ error: `Folder ${folderName} is not registered.` }, { status: 404 });
+               }
+               monitorService.enable(folderName, folder.rootPath);
           } else {
                monitorService.disable(folderName);
           }

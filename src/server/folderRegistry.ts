@@ -8,6 +8,7 @@ import { IGNORED_DIRECTORY_NAMES, IGNORED_FILE_NAMES } from "./folderIgnore";
 import { indexFolder, removeFolderIndex } from "./merkle/service";
 import merkleMonitor from "./merkle/monitor";
 import monitorService from "./monitoring/monitorService";
+import { cancelInitialEmbedding, ensureFolderPrimed, scheduleInitialEmbedding } from "@/lib/embed/initial";
 
 //@ts-ignore
 export type FolderTree = Record<string, FolderTree | null>;
@@ -50,7 +51,8 @@ export class FolderRegistry {
           this.folders.set(name, registration);
           this.safeIndexFolder(registration);
           merkleMonitor.registerFolder(registration);
-          monitorService.enable(name);
+          monitorService.enable(name, registration.rootPath);
+          scheduleInitialEmbedding(registration);
           return registration;
      }
 
@@ -78,7 +80,7 @@ export class FolderRegistry {
           this.safeIndexFolder(registration);
           merkleMonitor.updateFolder(registration);
           monitorService.disable(name);
-          monitorService.enable(name);
+          monitorService.enable(name, registration.rootPath);
           return registration;
      }
 
@@ -92,6 +94,7 @@ export class FolderRegistry {
           removeFolderIndex(name);
           merkleMonitor.unregisterFolder(name);
           monitorService.disable(name);
+          cancelInitialEmbedding(name);
      }
 
      private buildRegistration(
@@ -133,7 +136,10 @@ export class FolderRegistry {
                          this.folders.set(record.name, registration);
                          this.safeIndexFolder(registration);
                          merkleMonitor.registerFolder(registration);
-                         monitorService.enable(record.name);
+                         monitorService.enable(record.name, registration.rootPath);
+                         ensureFolderPrimed(registration).catch((error) => {
+                              console.error(`[folderRegistry] Failed prime for ${record.name}:`, error);
+                         });
                     } catch (error) {
                          console.error(`[folderRegistry] Skipping persisted folder ${record.name}:`, error);
                     }

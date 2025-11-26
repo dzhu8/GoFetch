@@ -1,6 +1,5 @@
 import { eq } from "drizzle-orm";
 
-import folderRegistry from "@/server/folderRegistry";
 import merkleMonitor from "@/server/merkle/monitor";
 import db from "@/server/db";
 import { folders, monitorEvents } from "@/server/db/schema";
@@ -22,14 +21,13 @@ class MonitorService {
           return this.active.has(folderName);
      }
 
-     enable(folderName: string): void {
+     enable(folderName: string, rootPath: string): void {
           if (this.active.has(folderName)) {
                return;
           }
 
-          const folder = folderRegistry.getFolderByName(folderName);
-          if (!folder) {
-               throw new Error(`Folder ${folderName} is not registered.`);
+          if (!rootPath) {
+               throw new Error(`Folder ${folderName} is missing a root path for monitoring.`);
           }
 
           const folderRecord = db.select({ id: folders.id }).from(folders).where(eq(folders.name, folderName)).get();
@@ -37,7 +35,7 @@ class MonitorService {
                throw new Error(`Folder ${folderName} not found in database.`);
           }
 
-          merkleMonitor.registerFolder(folder);
+          merkleMonitor.registerFolder({ name: folderName, rootPath });
 
           const unsubscribe = merkleMonitor.subscribe(folderName, ({ diff }) => {
                this.logDagChange(folderRecord.id, diff);

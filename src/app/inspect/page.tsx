@@ -320,7 +320,7 @@ export default function InspectPage() {
                               Codebase Analytics
                          </h1>
                          <p className="text-sm md:text-base text-black/60 dark:text-white/60">
-                              Monitor folders and inspect AST outputs written to <code className="px-1">test/</code>.
+                              Monitor folders, inspect codebase changes.
                          </p>
                     </div>
                     <div className="flex flex-col items-center gap-3">
@@ -424,8 +424,8 @@ export default function InspectPage() {
                                                             </label>
                                                        </div>
                                                        <p className="text-[11px] text-black/50 dark:text-white/50">
-                                                            Creates AST + DAG logs in{" "}
-                                                            <code className="px-1">test/</code> for quick diagnostics.
+                                                            Creates AST + DAG logs for quick diagnostics. Not yet fully
+                                                            implemented!
                                                        </p>
                                                   </div>
                                              );

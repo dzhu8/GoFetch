@@ -1,4 +1,4 @@
-import { ConfigModelProvider, MinimalProvider, ModelList } from "@/lib/models/types";
+import { ConfigModelProvider, EmbeddingModelClient, MinimalProvider, ModelList } from "@/lib/models/types";
 import { AnthropicProvider } from "@/lib/models/providers/AnthropicProvider";
 import { BaseModelProvider } from "@/lib/models/providers/BaseModelProvider";
 import { OllamaProvider } from "@/lib/models/providers/OllamaProvider";
@@ -13,8 +13,11 @@ const providerFactories: Record<string, ProviderFactory> = {
      ollama: OllamaProvider,
 };
 
-export type RegisteredProvider = ConfigModelProvider & {
-     provider: BaseModelProvider;
+export type RegisteredProvider<
+     TChat = unknown,
+     TEmbedding extends EmbeddingModelClient = EmbeddingModelClient,
+> = ConfigModelProvider & {
+     provider: BaseModelProvider<TChat, TEmbedding>;
 };
 
 export class ModelRegistry {
@@ -22,6 +25,7 @@ export class ModelRegistry {
 
      constructor() {
           this.initializeActiveProviders();
+          this.debugEmbeddingRegistration("qwen3-embedding:8b");
      }
 
      private initializeActiveProviders() {
@@ -29,6 +33,22 @@ export class ModelRegistry {
           this.activeProviders = configuredProviders
                .map((config) => this.createProvider(config))
                .filter((config): config is RegisteredProvider => Boolean(config));
+     }
+
+     private debugEmbeddingRegistration(modelKey: string) {
+          const provider = this.activeProviders.find((registered) =>
+               registered.embeddingModels?.some((model) => model.key === modelKey)
+          );
+
+          if (provider) {
+               console.log(
+                    `[ModelRegistry] Found embedding model ${modelKey} on provider ${provider.id} (${provider.name}).`
+               );
+          } else {
+               console.warn(
+                    `[ModelRegistry] Embedding model ${modelKey} is not registered on any provider at startup.`
+               );
+          }
      }
 
      private createProvider(config: ConfigModelProvider): RegisteredProvider | null {

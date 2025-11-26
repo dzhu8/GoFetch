@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import GithubProjectCard from "@/components/GithubProjectCard";
 import { Loader2, Plus } from "lucide-react";
+import { useEmbeddingProgressActions } from "@/components/embed/EmbeddingProgressProvider";
 
 type FolderSyncData = {
      name: string;
@@ -65,6 +66,7 @@ export default function SyncPage() {
      const [isPromptingFolder, setIsPromptingFolder] = useState(false);
      const lastSelectionVersionRef = useRef(0);
      const cliPollingErrorLoggedRef = useRef(false);
+     const { trackFolderEmbedding } = useEmbeddingProgressActions();
 
      const requestCliSelection = useCallback(async () => {
           const useProxy = shouldProxyCliRequests();
@@ -129,7 +131,7 @@ export default function SyncPage() {
 
           if (!trimmedName || !trimmedPath) {
                setErrorModalMessage("Folder name and path are required.");
-               return false;
+               return null;
           }
 
           setIsSavingFolder(true);
@@ -169,18 +171,21 @@ export default function SyncPage() {
                          Boolean(folder.isGitConnected && folder.githubUrl)
                     )
                );
-               return true;
+               return trimmedName;
           } catch (error) {
                console.error("Error adding folder:", error);
                setErrorModalMessage(error instanceof Error ? error.message : "Failed to add folder");
-               return false;
+               return null;
           } finally {
                setIsSavingFolder(false);
           }
      };
 
      const handleAddFolder = async () => {
-          await saveFolder(newFolderName, newFolderPath);
+          const createdFolderName = await saveFolder(newFolderName, newFolderPath);
+          if (createdFolderName) {
+               trackFolderEmbedding(createdFolderName);
+          }
      };
 
      const handleAddFolderButton = async () => {

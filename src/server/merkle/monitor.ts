@@ -1,11 +1,14 @@
-import type { FolderRegistration } from "@/server/folderRegistry";
-
 import { buildMerkleDag } from "./dag";
 import { diffMerkleNodes } from "./diff";
 import merkleStore from "./store";
 import type { MerkleDiff } from "./types";
 
 interface TrackedFolder {
+     name: string;
+     rootPath: string;
+}
+
+interface FolderRegistrationInput {
      name: string;
      rootPath: string;
 }
@@ -19,12 +22,12 @@ class MerkleMonitor {
      private readonly intervalMs = 10_000;
      private listeners = new Map<string, Set<FolderDiffListener>>();
 
-     registerFolder(folder: FolderRegistration): void {
+     registerFolder(folder: FolderRegistrationInput): void {
           this.folders.set(folder.name, { name: folder.name, rootPath: folder.rootPath });
           this.ensureTimer();
      }
 
-     updateFolder(folder: FolderRegistration): void {
+     updateFolder(folder: FolderRegistrationInput): void {
           this.registerFolder(folder);
      }
 

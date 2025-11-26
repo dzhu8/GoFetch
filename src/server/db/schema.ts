@@ -35,6 +35,14 @@ export const chats = sqliteTable("chats", {
           .default(sql`'[]'`),
 });
 
+export const appSettings = sqliteTable("app_settings", {
+     key: text("key").primaryKey(),
+     value: text("value", { mode: "json" }).$type<unknown | null>(),
+     updatedAt: text("updated_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const folders = sqliteTable(
      "folders",
      {
@@ -64,6 +72,7 @@ export const embeddings = sqliteTable("embeddings", {
      folderName: text("folder_name").notNull(),
      filePath: text("file_path").notNull(),
      relativePath: text("relative_path").notNull(),
+     fileSnapshotId: integer("file_snapshot_id").references(() => astFileSnapshots.id, { onDelete: "cascade" }),
      content: text("content"),
      embedding: blob("embedding").notNull(),
      dim: integer("dim").notNull(),
