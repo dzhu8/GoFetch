@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -54,6 +54,7 @@ export default function InspectPage() {
      const [isSavingFolder, setIsSavingFolder] = useState(false);
      const [cliFolderWatcherEnabled, setCliFolderWatcherEnabled] = useState(false);
      const [isPromptingFolder, setIsPromptingFolder] = useState(false);
+     const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
      const lastSelectionVersionRef = useRef(0);
      const cliPollingErrorLoggedRef = useRef(false);
 
@@ -312,6 +313,34 @@ export default function InspectPage() {
 
      const isBusy = loadingFolders || loadingMonitorState;
 
+     const handleDeleteFolder = useCallback(
+          async (folderName: string) => {
+               const confirmed = typeof window === "undefined" ? true : window.confirm(`Remove ${folderName}?`);
+               if (!confirmed) {
+                    return;
+               }
+
+               setDeletingFolder(folderName);
+               try {
+                    const res = await fetch(`/api/folders/${encodeURIComponent(folderName)}`, {
+                         method: "DELETE",
+                         cache: "no-store",
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                         throw new Error(data?.error || data?.message || "Failed to remove folder");
+                    }
+                    await fetchFolders();
+               } catch (error) {
+                    console.error("Failed to remove folder", error);
+                    setErrorMessage(error instanceof Error ? error.message : "Failed to remove folder");
+               } finally {
+                    setDeletingFolder((current) => (current === folderName ? null : current));
+               }
+          },
+          [fetchFolders]
+     );
+
      return (
           <div className="h-full flex flex-col">
                <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-4">
@@ -388,19 +417,33 @@ export default function InspectPage() {
                                         {folders.map((folder) => {
                                              const checked = monitored.has(folder.name);
                                              const disabled = pendingFolder === folder.name;
+                                             const isDeleting = deletingFolder === folder.name;
                                              return (
                                                   <div
                                                        key={folder.name}
                                                        className="border-2 border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm"
                                                   >
-                                                       <div>
+                                                       <div className="flex items-start justify-between gap-3">
                                                             <p className="text-sm font-semibold text-black dark:text-white">
                                                                  {folder.name}
                                                             </p>
-                                                            <p className="text-xs text-black/60 dark:text-white/60 truncate">
-                                                                 {folder.rootPath}
-                                                            </p>
+                                                            <button
+                                                                 type="button"
+                                                                 onClick={() => handleDeleteFolder(folder.name)}
+                                                                 disabled={isDeleting}
+                                                                 className="p-2 rounded-lg border border-light-200 dark:border-dark-200 text-black/60 dark:text-white/60 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-50"
+                                                                 title="Remove folder"
+                                                            >
+                                                                 {isDeleting ? (
+                                                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                                                 ) : (
+                                                                      <Trash2 className="w-4 h-4" />
+                                                                 )}
+                                                            </button>
                                                        </div>
+                                                       <p className="text-xs text-black/60 dark:text-white/60 truncate">
+                                                            {folder.rootPath}
+                                                       </p>
                                                        <div className="flex items-center justify-between text-sm">
                                                             <span className="text-black/70 dark:text-white/70">
                                                                  Monitor folder

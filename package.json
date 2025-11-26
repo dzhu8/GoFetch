@@ -13,7 +13,8 @@
           "dev:web": "next dev",
           "dev:cli": "yarn workspace gofetch-cli dev",
           "format:write": "prettier . --write",
-          "db:migrate": "drizzle-kit push --config drizzle.config.ts"
+          "db:migrate": "drizzle-kit push --config drizzle.config.ts",
+          "dump:sqlite": "node test/dumpSqlite.js"
      },
      "dependencies": {
           "@headlessui/react": "^2.2.9",

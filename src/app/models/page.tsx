@@ -336,7 +336,7 @@ const ModelsPage = () => {
           return (
                <div
                     key={provider.id}
-                    className="bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl p-4 md:p-6 space-y-4"
+                    className="bg-light-primary dark:bg-dark-primary border-2 border-light-200 dark:border-dark-200 rounded-2xl p-4 md:p-6 space-y-4"
                >
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                          <div>
@@ -349,7 +349,7 @@ const ModelsPage = () => {
                               <button
                                    type="button"
                                    onClick={() => loadModelsForProvider(provider)}
-                                   className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-light-200 dark:border-dark-200 text-xs font-medium text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                   className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-light-200 dark:border-dark-200 text-xs font-medium text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
                               >
                                    <RefreshCcw className="w-4 h-4" />
                                    Refresh
@@ -549,10 +549,10 @@ const ModelsPage = () => {
                               </p>
                          </div>
                          <div className="flex flex-wrap items-center justify-center gap-3 text-sm text-black/70 dark:text-white/70">
-                              <div className="px-4 py-2 rounded-xl border border-light-200 dark:border-dark-200 bg-light-primary/70 dark:bg-dark-primary/70">
+                              <div className="px-4 py-2 rounded-xl border-2 border-light-200 dark:border-dark-200 bg-light-primary/70 dark:bg-dark-primary/70">
                                    {providers.length} {providers.length === 1 ? "Provider" : "Providers"}
                               </div>
-                              <div className="px-4 py-2 rounded-xl border border-light-200 dark:border-dark-200 bg-light-primary/70 dark:bg-dark-primary/70">
+                              <div className="px-4 py-2 rounded-xl border-2 border-light-200 dark:border-dark-200 bg-light-primary/70 dark:bg-dark-primary/70">
                                    {totalModels} {totalModels === 1 ? "Model" : "Models"}
                               </div>
                               <button
@@ -721,7 +721,7 @@ const TestEmbeddingModal = ({ config, onClose }: TestEmbeddingModalProps) => {
                                    <textarea
                                         value={textA}
                                         onChange={(event) => setTextA(event.target.value)}
-                                        className="mt-1 h-32 w-full rounded-xl border border-light-200 dark:border-dark-200 bg-light-secondary dark:bg-dark-secondary px-3 py-2 text-sm text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692]"
+                                        className="mt-1 h-32 w-full rounded-xl border-2 border-light-200 dark:border-dark-200 bg-light-secondary dark:bg-dark-secondary px-3 py-2 text-sm text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692]"
                                    />
                               </div>
                               <div>
@@ -731,7 +731,7 @@ const TestEmbeddingModal = ({ config, onClose }: TestEmbeddingModalProps) => {
                                    <textarea
                                         value={textB}
                                         onChange={(event) => setTextB(event.target.value)}
-                                        className="mt-1 h-32 w-full rounded-xl border border-light-200 dark:border-dark-200 bg-light-secondary dark:bg-dark-secondary px-3 py-2 text-sm text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692]"
+                                        className="mt-1 h-32 w-full rounded-xl border-2 border-light-200 dark:border-dark-200 bg-light-secondary dark:bg-dark-secondary px-3 py-2 text-sm text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692]"
                                    />
                               </div>
                          </div>

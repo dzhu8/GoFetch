@@ -19,13 +19,6 @@ const AVAILABLE_MODELS = [
           recommended: false,
      },
      {
-          name: "llama3.2:1b",
-          size: "1.3 GB",
-          description: "Meta's Llama 3.2 1B model - ultra lightweight",
-          family: "Llama",
-          recommended: false,
-     },
-     {
           name: "llama3.1:8b",
           size: "4.7 GB",
           description: "Meta's Llama 3.1 8B model - balanced performance",
@@ -68,18 +61,18 @@ const AVAILABLE_MODELS = [
           recommended: true,
      },
      {
-          name: "gemma2:9b",
-          size: "5.5 GB",
-          description: "Google's Gemma 2 9B - strong performance on reasoning tasks",
-          family: "Gemma",
-          recommended: false,
-     },
-     {
           name: "gemma3:27b",
           size: "16 GB",
           description: "Google's Gemma 3 27B - high-end performance",
           family: "Gemma",
           recommended: true,
+     },
+     {
+          name: "embeddinggemma:300m",
+          size: "622 MB",
+          description: "Google's Embedding Gemma 300M - lightweight embedding model",
+          family: "Gemma",
+          recommended: false,
      },
      {
           name: "mistral:7b",
