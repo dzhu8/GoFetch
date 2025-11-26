@@ -3,6 +3,10 @@ export type Model = {
      key: string;
 };
 
+export interface EmbeddingModelClient {
+     embedDocuments(documents: string[]): Promise<number[][]>;
+}
+
 // This type also allows for additional custom models to be configured
 export type ConfigModelProvider = {
      id: string;

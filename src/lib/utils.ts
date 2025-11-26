@@ -18,3 +18,31 @@ export const formatTimeDifference = (date1: Date | string, date2: Date | string)
           return `${Math.floor(diffInSeconds / 86400)} day${Math.floor(diffInSeconds / 86400) !== 1 ? "s" : ""}`;
      else return `${Math.floor(diffInSeconds / 31536000)} year${Math.floor(diffInSeconds / 31536000) !== 1 ? "s" : ""}`;
 };
+
+export const cosineSimilarity = (vectorA: number[], vectorB: number[]): number => {
+     if (!Array.isArray(vectorA) || !Array.isArray(vectorB)) {
+          throw new Error("Cosine similarity requires two numeric vectors");
+     }
+
+     if (vectorA.length === 0 || vectorB.length === 0 || vectorA.length !== vectorB.length) {
+          throw new Error("Vectors must be non-empty and equal in length");
+     }
+
+     let dot = 0;
+     let magA = 0;
+     let magB = 0;
+
+     for (let i = 0; i < vectorA.length; i += 1) {
+          const a = vectorA[i] ?? 0;
+          const b = vectorB[i] ?? 0;
+          dot += a * b;
+          magA += a * a;
+          magB += b * b;
+     }
+
+     if (magA === 0 || magB === 0) {
+          throw new Error("Cannot compute cosine similarity for zero-magnitude vectors");
+     }
+
+     return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+};

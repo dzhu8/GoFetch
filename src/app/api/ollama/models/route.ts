@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inferOllamaFamilyFromName, isRecommendedOllamaModel } from "@/lib/models/providers/OllamaProvider";
+import type { OllamaTag } from "@/lib/models/ollamaClient";
 import modelRegistry from "@/server/providerRegistry";
 
 const formatSize = (bytes: number): string => {
@@ -16,8 +17,6 @@ const AVAILABLE_MODELS = [
           description: "Meta's Llama 3.2 3B model - fast and efficient for general tasks",
           family: "Llama",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "llama3.2:1b",
@@ -25,8 +24,6 @@ const AVAILABLE_MODELS = [
           description: "Meta's Llama 3.2 1B model - ultra lightweight",
           family: "Llama",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "llama3.1:8b",
@@ -34,8 +31,6 @@ const AVAILABLE_MODELS = [
           description: "Meta's Llama 3.1 8B model - balanced performance",
           family: "Llama",
           recommended: true,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "llama3.3:70b",
@@ -43,8 +38,6 @@ const AVAILABLE_MODELS = [
           description: "Meta's Llama 3.3 70B model - high performance, requires significant resources",
           family: "Llama",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "qwen2.5:7b",
@@ -52,8 +45,6 @@ const AVAILABLE_MODELS = [
           description: "Alibaba's Qwen 2.5 7B - excellent multilingual support",
           family: "Qwen",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "qwen2.5:14b",
@@ -61,8 +52,6 @@ const AVAILABLE_MODELS = [
           description: "Alibaba's Qwen 2.5 14B - stronger reasoning capabilities",
           family: "Qwen",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "qwen2.5:32b",
@@ -70,8 +59,6 @@ const AVAILABLE_MODELS = [
           description: "Alibaba's Qwen 2.5 32B - advanced multilingual model",
           family: "Qwen",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "qwen3-embedding:8b",
@@ -79,8 +66,6 @@ const AVAILABLE_MODELS = [
           description: "Alibaba's Qwen 3 Embedding 8B - optimized for text embeddings",
           family: "Qwen",
           recommended: true,
-          supportsChat: false,
-          supportsEmbedding: true,
      },
      {
           name: "gemma2:9b",
@@ -88,8 +73,6 @@ const AVAILABLE_MODELS = [
           description: "Google's Gemma 2 9B - strong performance on reasoning tasks",
           family: "Gemma",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "gemma3:27b",
@@ -97,8 +80,6 @@ const AVAILABLE_MODELS = [
           description: "Google's Gemma 3 27B - high-end performance",
           family: "Gemma",
           recommended: true,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "mistral:7b",
@@ -106,8 +87,6 @@ const AVAILABLE_MODELS = [
           description: "Mistral 7B - excellent for code and reasoning",
           family: "Mistral",
           recommended: true,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "phi3:3.8b",
@@ -115,8 +94,6 @@ const AVAILABLE_MODELS = [
           description: "Microsoft's Phi-3 Mini - compact but capable",
           family: "Phi",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "phi3:14b",
@@ -124,8 +101,6 @@ const AVAILABLE_MODELS = [
           description: "Microsoft's Phi-3 Medium - enhanced capabilities",
           family: "Phi",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "granite3-dense:8b",
@@ -133,8 +108,6 @@ const AVAILABLE_MODELS = [
           description: "IBM's Granite 3 Dense 8B - enterprise-grade performance",
           family: "Granite",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "granite3-moe:3b",
@@ -142,8 +115,6 @@ const AVAILABLE_MODELS = [
           description: "IBM's Granite 3 MoE 3B - mixture of experts model",
           family: "Granite",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
      {
           name: "r1-1776:70b",
@@ -151,10 +122,48 @@ const AVAILABLE_MODELS = [
           description: "Deepseek R1 1776 70B - high capacity model",
           family: "Deepseek",
           recommended: false,
-          supportsChat: true,
-          supportsEmbedding: true,
      },
 ];
+
+const EMBEDDING_HINTS = ["embedding", "embed", "vector", "text-embed"];
+
+const includesEmbeddingHint = (value?: string) => {
+     if (!value) {
+          return false;
+     }
+     const lower = value.toLowerCase();
+     return EMBEDDING_HINTS.some((hint) => lower.includes(hint));
+};
+
+type CapabilityOptions = {
+     tag?: OllamaTag;
+     chatConfigured?: boolean;
+     embeddingConfigured?: boolean;
+};
+
+const deriveCapabilities = (modelName: string, options: CapabilityOptions) => {
+     const families = new Set<string>();
+     const tag = options.tag;
+
+     if (tag?.details?.family) {
+          families.add(tag.details.family.toLowerCase());
+     }
+
+     tag?.details?.families?.forEach((family) => {
+          if (family) {
+               families.add(family.toLowerCase());
+          }
+     });
+
+     const familyIndicatesEmbedding = Array.from(families).some((family) => includesEmbeddingHint(family));
+     const nameIndicatesEmbedding = includesEmbeddingHint(modelName);
+     const isEmbeddingSpecialized = familyIndicatesEmbedding || nameIndicatesEmbedding;
+
+     const supportsEmbedding = Boolean(options.embeddingConfigured) || isEmbeddingSpecialized;
+     const supportsChat = Boolean(options.chatConfigured) || !isEmbeddingSpecialized;
+
+     return { supportsChat, supportsEmbedding };
+};
 
 export async function GET(req: NextRequest) {
      const { searchParams } = new URL(req.url);
@@ -169,13 +178,15 @@ export async function GET(req: NextRequest) {
                },
           });
 
-          const installedModels = new Map<string, any>();
+          const installedModels = new Map<string, OllamaTag>();
 
           if (res.ok) {
-               const data = await res.json();
-               if (data.models && Array.isArray(data.models)) {
-                    data.models.forEach((model: any) => {
-                         installedModels.set(model.name || "", model);
+               const data = (await res.json()) as { models?: OllamaTag[] };
+               if (Array.isArray(data.models)) {
+                    data.models.forEach((model) => {
+                         if (typeof model?.name === "string" && model.name.trim().length > 0) {
+                              installedModels.set(model.name, model);
+                         }
                     });
                }
           }
@@ -192,36 +203,55 @@ export async function GET(req: NextRequest) {
                }
           }
 
+          const curatedNameSet = new Set(AVAILABLE_MODELS.map((model) => model.name));
+
           // Combine available models with installation status
-          const allModels = AVAILABLE_MODELS.map((model) => ({
-               name: model.name,
-               size: model.size,
-               description: model.description,
-               installed: installedModels.has(model.name),
-               recommended: isRecommendedOllamaModel(model.name) || model.recommended,
-               family: model.family || inferOllamaFamilyFromName(model.name),
-               supportsChat: model.supportsChat,
-               supportsEmbedding: model.supportsEmbedding,
-               isChatModel: currentChatModels.has(model.name),
-               isEmbeddingModel: currentEmbeddingModels.has(model.name),
-          }));
+          const allModels = AVAILABLE_MODELS.map((model) => {
+               const tag = installedModels.get(model.name);
+               const { supportsChat, supportsEmbedding } = deriveCapabilities(model.name, {
+                    tag,
+                    chatConfigured: currentChatModels.has(model.name),
+                    embeddingConfigured: currentEmbeddingModels.has(model.name),
+               });
+
+               return {
+                    name: model.name,
+                    size: model.size,
+                    description: model.description,
+                    installed: Boolean(tag),
+                    recommended: isRecommendedOllamaModel(model.name) || model.recommended,
+                    family: model.family || inferOllamaFamilyFromName(model.name),
+                    supportsChat,
+                    supportsEmbedding,
+                    isChatModel: currentChatModels.has(model.name),
+                    isEmbeddingModel: currentEmbeddingModels.has(model.name),
+               };
+          });
 
           // Add installed models that aren't in AVAILABLE_MODELS
           installedModels.forEach((modelData, modelName) => {
-               if (!AVAILABLE_MODELS.some((m) => m.name === modelName)) {
-                    allModels.push({
-                         name: modelName,
-                         size: formatSize(modelData.size || 0),
-                         description: `Local model - ${modelName}`,
-                         installed: true,
-                         recommended: false,
-                         family: inferOllamaFamilyFromName(modelName),
-                         supportsChat: true,
-                         supportsEmbedding: true,
-                         isChatModel: currentChatModels.has(modelName),
-                         isEmbeddingModel: currentEmbeddingModels.has(modelName),
-                    });
+               if (curatedNameSet.has(modelName)) {
+                    return;
                }
+
+               const { supportsChat, supportsEmbedding } = deriveCapabilities(modelName, {
+                    tag: modelData,
+                    chatConfigured: currentChatModels.has(modelName),
+                    embeddingConfigured: currentEmbeddingModels.has(modelName),
+               });
+
+               allModels.push({
+                    name: modelName,
+                    size: formatSize(modelData.size || 0),
+                    description: `Local model - ${modelName}`,
+                    installed: true,
+                    recommended: false,
+                    family: inferOllamaFamilyFromName(modelName),
+                    supportsChat,
+                    supportsEmbedding,
+                    isChatModel: currentChatModels.has(modelName),
+                    isEmbeddingModel: currentEmbeddingModels.has(modelName),
+               });
           });
 
           // Sort: recommended first, then by name

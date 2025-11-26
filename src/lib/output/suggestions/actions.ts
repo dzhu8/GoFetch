@@ -1,9 +1,6 @@
 import { Message } from "@/components/ChatWindow";
 
-export const getSuggestions = async (
-     chatHistory: Message[],
-     chatModel: { providerId: string; key: string }
-) => {
+export const getSuggestions = async (chatHistory: Message[], chatModel: { providerId: string; key: string }) => {
      if (!chatModel.providerId || !chatModel.key) {
           return [];
      }

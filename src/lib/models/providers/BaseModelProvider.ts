@@ -1,4 +1,4 @@
-import { ConfigModelProvider, Model, ModelList } from "@/lib/models/types";
+import { ConfigModelProvider, EmbeddingModelClient, Model, ModelList } from "@/lib/models/types";
 
 export type ProviderModelMetadata = {
      key: string;
@@ -9,7 +9,10 @@ export type ProviderModelMetadata = {
      description?: string;
 };
 
-export abstract class BaseModelProvider<ChatModel = unknown, EmbeddingModel = unknown> {
+export abstract class BaseModelProvider<
+     ChatModel = unknown,
+     EmbeddingModel extends EmbeddingModelClient = EmbeddingModelClient,
+> {
      constructor(protected readonly definition: ConfigModelProvider) {}
 
      protected get config() {
