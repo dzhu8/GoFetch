@@ -13,6 +13,7 @@ import crypto from "crypto";
 import { useParams, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { getSuggestions } from "../output/suggestions/actions";
+import { resolveModelPreference } from "../models/preferenceResolver";
 import { MinimalProvider } from "../models/types";
 
 export type Section = {
@@ -41,6 +42,7 @@ type ChatContext = {
      hasError: boolean;
      chatModelProvider: ChatModelProvider;
      embeddingModelProvider: EmbeddingModelProvider;
+     systemInstructions: string;
      setFiles: (files: File[]) => void;
      setFileIds: (fileIds: string[]) => void;
      sendMessage: (message: string, messageId?: string, rewrite?: boolean) => Promise<void>;
@@ -69,101 +71,53 @@ const checkConfig = async (
      setChatModelProvider: (provider: ChatModelProvider) => void,
      setEmbeddingModelProvider: (provider: EmbeddingModelProvider) => void,
      setIsConfigReady: (ready: boolean) => void,
-     setHasError: (hasError: boolean) => void
+     setHasError: (hasError: boolean) => void,
+     setSystemInstructions: (value: string) => void
 ) => {
      try {
-          let chatModelKey = localStorage.getItem("chatModelKey");
-          let chatModelProviderId = localStorage.getItem("chatModelProviderId");
-          let embeddingModelKey = localStorage.getItem("embeddingModelKey");
-          let embeddingModelProviderId = localStorage.getItem("embeddingModelProviderId");
+          const [configRes, providersRes] = await Promise.all([
+               fetch(`/api/config`, { headers: { "Content-Type": "application/json" } }),
+               fetch(`/api/providers`, { headers: { "Content-Type": "application/json" } }),
+          ]);
 
-          if (!chatModelKey || !chatModelProviderId || !embeddingModelKey || !embeddingModelProviderId) {
-               try {
-                    const configRes = await fetch(`/api/config`, {
-                         headers: {
-                              "Content-Type": "application/json",
-                         },
-                    });
-
-                    if (configRes.ok) {
-                         const configData = await configRes.json();
-                         const preferences = configData.values?.preferences ?? {};
-
-                         if ((!chatModelKey || !chatModelProviderId) && preferences.defaultChatModel) {
-                              chatModelKey = preferences.defaultChatModel.modelKey ?? chatModelKey;
-                              chatModelProviderId = preferences.defaultChatModel.providerId ?? chatModelProviderId;
-                         }
-
-                         if ((!embeddingModelKey || !embeddingModelProviderId) && preferences.defaultEmbeddingModel) {
-                              embeddingModelKey = preferences.defaultEmbeddingModel.modelKey ?? embeddingModelKey;
-                              embeddingModelProviderId =
-                                   preferences.defaultEmbeddingModel.providerId ?? embeddingModelProviderId;
-                         }
-                    }
-               } catch (configError) {
-                    console.error("Failed to fetch config defaults:", configError);
-               }
+          if (!configRes.ok) {
+               throw new Error("Failed to load configuration");
+          }
+          if (!providersRes.ok) {
+               throw new Error(`Provider fetching failed with status code ${providersRes.status}`);
           }
 
-          const res = await fetch(`/api/providers`, {
-               headers: {
-                    "Content-Type": "application/json",
-               },
-          });
-
-          if (!res.ok) {
-               throw new Error(`Provider fetching failed with status code ${res.status}`);
-          }
-
-          const data = await res.json();
-          const providers: MinimalProvider[] = data.providers;
+          const configData = await configRes.json();
+          const providersPayload = await providersRes.json();
+          const providers: MinimalProvider[] = providersPayload.providers;
 
           if (providers.length === 0) {
                throw new Error("No chat model providers found, please configure them in the settings page.");
           }
 
-          const chatModelProvider =
-               providers.find((p) => p.id === chatModelProviderId) ?? providers.find((p) => p.chatModels.length > 0);
+          const preferences = configData.values?.preferences ?? {};
+          const personalization = configData.values?.personalization ?? {};
+          setSystemInstructions(personalization.systemInstructions ?? "");
 
-          if (!chatModelProvider) {
-               throw new Error("No chat models found, pleae configure them in the settings page.");
-          }
-
-          chatModelProviderId = chatModelProvider.id;
-
-          const chatModel =
-               chatModelProvider.chatModels.find((m) => m.key === chatModelKey) ?? chatModelProvider.chatModels[0];
-
-          chatModelKey = chatModel.key;
-
-          const embeddingModelProvider =
-               providers.find((p) => p.id === embeddingModelProviderId) ??
-               providers.find((p) => p.embeddingModels.length > 0);
-
-          if (!embeddingModelProvider) {
-               throw new Error("No embedding models found, pleae configure them in the settings page.");
-          }
-
-          embeddingModelProviderId = embeddingModelProvider.id;
-
-          const embeddingModel =
-               embeddingModelProvider.embeddingModels.find((m) => m.key === embeddingModelKey) ??
-               embeddingModelProvider.embeddingModels[0];
-          embeddingModelKey = embeddingModel.key;
-
-          localStorage.setItem("chatModelKey", chatModelKey);
-          localStorage.setItem("chatModelProviderId", chatModelProviderId);
-          localStorage.setItem("embeddingModelKey", embeddingModelKey);
-          localStorage.setItem("embeddingModelProviderId", embeddingModelProviderId);
+          const resolvedChatPreference = resolveModelPreference(
+               "chat",
+               providers,
+               preferences.defaultChatModel ?? null
+          );
+          const resolvedEmbeddingPreference = resolveModelPreference(
+               "embedding",
+               providers,
+               preferences.defaultEmbeddingModel ?? null
+          );
 
           setChatModelProvider({
-               key: chatModelKey,
-               providerId: chatModelProviderId,
+               key: resolvedChatPreference.modelKey,
+               providerId: resolvedChatPreference.providerId,
           });
 
           setEmbeddingModelProvider({
-               key: embeddingModelKey,
-               providerId: embeddingModelProviderId,
+               key: resolvedEmbeddingPreference.modelKey,
+               providerId: resolvedEmbeddingPreference.providerId,
           });
 
           setIsConfigReady(true);
@@ -246,6 +200,7 @@ export const chatContext = createContext<ChatContext>({
      notFound: false,
      chatModelProvider: { key: "", providerId: "" },
      embeddingModelProvider: { key: "", providerId: "" },
+     systemInstructions: "",
      rewrite: () => {},
      sendMessage: async () => {},
      setFileIds: () => {},
@@ -284,6 +239,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           key: "",
           providerId: "",
      });
+
+     const [systemInstructions, setSystemInstructions] = useState<string>("");
 
      const [isConfigReady, setIsConfigReady] = useState(false);
      const [hasError, setHasError] = useState(false);
@@ -401,7 +358,13 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      }, [messages]);
 
      useEffect(() => {
-          checkConfig(setChatModelProvider, setEmbeddingModelProvider, setIsConfigReady, setHasError);
+          checkConfig(
+               setChatModelProvider,
+               setEmbeddingModelProvider,
+               setIsConfigReady,
+               setHasError,
+               setSystemInstructions
+          );
           // eslint-disable-next-line react-hooks/exhaustive-deps
      }, []);
 
@@ -582,7 +545,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
                     if (sourceMessage && sourceMessage.sources.length > 0 && suggestionMessageIndex == -1) {
                          // Get follow-up suggestions
-                         const suggestions = await getSuggestions(messagesRef.current);
+                         const suggestions = await getSuggestions(messagesRef.current, chatModelProvider);
                          setMessages((prev) => {
                               return [
                                    ...prev,
@@ -626,7 +589,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                          key: embeddingModelProvider.key,
                          providerId: embeddingModelProvider.providerId,
                     },
-                    systemInstructions: localStorage.getItem("systemInstructions"),
+                    systemInstructions: systemInstructions || undefined,
                }),
           });
 
@@ -681,6 +644,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     chatModelProvider,
                     embeddingModelProvider,
                     setEmbeddingModelProvider,
+                    systemInstructions,
                }}
           >
                {children}

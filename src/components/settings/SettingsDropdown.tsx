@@ -17,23 +17,9 @@ export type SettingsDropdownProps = {
 };
 
 const SettingsDropdown = ({ label, description, type, providers, value, onChange }: SettingsDropdownProps) => {
-     const deriveLocalValue = () => {
-          if (value?.providerId && value?.modelKey) {
-               return `${value.providerId}/${value.modelKey}`;
-          }
-
-          if (typeof window === "undefined") return "";
-
-          const providerKey = type === "chat" ? "chatModelProviderId" : "embeddingModelProviderId";
-          const modelKey = type === "chat" ? "chatModelKey" : "embeddingModelKey";
-
-          const storedProvider = localStorage.getItem(providerKey) ?? "";
-          const storedModel = localStorage.getItem(modelKey) ?? "";
-
-          return storedProvider && storedModel ? `${storedProvider}/${storedModel}` : "";
-     };
-
-     const [selectedModel, setSelectedModel] = useState<string>(deriveLocalValue);
+     const [selectedModel, setSelectedModel] = useState<string>(
+          value?.providerId && value?.modelKey ? `${value.providerId}/${value.modelKey}` : ""
+     );
      const [loading, setLoading] = useState(false);
      const { setChatModelProvider, setEmbeddingModelProvider } = useChat();
 

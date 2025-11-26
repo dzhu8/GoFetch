@@ -12,23 +12,7 @@ const CONFIG_KEYS: Record<ModelPreferenceKind, string> = {
      embedding: "preferences.defaultEmbeddingModel",
 };
 
-const STORAGE_KEYS: Record<ModelPreferenceKind, { providerId: string; modelKey: string }> = {
-     chat: {
-          providerId: "chatModelProviderId",
-          modelKey: "chatModelKey",
-     },
-     embedding: {
-          providerId: "embeddingModelProviderId",
-          modelKey: "embeddingModelKey",
-     },
-};
-
 export const persistModelPreference = async (kind: ModelPreferenceKind, preference: ModelPreference) => {
-     if (typeof window !== "undefined") {
-          localStorage.setItem(STORAGE_KEYS[kind].providerId, preference.providerId);
-          localStorage.setItem(STORAGE_KEYS[kind].modelKey, preference.modelKey);
-     }
-
      const res = await fetch("/api/config", {
           method: "POST",
           headers: {

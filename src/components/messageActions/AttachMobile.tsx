@@ -2,9 +2,10 @@ import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/re
 import { File, LoaderCircle, Paperclip, Plus, Trash } from "lucide-react";
 import { Fragment, useRef, useState } from "react";
 import { useChat } from "@/lib/chat/Chat";
+import { toast } from "sonner";
 
 const AttachMobile = () => {
-     const { files, setFiles, setFileIds, fileIds } = useChat();
+     const { files, setFiles, setFileIds, fileIds, embeddingModelProvider } = useChat();
 
      const [loading, setLoading] = useState(false);
      const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -17,11 +18,14 @@ const AttachMobile = () => {
                data.append("files", e.target.files![i]);
           }
 
-          const embeddingModelProvider = localStorage.getItem("embeddingModelProviderId");
-          const embeddingModel = localStorage.getItem("embeddingModelKey");
+          if (!embeddingModelProvider.providerId || !embeddingModelProvider.key) {
+               toast.error("Select an embedding model before attaching files.");
+               setLoading(false);
+               return;
+          }
 
-          data.append("embedding_model_provider_id", embeddingModelProvider!);
-          data.append("embedding_model_key", embeddingModel!);
+          data.append("embedding_model_provider_id", embeddingModelProvider.providerId);
+          data.append("embedding_model_key", embeddingModelProvider.key);
 
           const res = await fetch(`/api/uploads`, {
                method: "POST",

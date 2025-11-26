@@ -8,10 +8,7 @@ const Personalization = ({ fields, values }: { fields: UIConfigField[]; values: 
                     <SettingsField
                          key={field.key}
                          field={field}
-                         value={
-                              (field.scope === "client" ? localStorage.getItem(field.key) : values[field.key]) ??
-                              field.default
-                         }
+                         value={values[field.key] ?? field.default}
                          dataAdd="personalization"
                     />
                ))}

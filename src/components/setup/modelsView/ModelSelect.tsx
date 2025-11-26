@@ -15,25 +15,9 @@ type ModelSelectProps = {
 };
 
 const ModelSelect = ({ providers, type, value, onChange }: ModelSelectProps) => {
-     const deriveLocalValue = () => {
-          if (value?.providerId && value?.modelKey) {
-               return `${value.providerId}/${value.modelKey}`;
-          }
-
-          if (typeof window === "undefined") return "";
-
-          if (type === "chat") {
-               const providerId = localStorage.getItem("chatModelProviderId") ?? "";
-               const modelKey = localStorage.getItem("chatModelKey") ?? "";
-               return providerId && modelKey ? `${providerId}/${modelKey}` : "";
-          }
-
-          const providerId = localStorage.getItem("embeddingModelProviderId") ?? "";
-          const modelKey = localStorage.getItem("embeddingModelKey") ?? "";
-          return providerId && modelKey ? `${providerId}/${modelKey}` : "";
-     };
-
-     const [selectedModel, setSelectedModel] = useState<string>(deriveLocalValue);
+     const [selectedModel, setSelectedModel] = useState<string>(
+          value?.providerId && value?.modelKey ? `${value.providerId}/${value.modelKey}` : ""
+     );
      const [loading, setLoading] = useState(false);
      const { setChatModelProvider, setEmbeddingModelProvider } = useChat();
 

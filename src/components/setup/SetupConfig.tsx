@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Plus, PlugZap, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { ConfigModelProvider } from "@/lib/models/types";
+import { ConfigModelProvider, type MinimalProvider } from "@/lib/models/types";
 import { UIConfigSections } from "@/lib/config/types";
-import { ModelPreference } from "@/lib/models/modelPreference";
+import { ModelPreference, persistModelPreference } from "@/lib/models/modelPreference";
+import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import OllamaModels from "./modelsView/OllamaModels";
 import ModelSelect from "./modelsView/ModelSelect";
 import AddProvider from "../models/AddProvider";
@@ -163,6 +164,79 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      );
 
      const providerTypeNames = (configSections.modelProviders ?? []).map((section) => section.name);
+
+     const minimalProviders = useMemo<MinimalProvider[]>(
+          () =>
+               visibleProviders.map((provider) => ({
+                    id: provider.id,
+                    name: provider.name,
+                    type: provider.type,
+                    chatModels: provider.chatModels ?? [],
+                    embeddingModels: provider.embeddingModels ?? [],
+               })),
+          [visibleProviders]
+     );
+
+     const preferenceEquals = (a: ModelPreference | null | undefined, b: ModelPreference | null | undefined) => {
+          if (!a || !b) {
+               return false;
+          }
+          return a.providerId === b.providerId && a.modelKey === b.modelKey;
+     };
+
+     const hasChatCapableProvider = useMemo(
+          () => minimalProviders.some((provider) => provider.chatModels.length > 0),
+          [minimalProviders]
+     );
+
+     const hasEmbeddingCapableProvider = useMemo(
+          () => minimalProviders.some((provider) => provider.embeddingModels.length > 0),
+          [minimalProviders]
+     );
+
+     useEffect(() => {
+          if (minimalProviders.length === 0 || (!hasChatCapableProvider && !hasEmbeddingCapableProvider)) {
+               return;
+          }
+
+          let cancelled = false;
+
+          const syncPreference = async (
+               kind: "chat" | "embedding",
+               current: ModelPreference | null,
+               setter: (preference: ModelPreference) => void
+          ) => {
+               try {
+                    const resolved = resolveModelPreference(kind, minimalProviders, current ?? null);
+                    if (!preferenceEquals(current, resolved)) {
+                         if (!cancelled) {
+                              setter(resolved);
+                         }
+                         await persistModelPreference(kind, resolved);
+                    }
+               } catch (error) {
+                    console.error(`[setup] Failed to resolve default ${kind} model:`, error);
+                    toast.error(`Failed to select a default ${kind} model. Please review your provider setup.`);
+               }
+          };
+
+          if (hasChatCapableProvider) {
+               void syncPreference("chat", defaultChatModel, setDefaultChatModel);
+          }
+          if (hasEmbeddingCapableProvider) {
+               void syncPreference("embedding", defaultEmbeddingModel, setDefaultEmbeddingModel);
+          }
+
+          return () => {
+               cancelled = true;
+          };
+     }, [
+          minimalProviders,
+          hasChatCapableProvider,
+          hasEmbeddingCapableProvider,
+          defaultChatModel,
+          defaultEmbeddingModel,
+     ]);
 
      const resolveEndpoint = (provider?: ConfigModelProvider): string | undefined => {
           if (!provider) return undefined;

@@ -30,27 +30,24 @@ const SettingsSelect = ({
           setLoading(true);
           setValue(newValue);
           try {
-               if (field.scope === "client") {
-                    localStorage.setItem(field.key, newValue);
-                    if (field.key === "theme") {
-                         setTheme(newValue);
-                    }
-               } else {
-                    const res = await fetch("/api/config", {
-                         method: "POST",
-                         headers: {
-                              "Content-Type": "application/json",
-                         },
-                         body: JSON.stringify({
-                              key: `${dataAdd}.${field.key}`,
-                              value: newValue,
-                         }),
-                    });
+               const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: {
+                         "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                         key: `${dataAdd}.${field.key}`,
+                         value: newValue,
+                    }),
+               });
 
-                    if (!res.ok) {
-                         console.error("Failed to save config:", await res.text());
-                         throw new Error("Failed to save configuration");
-                    }
+               if (!res.ok) {
+                    console.error("Failed to save config:", await res.text());
+                    throw new Error("Failed to save configuration");
+               }
+
+               if (field.key === "theme") {
+                    setTheme(newValue);
                }
           } catch (error) {
                console.error("Error saving config:", error);
@@ -100,24 +97,20 @@ const SettingsInput = ({
           setLoading(true);
           setValue(newValue);
           try {
-               if (field.scope === "client") {
-                    localStorage.setItem(field.key, newValue);
-               } else {
-                    const res = await fetch("/api/config", {
-                         method: "POST",
-                         headers: {
-                              "Content-Type": "application/json",
-                         },
-                         body: JSON.stringify({
-                              key: `${dataAdd}.${field.key}`,
-                              value: newValue,
-                         }),
-                    });
+               const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: {
+                         "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                         key: `${dataAdd}.${field.key}`,
+                         value: newValue,
+                    }),
+               });
 
-                    if (!res.ok) {
-                         console.error("Failed to save config:", await res.text());
-                         throw new Error("Failed to save configuration");
-                    }
+               if (!res.ok) {
+                    console.error("Failed to save config:", await res.text());
+                    throw new Error("Failed to save configuration");
                }
           } catch (error) {
                console.error("Error saving config:", error);
@@ -172,24 +165,20 @@ const SettingsTextarea = ({
           setLoading(true);
           setValue(newValue);
           try {
-               if (field.scope === "client") {
-                    localStorage.setItem(field.key, newValue);
-               } else {
-                    const res = await fetch("/api/config", {
-                         method: "POST",
-                         headers: {
-                              "Content-Type": "application/json",
-                         },
-                         body: JSON.stringify({
-                              key: `${dataAdd}.${field.key}`,
-                              value: newValue,
-                         }),
-                    });
+               const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: {
+                         "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                         key: `${dataAdd}.${field.key}`,
+                         value: newValue,
+                    }),
+               });
 
-                    if (!res.ok) {
-                         console.error("Failed to save config:", await res.text());
-                         throw new Error("Failed to save configuration");
-                    }
+               if (!res.ok) {
+                    console.error("Failed to save config:", await res.text());
+                    throw new Error("Failed to save configuration");
                }
           } catch (error) {
                console.error("Error saving config:", error);
@@ -244,24 +233,20 @@ const SettingsSwitch = ({
           setLoading(true);
           setValue(newValue);
           try {
-               if (field.scope === "client") {
-                    localStorage.setItem(field.key, String(newValue));
-               } else {
-                    const res = await fetch("/api/config", {
-                         method: "POST",
-                         headers: {
-                              "Content-Type": "application/json",
-                         },
-                         body: JSON.stringify({
-                              key: `${dataAdd}.${field.key}`,
-                              value: newValue,
-                         }),
-                    });
+               const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: {
+                         "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                         key: `${dataAdd}.${field.key}`,
+                         value: newValue,
+                    }),
+               });
 
-                    if (!res.ok) {
-                         console.error("Failed to save config:", await res.text());
-                         throw new Error("Failed to save configuration");
-                    }
+               if (!res.ok) {
+                    console.error("Failed to save config:", await res.text());
+                    throw new Error("Failed to save configuration");
                }
           } catch (error) {
                console.error("Error saving config:", error);

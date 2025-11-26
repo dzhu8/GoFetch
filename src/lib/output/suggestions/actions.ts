@@ -1,8 +1,12 @@
 import { Message } from "@/components/ChatWindow";
 
-export const getSuggestions = async (chatHistory: Message[]) => {
-     const chatModel = localStorage.getItem("chatModelKey");
-     const chatModelProvider = localStorage.getItem("chatModelProviderId");
+export const getSuggestions = async (
+     chatHistory: Message[],
+     chatModel: { providerId: string; key: string }
+) => {
+     if (!chatModel.providerId || !chatModel.key) {
+          return [];
+     }
 
      const res = await fetch(`/api/suggestions`, {
           method: "POST",
@@ -11,10 +15,7 @@ export const getSuggestions = async (chatHistory: Message[]) => {
           },
           body: JSON.stringify({
                chatHistory: chatHistory,
-               chatModel: {
-                    providerId: chatModelProvider,
-                    key: chatModel,
-               },
+               chatModel,
           }),
      });
 
