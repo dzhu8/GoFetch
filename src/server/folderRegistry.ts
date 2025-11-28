@@ -84,23 +84,23 @@ export class FolderRegistry {
           return registration;
      }
 
-         removeFolder(name: string): void {
-              const registration = this.folders.get(name);
+     removeFolder(name: string): void {
+          const registration = this.folders.get(name);
 
-              // Stop background work before touching persistence to avoid FK violations from late callbacks.
-              monitorService.disable(name);
-              merkleMonitor.unregisterFolder(name);
-              cancelInitialEmbedding(name);
+          // Stop background work before touching persistence to avoid FK violations from late callbacks.
+          monitorService.disable(name);
+          merkleMonitor.unregisterFolder(name);
+          cancelInitialEmbedding(name);
 
-              // Remove any cached Merkle artifacts regardless of in-memory registration state.
-              removeFolderIndex(name);
+          // Remove any cached Merkle artifacts regardless of in-memory registration state.
+          removeFolderIndex(name);
 
-              if (registration) {
-                   this.folders.delete(name);
-              }
+          if (registration) {
+               this.folders.delete(name);
+          }
 
-              this.deleteFolderRecord(name);
-         }
+          this.deleteFolderRecord(name);
+     }
 
      private buildRegistration(
           name: string,

@@ -44,8 +44,8 @@ export function parseFile(entry: FileEntry, options?: ParserOptions): ParsedFile
      const tree = parser.parse(source);
      const normalizedOptions = normalizeOptions(options);
      const positions = new PositionLookup(source);
-      const ast = serializeNode(tree.topNode, source, positions, normalizedOptions);
-      const filteredAst = normalizedOptions.focusNodesOnly ? filterFocusNodes(ast, language) : ast;
+     const ast = serializeNode(tree.topNode, source, positions, normalizedOptions);
+     const filteredAst = normalizedOptions.focusNodesOnly ? filterFocusNodes(ast, language) : ast;
      const errorCount = countErrorNodes(tree.topNode);
 
      return {

@@ -38,6 +38,7 @@ const CLI_HOST = process.env.NEXT_PUBLIC_GOFETCH_CLI_HOST ?? "127.0.0.1";
 const CLI_PORT = process.env.NEXT_PUBLIC_GOFETCH_CLI_PORT ?? "4820";
 const CLI_SELECTION_ENDPOINT = `${CLI_PROTOCOL}://${CLI_HOST}:${CLI_PORT}/selection/latest`;
 const CLI_SELECTION_PROMPT_ENDPOINT = `${CLI_PROTOCOL}://${CLI_HOST}:${CLI_PORT}/selection/prompt`;
+const LAST_SELECTION_VERSION_STORAGE_KEY = "gofetch:last-cli-selection-version";
 
 const shouldProxyCliRequests = () => {
      if (typeof window === "undefined") {
@@ -52,6 +53,23 @@ const deriveFolderNameFromPath = (folderPath: string) => {
      const normalizedPath = folderPath.replace(/\\+/g, "/");
      const segments = normalizedPath.split("/").filter(Boolean);
      return segments[segments.length - 1] || "";
+};
+
+const getStoredSelectionVersion = () => {
+     if (typeof window === "undefined") {
+          return 0;
+     }
+
+     const rawValue = window.localStorage.getItem(LAST_SELECTION_VERSION_STORAGE_KEY);
+     return rawValue ? Number(rawValue) || 0 : 0;
+};
+
+const persistSelectionVersion = (version: number) => {
+     if (typeof window === "undefined") {
+          return;
+     }
+
+     window.localStorage.setItem(LAST_SELECTION_VERSION_STORAGE_KEY, version.toString());
 };
 
 export default function SyncPage() {
@@ -244,10 +262,10 @@ export default function SyncPage() {
 
      useEffect(() => {
           if (!cliFolderWatcherEnabled) {
-               lastSelectionVersionRef.current = 0;
                return undefined;
           }
 
+          lastSelectionVersionRef.current = getStoredSelectionVersion();
           let isActive = true;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -260,6 +278,7 @@ export default function SyncPage() {
 
                     if (selection?.path && version > lastSelectionVersionRef.current) {
                          lastSelectionVersionRef.current = version;
+                         persistSelectionVersion(version);
                          const inferredName = selection.name?.trim() || deriveFolderNameFromPath(selection.path);
 
                          if (inferredName) {

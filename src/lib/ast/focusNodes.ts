@@ -37,19 +37,8 @@ const TYPE_ALLOWLIST: Partial<Record<SupportedLanguage, Set<string>>> = {
           "ArrowFunction",
           "Function",
      ]),
-     python: new Set([
-          "FunctionDefinition",
-          "ClassDefinition",
-          "AsyncFunctionDefinition",
-     ]),
-     rust: new Set([
-          "FunctionItem",
-          "StructItem",
-          "EnumItem",
-          "TraitItem",
-          "ImplItem",
-          "ModItem",
-     ]),
+     python: new Set(["FunctionDefinition", "ClassDefinition", "AsyncFunctionDefinition"]),
+     rust: new Set(["FunctionItem", "StructItem", "EnumItem", "TraitItem", "ImplItem", "ModItem"]),
 };
 
 interface FocusOptions {

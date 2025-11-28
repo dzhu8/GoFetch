@@ -22,6 +22,7 @@ class ConfigManager {
                cliFolderWatcher: false,
                defaultChatModel: null,
                defaultEmbeddingModel: null,
+               embeddingPointSize: "5",
           },
           personalization: {},
           modelProviders: [],
@@ -57,6 +58,20 @@ class ConfigManager {
                          "Allow the GoFetch CLI helper to watch for folder selections so you can pick folders via the OS file explorer.",
                     default: false,
                     scope: "server",
+               },
+               {
+                    name: "Embedding Dot Size",
+                    key: "embeddingPointSize",
+                    type: "select",
+                    options: [
+                         { name: "Small", value: "3" },
+                         { name: "Medium", value: "5" },
+                         { name: "Large", value: "8" },
+                    ],
+                    required: false,
+                    description: "Controls the size of 3D scatter markers in the Inspect view.",
+                    default: "5",
+                    scope: "client",
                },
           ],
           personalization: [
@@ -176,6 +191,9 @@ class ConfigManager {
           }
           if (this.currentConfig.preferences.defaultEmbeddingModel === undefined) {
                this.currentConfig.preferences.defaultEmbeddingModel = null;
+          }
+          if (this.currentConfig.preferences.embeddingPointSize === undefined) {
+               this.currentConfig.preferences.embeddingPointSize = "5";
           }
      }
 

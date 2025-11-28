@@ -135,4 +135,3 @@ function matchIdentifier(value: string, pattern: RegExp): string | null {
      }
      return null;
 }
-

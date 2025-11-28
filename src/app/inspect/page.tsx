@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Loader2, Plus, Trash2, X } from "lucide-react";
+import { UMAP } from "umap-js";
 
 import { cn } from "@/lib/utils";
+
+const Plot = dynamic(() => import("@/components/PlotlyClient"), { ssr: false });
+const EMBEDDING_STAGE = "ast-node-test";
 
 type RegisteredFolder = {
      name: string;
@@ -12,11 +17,35 @@ type RegisteredFolder = {
      isGitConnected?: boolean;
 };
 
+type EmbeddingRow = {
+     id: number;
+     relativePath: string;
+     metadata?: Record<string, unknown> | null;
+     vector: number[];
+};
+
+type PlotPoints = {
+     x: number[];
+     y: number[];
+     z: number[];
+     text: string[];
+};
+
 const CLI_PROTOCOL = process.env.NEXT_PUBLIC_GOFETCH_CLI_PROTOCOL ?? "http";
 const CLI_HOST = process.env.NEXT_PUBLIC_GOFETCH_CLI_HOST ?? "127.0.0.1";
 const CLI_PORT = process.env.NEXT_PUBLIC_GOFETCH_CLI_PORT ?? "4820";
 const CLI_SELECTION_ENDPOINT = `${CLI_PROTOCOL}://${CLI_HOST}:${CLI_PORT}/selection/latest`;
 const CLI_SELECTION_PROMPT_ENDPOINT = `${CLI_PROTOCOL}://${CLI_HOST}:${CLI_PORT}/selection/prompt`;
+const LAST_SELECTION_VERSION_STORAGE_KEY = "gofetch:last-cli-selection-version";
+
+const buildLabel = (row: EmbeddingRow) => {
+     const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+     const rawSymbol = typeof metadata.symbolName === "string" ? metadata.symbolName.trim() : "";
+     const nodeType = typeof metadata.nodeType === "string" ? metadata.nodeType : "unknown";
+     const nodePath = typeof metadata.nodePath === "string" ? metadata.nodePath : "root";
+     const label = rawSymbol.length > 0 ? rawSymbol : nodeType;
+     return `${label} @ ${row.relativePath}\n${nodePath}`;
+};
 
 const shouldProxyCliRequests = () => {
      if (typeof window === "undefined") {
@@ -33,21 +62,36 @@ const deriveFolderNameFromPath = (folderPath: string) => {
      return segments[segments.length - 1] || "";
 };
 
+const getStoredSelectionVersion = () => {
+     if (typeof window === "undefined") {
+          return 0;
+     }
+
+     const rawValue = window.localStorage.getItem(LAST_SELECTION_VERSION_STORAGE_KEY);
+     return rawValue ? Number(rawValue) || 0 : 0;
+};
+
+const persistSelectionVersion = (version: number) => {
+     if (typeof window === "undefined") {
+          return;
+     }
+
+     window.localStorage.setItem(LAST_SELECTION_VERSION_STORAGE_KEY, version.toString());
+};
+
 const VIEW_TABS = [
-     { id: "folders", label: "Folders" },
-     { id: "telemetry", label: "Telemetry (coming soon)", disabled: true },
+     { id: "visualize", label: "Visualize embeddings" },
+     { id: "delete", label: "Delete embeddings" },
 ] as const;
 
 type ViewTab = (typeof VIEW_TABS)[number]["id"];
 
 export default function InspectPage() {
      const [folders, setFolders] = useState<RegisteredFolder[]>([]);
-     const [monitored, setMonitored] = useState<Set<string>>(new Set());
      const [loadingFolders, setLoadingFolders] = useState(true);
-     const [loadingMonitorState, setLoadingMonitorState] = useState(true);
-     const [activeView, setActiveView] = useState<ViewTab>("folders");
-     const [pendingFolder, setPendingFolder] = useState<string | null>(null);
+     const [activeView, setActiveView] = useState<ViewTab>("visualize");
      const [errorMessage, setErrorMessage] = useState<string | null>(null);
+     const [infoMessage, setInfoMessage] = useState<string | null>(null);
      const [isAddModalOpen, setIsAddModalOpen] = useState(false);
      const [newFolderName, setNewFolderName] = useState("");
      const [newFolderPath, setNewFolderPath] = useState("");
@@ -55,6 +99,14 @@ export default function InspectPage() {
      const [cliFolderWatcherEnabled, setCliFolderWatcherEnabled] = useState(false);
      const [isPromptingFolder, setIsPromptingFolder] = useState(false);
      const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
+     const [deletingEmbeddings, setDeletingEmbeddings] = useState<string | null>(null);
+     const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+     const [plotPoints, setPlotPoints] = useState<{ x: number[]; y: number[]; z: number[]; text: string[] } | null>(
+          null
+     );
+     const [isVisualizing, setIsVisualizing] = useState(false);
+     const [dotSize, setDotSize] = useState(5);
+     const [isPlotOpen, setIsPlotOpen] = useState(false);
      const lastSelectionVersionRef = useRef(0);
      const cliPollingErrorLoggedRef = useRef(false);
 
@@ -119,38 +171,9 @@ export default function InspectPage() {
           }
      }, []);
 
-     const fetchMonitored = useCallback(async () => {
-          try {
-               setLoadingMonitorState(true);
-               const res = await fetch("/api/monitoring", { cache: "no-store" });
-               if (!res.ok) throw new Error("Failed to load monitoring state");
-               const data = (await res.json()) as { monitored?: string[] };
-               setMonitored(new Set(data.monitored ?? []));
-          } catch (error) {
-               console.error("Failed to load monitoring state", error);
-               setErrorMessage("Unable to load monitoring state.");
-          } finally {
-               setLoadingMonitorState(false);
-          }
-     }, []);
-
      useEffect(() => {
           fetchFolders();
      }, [fetchFolders]);
-
-     useEffect(() => {
-          if (loadingFolders) {
-               return;
-          }
-
-          if (folders.length === 0) {
-               setMonitored(new Set());
-               setLoadingMonitorState(false);
-               return;
-          }
-
-          fetchMonitored();
-     }, [folders, loadingFolders, fetchMonitored]);
 
      useEffect(() => {
           const fetchCliPreference = async () => {
@@ -159,6 +182,8 @@ export default function InspectPage() {
                     if (!res.ok) throw new Error("Failed to load configuration");
                     const data = await res.json();
                     setCliFolderWatcherEnabled(Boolean(data.values?.preferences?.cliFolderWatcher));
+                    const preferredSize = Number(data.values?.preferences?.embeddingPointSize ?? 5);
+                    setDotSize(Number.isFinite(preferredSize) && preferredSize > 0 ? preferredSize : 5);
                } catch (error) {
                     console.error("Error loading CLI preference:", error);
                }
@@ -169,10 +194,9 @@ export default function InspectPage() {
 
      useEffect(() => {
           if (!cliFolderWatcherEnabled) {
-               lastSelectionVersionRef.current = 0;
                return undefined;
           }
-
+          lastSelectionVersionRef.current = getStoredSelectionVersion();
           let isActive = true;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -185,6 +209,7 @@ export default function InspectPage() {
 
                     if (selection?.path && version > lastSelectionVersionRef.current) {
                          lastSelectionVersionRef.current = version;
+                         persistSelectionVersion(version);
                          const inferredName = selection.name?.trim() || deriveFolderNameFromPath(selection.path);
 
                          if (inferredName) {
@@ -211,30 +236,6 @@ export default function InspectPage() {
                }
           };
      }, [cliFolderWatcherEnabled, requestCliSelection]);
-
-     const handleToggleMonitoring = async (folderName: string, enabled: boolean) => {
-          setPendingFolder(folderName);
-          try {
-               const res = await fetch("/api/monitoring", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ folderName, enabled }),
-               });
-
-               const data = await res.json().catch(() => ({}));
-
-               if (!res.ok) {
-                    throw new Error(data?.error ?? "Failed to update monitoring state.");
-               }
-
-               setMonitored(new Set((data?.monitored as string[]) ?? []));
-          } catch (error) {
-               console.error("Failed to toggle monitoring", error);
-               setErrorMessage(error instanceof Error ? error.message : "Failed to update monitoring state.");
-          } finally {
-               setPendingFolder(null);
-          }
-     };
 
      const saveFolder = async (folderName: string, folderPath: string) => {
           const trimmedName = folderName.trim();
@@ -311,7 +312,102 @@ export default function InspectPage() {
           }
      };
 
-     const isBusy = loadingFolders || loadingMonitorState;
+     const handleClosePlot = useCallback(() => {
+          setIsPlotOpen(false);
+          setPlotPoints(null);
+          setSelectedFolder(null);
+          setIsVisualizing(false);
+     }, []);
+
+     const handleVisualizeFolder = async (folder: RegisteredFolder) => {
+          setSelectedFolder(folder.name);
+          setIsPlotOpen(true);
+          setIsVisualizing(true);
+          setPlotPoints(null);
+
+          try {
+               const params = new URLSearchParams({
+                    folderName: folder.name,
+                    stage: EMBEDDING_STAGE,
+               });
+
+               const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
+               const data = (await res.json().catch(() => ({}))) as { embeddings?: EmbeddingRow[]; error?: string };
+
+               if (!res.ok) {
+                    throw new Error(data?.error || "Failed to load embeddings");
+               }
+
+               const rows = data.embeddings ?? [];
+
+               if (rows.length === 0) {
+                    setErrorMessage(`No embeddings found for ${folder.name} at stage ${EMBEDDING_STAGE}.`);
+                    handleClosePlot();
+                    return;
+               }
+
+               const vectors = rows.map((row) => row.vector);
+               const nNeighbors = Math.min(15, Math.max(2, vectors.length - 1));
+               const reducer = new UMAP({ nComponents: 3, nNeighbors, minDist: 0.25 });
+               const coordinates =
+                    vectors.length > 1 ? reducer.fit(vectors) : vectors.map((vec) => [vec[0] ?? 0, 0, 0]);
+
+               const payload: PlotPoints = { x: [], y: [], z: [], text: [] };
+               coordinates.forEach((point, index) => {
+                    const [x = 0, y = 0, z = 0] = point || [];
+                    payload.x.push(x);
+                    payload.y.push(y);
+                    payload.z.push(z);
+                    payload.text.push(buildLabel(rows[index]));
+               });
+
+               setPlotPoints(payload);
+          } catch (error) {
+               console.error("Failed to visualize embeddings", error);
+               setPlotPoints(null);
+               setErrorMessage(error instanceof Error ? error.message : "Failed to visualize embeddings.");
+               handleClosePlot();
+          } finally {
+               setIsVisualizing(false);
+          }
+     };
+
+     const handleDeleteEmbeddings = async (folderName: string) => {
+          const confirmed =
+               typeof window === "undefined"
+                    ? true
+                    : window.confirm(`Delete embeddings for ${folderName}? This cannot be undone.`);
+          if (!confirmed) {
+               return;
+          }
+
+          setDeletingEmbeddings(folderName);
+          try {
+               const params = new URLSearchParams({
+                    folderName,
+                    stage: EMBEDDING_STAGE,
+               });
+               const res = await fetch(`/api/embeddings?${params.toString()}`, {
+                    method: "DELETE",
+               });
+               const data = await res.json().catch(() => ({}));
+               if (!res.ok) {
+                    throw new Error(data?.error || "Failed to delete embeddings");
+               }
+
+               setInfoMessage(`Deleted ${data?.deleted ?? 0} embeddings for ${folderName}.`);
+               if (selectedFolder === folderName) {
+                    handleClosePlot();
+               }
+          } catch (error) {
+               console.error("Failed to delete embeddings", error);
+               setErrorMessage(error instanceof Error ? error.message : "Failed to delete embeddings.");
+          } finally {
+               setDeletingEmbeddings((current) => (current === folderName ? null : current));
+          }
+     };
+
+     const isBusy = loadingFolders;
 
      const handleDeleteFolder = useCallback(
           async (folderName: string) => {
@@ -331,6 +427,9 @@ export default function InspectPage() {
                          throw new Error(data?.error || data?.message || "Failed to remove folder");
                     }
                     await fetchFolders();
+                    if (selectedFolder === folderName) {
+                         handleClosePlot();
+                    }
                } catch (error) {
                     console.error("Failed to remove folder", error);
                     setErrorMessage(error instanceof Error ? error.message : "Failed to remove folder");
@@ -338,7 +437,7 @@ export default function InspectPage() {
                     setDeletingFolder((current) => (current === folderName ? null : current));
                }
           },
-          [fetchFolders]
+          [fetchFolders, handleClosePlot, selectedFolder]
      );
 
      return (
@@ -349,7 +448,7 @@ export default function InspectPage() {
                               Codebase Analytics
                          </h1>
                          <p className="text-sm md:text-base text-black/60 dark:text-white/60">
-                              Monitor folders, inspect codebase changes.
+                              Inspect codebase embeddings.
                          </p>
                     </div>
                     <div className="flex flex-col items-center gap-3">
@@ -396,8 +495,8 @@ export default function InspectPage() {
                </div>
 
                <div className="flex-1 overflow-y-auto px-6 pb-6">
-                    {activeView === "folders" && (
-                         <div className="max-w-6xl mx-auto">
+                    {activeView === "visualize" && (
+                         <div className="max-w-6xl mx-auto space-y-6">
                               {isBusy ? (
                                    <div className="flex flex-col items-center justify-center py-12">
                                         <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
@@ -409,83 +508,122 @@ export default function InspectPage() {
                                              No folders are registered yet
                                         </p>
                                         <p className="text-sm text-black/50 dark:text-white/50">
-                                             Add folders from the Sync view to begin monitoring.
+                                             Add folders from the Sync view to start collecting embeddings.
                                         </p>
                                    </div>
                               ) : (
-                                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                   <>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                             {folders.map((folder) => {
+                                                  const isActive = selectedFolder === folder.name;
+                                                  const isDeleting = deletingFolder === folder.name;
+                                                  return (
+                                                       <div
+                                                            key={folder.name}
+                                                            role="button"
+                                                            tabIndex={0}
+                                                            onClick={() => handleVisualizeFolder(folder)}
+                                                            onKeyDown={(event) => {
+                                                                 if (event.key === "Enter" || event.key === " ") {
+                                                                      event.preventDefault();
+                                                                      handleVisualizeFolder(folder);
+                                                                 }
+                                                            }}
+                                                            className={cn(
+                                                                 "border-2 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F8B692] cursor-pointer",
+                                                                 isActive
+                                                                      ? "border-[#F8B692]"
+                                                                      : "border-light-200 dark:border-dark-200 hover:border-[#F8B692]/70"
+                                                            )}
+                                                       >
+                                                            <div className="flex items-start justify-between gap-3">
+                                                                 <p className="text-sm font-semibold text-black dark:text-white">
+                                                                      {folder.name}
+                                                                 </p>
+                                                                 <button
+                                                                      type="button"
+                                                                      onClick={(event) => {
+                                                                           event.stopPropagation();
+                                                                           handleDeleteFolder(folder.name);
+                                                                      }}
+                                                                      disabled={isDeleting}
+                                                                      className="p-2 rounded-lg border border-light-200 dark:border-dark-200 text-black/60 dark:text-white/60 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-50"
+                                                                      title="Remove folder"
+                                                                 >
+                                                                      {isDeleting ? (
+                                                                           <Loader2 className="w-4 h-4 animate-spin" />
+                                                                      ) : (
+                                                                           <Trash2 className="w-4 h-4" />
+                                                                      )}
+                                                                 </button>
+                                                            </div>
+                                                            <p className="text-xs text-black/60 dark:text-white/60 truncate">
+                                                                 {folder.rootPath}
+                                                            </p>
+                                                            <p className="text-[11px] text-black/50 dark:text-white/50">
+                                                                 Click to visualize embeddings in 3D space.
+                                                            </p>
+                                                       </div>
+                                                  );
+                                             })}
+                                        </div>
+                                        <div className="border-2 border-dashed border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/30 dark:bg-dark-primary/40 p-4 text-sm text-black/70 dark:text-white/70 text-center">
+                                             Click any folder to open the embedding viewer.
+                                        </div>
+                                   </>
+                              )}
+                         </div>
+                    )}
+
+                    {activeView === "delete" && (
+                         <div className="max-w-4xl mx-auto">
+                              {isBusy ? (
+                                   <div className="flex flex-col items-center justify-center py-12">
+                                        <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
+                                        <p className="text-sm text-black/60 dark:text-white/60">Loading folders...</p>
+                                   </div>
+                              ) : folders.length === 0 ? (
+                                   <div className="flex flex-col items-center justify-center py-12 text-center">
+                                        <p className="text-base font-medium text-black/70 dark:text-white/70 mb-1">
+                                             No folders are registered yet
+                                        </p>
+                                        <p className="text-sm text-black/50 dark:text-white/50">
+                                             Add folders from the Sync view to start collecting embeddings.
+                                        </p>
+                                   </div>
+                              ) : (
+                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         {folders.map((folder) => {
-                                             const checked = monitored.has(folder.name);
-                                             const disabled = pendingFolder === folder.name;
-                                             const isDeleting = deletingFolder === folder.name;
+                                             const isDeletingVectors = deletingEmbeddings === folder.name;
                                              return (
                                                   <div
                                                        key={folder.name}
                                                        className="border-2 border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm"
                                                   >
-                                                       <div className="flex items-start justify-between gap-3">
+                                                       <div>
                                                             <p className="text-sm font-semibold text-black dark:text-white">
                                                                  {folder.name}
                                                             </p>
-                                                            <button
-                                                                 type="button"
-                                                                 onClick={() => handleDeleteFolder(folder.name)}
-                                                                 disabled={isDeleting}
-                                                                 className="p-2 rounded-lg border border-light-200 dark:border-dark-200 text-black/60 dark:text-white/60 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-50"
-                                                                 title="Remove folder"
-                                                            >
-                                                                 {isDeleting ? (
-                                                                      <Loader2 className="w-4 h-4 animate-spin" />
-                                                                 ) : (
-                                                                      <Trash2 className="w-4 h-4" />
-                                                                 )}
-                                                            </button>
-                                                       </div>
-                                                       <p className="text-xs text-black/60 dark:text-white/60 truncate">
-                                                            {folder.rootPath}
-                                                       </p>
-                                                       <div className="flex items-center justify-between text-sm">
-                                                            <span className="text-black/70 dark:text-white/70">
-                                                                 Monitor folder
-                                                            </span>
-                                                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                                                                 <input
-                                                                      type="checkbox"
-                                                                      checked={checked}
-                                                                      onChange={(event) =>
-                                                                           handleToggleMonitoring(
-                                                                                folder.name,
-                                                                                event.target.checked
-                                                                           )
-                                                                      }
-                                                                      disabled={disabled}
-                                                                      className="h-4 w-4 rounded border-light-200 dark:border-dark-200"
-                                                                 />
-                                                                 <span className="text-xs text-black/60 dark:text-white/60">
-                                                                      {disabled ? "Saving..." : checked ? "On" : "Off"}
-                                                                 </span>
-                                                            </label>
+                                                            <p className="text-xs text-black/60 dark:text-white/60 truncate">
+                                                                 {folder.rootPath}
+                                                            </p>
                                                        </div>
                                                        <p className="text-[11px] text-black/50 dark:text-white/50">
-                                                            Creates AST + DAG logs for quick diagnostics. Not yet fully
-                                                            implemented!
+                                                            Removes stored vectors for stage {EMBEDDING_STAGE}.
                                                        </p>
+                                                       <button
+                                                            type="button"
+                                                            onClick={() => handleDeleteEmbeddings(folder.name)}
+                                                            disabled={isDeletingVectors}
+                                                            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-200/80 text-black text-xs font-semibold hover:bg-red-200 disabled:opacity-60"
+                                                       >
+                                                            {isDeletingVectors ? "Deleting..." : "Delete embeddings"}
+                                                       </button>
                                                   </div>
                                              );
                                         })}
                                    </div>
                               )}
-                         </div>
-                    )}
-
-                    {activeView === "telemetry" && (
-                         <div className="max-w-3xl mx-auto text-center py-12">
-                              <p className="text-base font-medium text-black/70 dark:text-white/70">
-                                   Telemetry view will surface monitoring events soon.
-                              </p>
-                              <p className="text-sm text-black/50 dark:text-white/50">
-                                   For now, use the folder view to toggle monitoring output files.
-                              </p>
                          </div>
                     )}
                </div>
@@ -556,6 +694,123 @@ export default function InspectPage() {
                               >
                                    Close
                               </button>
+                         </div>
+                    </div>
+               )}
+
+               {infoMessage && (
+                    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+                         <div className="w-full max-w-md bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl p-6 text-center space-y-4">
+                              <p className="text-sm text-black dark:text-white">{infoMessage}</p>
+                              <button
+                                   type="button"
+                                   onClick={() => setInfoMessage(null)}
+                                   className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-[#F8B692] text-black text-sm font-medium hover:bg-[#e6ad82]"
+                              >
+                                   Close
+                              </button>
+                         </div>
+                    </div>
+               )}
+
+               {isPlotOpen && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+                         <div className="w-full max-w-5xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl p-6 shadow-2xl">
+                              <div className="flex items-start justify-between gap-4 mb-4">
+                                   <div>
+                                        <p className="text-lg font-semibold text-black dark:text-white">
+                                             Embedding viewer
+                                        </p>
+                                        <p className="text-xs text-black/60 dark:text-white/60">
+                                             {selectedFolder
+                                                  ? `Folder: ${selectedFolder}`
+                                                  : "Select a folder to load embeddings."}
+                                        </p>
+                                   </div>
+                                   <button
+                                        type="button"
+                                        onClick={handleClosePlot}
+                                        className="p-2 rounded-full border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                        aria-label="Close embedding viewer"
+                                   >
+                                        <X className="w-4 h-4" />
+                                   </button>
+                              </div>
+                              <div className="h-[60vh] min-h-[360px]">
+                                   {isVisualizing ? (
+                                        <div className="flex flex-col items-center justify-center h-full">
+                                             <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
+                                             <p className="text-sm text-black/60 dark:text-white/60">
+                                                  Preparing UMAP projection...
+                                             </p>
+                                        </div>
+                                   ) : plotPoints ? (
+                                        <Plot
+                                             data={[
+                                                  {
+                                                       type: "scatter3d",
+                                                       mode: "markers",
+                                                       x: plotPoints.x,
+                                                       y: plotPoints.y,
+                                                       z: plotPoints.z,
+                                                       text: plotPoints.text,
+                                                       hovertemplate: "%{text}<extra></extra>",
+                                                       marker: {
+                                                            size: dotSize,
+                                                            opacity: 0.85,
+                                                            color: plotPoints.y,
+                                                            colorscale: "Viridis",
+                                                       },
+                                                  },
+                                             ]}
+                                             layout={{
+                                                  title: {
+                                                       text: selectedFolder
+                                                            ? `3D Embeddings · ${selectedFolder}`
+                                                            : "3D Embeddings",
+                                                  },
+                                                  scene: {
+                                                       xaxis: {
+                                                            showgrid: false,
+                                                            zeroline: false,
+                                                            showline: false,
+                                                            ticks: "",
+                                                            showticklabels: false,
+                                                       },
+                                                       yaxis: {
+                                                            showgrid: false,
+                                                            zeroline: false,
+                                                            showline: false,
+                                                            ticks: "",
+                                                            showticklabels: false,
+                                                       },
+                                                       zaxis: {
+                                                            showgrid: false,
+                                                            zeroline: false,
+                                                            showline: false,
+                                                            ticks: "",
+                                                            showticklabels: false,
+                                                       },
+                                                       bgcolor: "rgba(0,0,0,0)",
+                                                  },
+                                                  paper_bgcolor: "rgba(0,0,0,0)",
+                                                  plot_bgcolor: "rgba(0,0,0,0)",
+                                                  margin: { l: 0, r: 0, t: 40, b: 0 },
+                                             }}
+                                             config={{
+                                                  responsive: true,
+                                                  displaylogo: false,
+                                             }}
+                                             style={{ width: "100%", height: "100%" }}
+                                        />
+                                   ) : (
+                                        <div className="flex items-center justify-center h-full">
+                                             <p className="text-sm text-black/60 dark:text-white/60">
+                                                  Select a folder to generate the 3D embedding map.
+                                             </p>
+                                        </div>
+                                   )}
+                              </div>
                          </div>
                     </div>
                )}
