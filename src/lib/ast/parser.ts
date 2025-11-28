@@ -3,13 +3,22 @@ import fs from "fs";
 import type { SyntaxNode } from "@lezer/common";
 
 import { detectLanguage, getParser } from "./languages";
-import type { FileEntry, ParsedFileAst, ParserOptions, SerializedNode, SerializedPosition } from "./types";
+import { filterFocusNodes } from "./focusNodes";
+import type {
+     FileEntry,
+     ParsedFileAst,
+     ParserOptions,
+     SerializedNode,
+     SerializedPosition,
+     SupportedLanguage,
+} from "./types";
 
 interface NormalizedParserOptions {
      includeText: boolean;
      maxDepth: number;
      maxChildrenPerNode: number;
      maxTextLength: number;
+     focusNodesOnly: boolean;
 }
 
 const DEFAULT_OPTIONS: NormalizedParserOptions = {
@@ -17,6 +26,7 @@ const DEFAULT_OPTIONS: NormalizedParserOptions = {
      maxDepth: Number.POSITIVE_INFINITY,
      maxChildrenPerNode: Number.POSITIVE_INFINITY,
      maxTextLength: 512,
+     focusNodesOnly: true,
 };
 
 export function parseFile(entry: FileEntry, options?: ParserOptions): ParsedFileAst | null {
@@ -34,14 +44,15 @@ export function parseFile(entry: FileEntry, options?: ParserOptions): ParsedFile
      const tree = parser.parse(source);
      const normalizedOptions = normalizeOptions(options);
      const positions = new PositionLookup(source);
-     const ast = serializeNode(tree.topNode, source, positions, normalizedOptions);
+      const ast = serializeNode(tree.topNode, source, positions, normalizedOptions);
+      const filteredAst = normalizedOptions.focusNodesOnly ? filterFocusNodes(ast, language) : ast;
      const errorCount = countErrorNodes(tree.topNode);
 
      return {
           filePath: entry.absolutePath,
           relativePath: entry.relativePath,
           language,
-          ast,
+          ast: filteredAst,
           diagnostics: {
                hasError: errorCount > 0,
                errorCount,
@@ -61,6 +72,7 @@ function normalizeOptions(options?: ParserOptions): NormalizedParserOptions {
           maxDepth: options?.maxDepth ?? DEFAULT_OPTIONS.maxDepth,
           maxChildrenPerNode: options?.maxChildrenPerNode ?? DEFAULT_OPTIONS.maxChildrenPerNode,
           maxTextLength: options?.maxTextLength ?? DEFAULT_OPTIONS.maxTextLength,
+          focusNodesOnly: options?.focusNodesOnly ?? DEFAULT_OPTIONS.focusNodesOnly,
      };
 }
 

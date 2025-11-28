@@ -12,4 +12,6 @@ export function parseFolderRegistration(
 
 export * from "./types";
 export * from "./languages";
+export * from "./focusNodes";
+export * from "./focusLabels";
 export { parseFiles, parseFile } from "./parser";

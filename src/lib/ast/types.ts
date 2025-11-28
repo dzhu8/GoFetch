@@ -47,6 +47,7 @@ export interface ParserOptions {
      maxDepth?: number;
      maxChildrenPerNode?: number;
      maxTextLength?: number;
+     focusNodesOnly?: boolean;
 }
 
 export interface FileEntry {

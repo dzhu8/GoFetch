@@ -4,7 +4,13 @@ import crypto from "node:crypto";
 
 import { eq, inArray, sql } from "drizzle-orm";
 
-import { parseFolderRegistration, type ParsedFileAst, type SerializedNode } from "@/lib/ast";
+import {
+     inferFocusSymbolName,
+     parseFolderRegistration,
+     type ParsedFileAst,
+     type SerializedNode,
+     type SupportedLanguage,
+} from "@/lib/ast";
 import type { FolderRegistration } from "@/server/folderRegistry";
 import db from "@/server/db";
 import { astFileSnapshots, astNodes, embeddings as embeddingsTable } from "@/server/db/schema";
@@ -225,7 +231,7 @@ function persistAstSnapshots(folderName: string, parsedFiles: ParsedFileAst[]): 
                     .run();
 
                const fileId = Number(snapshotResult.lastInsertRowid);
-               const nodeRows = flattenAstNodes(fileAst.ast, fileId);
+               const nodeRows = flattenAstNodes(fileAst.ast, fileId, fileAst.language);
 
                if (nodeRows.length === 0) {
                     continue;
@@ -367,10 +373,24 @@ function deleteExistingInitialEmbeddings(folderName: string): void {
      db.delete(embeddingsTable).where(inArray(embeddingsTable.id, initialIds)).run();
 }
 
-function flattenAstNodes(ast: SerializedNode, fileId: number): (typeof astNodes.$inferInsert)[] {
+function flattenAstNodes(
+     ast: SerializedNode,
+     fileId: number,
+     language: SupportedLanguage
+): (typeof astNodes.$inferInsert)[] {
      const rows: (typeof astNodes.$inferInsert)[] = [];
 
      const walk = (node: SerializedNode, path: string): void => {
+          const symbolName = inferFocusSymbolName(language, node);
+          const metadata = {
+               truncatedByDepth: node.truncatedByDepth ?? false,
+               truncatedByChildLimit: node.truncatedByChildLimit ?? false,
+          } as Record<string, unknown>;
+
+          if (symbolName) {
+               metadata.symbolName = symbolName;
+          }
+
           rows.push({
                fileId,
                nodePath: path,
@@ -385,10 +405,7 @@ function flattenAstNodes(ast: SerializedNode, fileId: number): (typeof astNodes.
                endColumn: node.endPosition.column,
                childCount: node.childCount,
                textSnippet: node.textSnippet ?? null,
-               metadata: {
-                    truncatedByDepth: node.truncatedByDepth ?? false,
-                    truncatedByChildLimit: node.truncatedByChildLimit ?? false,
-               },
+               metadata,
           });
 
           node.children.forEach((child, index) => {

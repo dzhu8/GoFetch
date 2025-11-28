@@ -14,7 +14,10 @@
           "dev:cli": "yarn workspace gofetch-cli dev",
           "format:write": "prettier . --write",
           "db:migrate": "drizzle-kit push --config drizzle.config.ts",
-          "dump:sqlite": "node test/dumpSqlite.js"
+          "dump:sqlite": "node test/dumpSqlite.js",
+          "embed:test": "tsx test/embedJsMonitorNodes.js",
+          "visualize:test": "tsx test/visualizeNodeEmbeddings.js",
+          "delete:test-embeddings": "tsx test/deleteJsMonitorEmbeddings.js"
      },
      "dependencies": {
           "@headlessui/react": "^2.2.9",
@@ -58,6 +61,8 @@
           "prettier-plugin-jsdoc": "^1.5.0",
           "prettier-plugin-organize-imports": "^4.3.0",
           "tailwindcss": "^3.3.0",
+          "umap-js": "^1.3.3",
+          "tsx": "^4.7.1",
           "typescript": "5.9.3"
      }
 }
