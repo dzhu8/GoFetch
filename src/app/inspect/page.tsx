@@ -1,14 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import { Loader2, Plus, Trash2, X } from "lucide-react";
 import { UMAP } from "umap-js";
 
 import { cn } from "@/lib/utils";
-
-const Plot = dynamic(() => import("@/components/PlotlyClient"), { ssr: false });
-const EMBEDDING_STAGE = "ast-node-test";
+import ThreeEmbeddingViewer from "@/components/ThreeEmbeddingViewer";
 
 type RegisteredFolder = {
      name: string;
@@ -328,7 +325,6 @@ export default function InspectPage() {
           try {
                const params = new URLSearchParams({
                     folderName: folder.name,
-                    stage: EMBEDDING_STAGE,
                });
 
                const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
@@ -341,7 +337,7 @@ export default function InspectPage() {
                const rows = data.embeddings ?? [];
 
                if (rows.length === 0) {
-                    setErrorMessage(`No embeddings found for ${folder.name} at stage ${EMBEDDING_STAGE}.`);
+                    setErrorMessage(`No embeddings found for ${folder.name}.`);
                     handleClosePlot();
                     return;
                }
@@ -385,7 +381,6 @@ export default function InspectPage() {
           try {
                const params = new URLSearchParams({
                     folderName,
-                    stage: EMBEDDING_STAGE,
                });
                const res = await fetch(`/api/embeddings?${params.toString()}`, {
                     method: "DELETE",
@@ -609,7 +604,7 @@ export default function InspectPage() {
                                                             </p>
                                                        </div>
                                                        <p className="text-[11px] text-black/50 dark:text-white/50">
-                                                            Removes stored vectors for stage {EMBEDDING_STAGE}.
+                                                            Removes stored vectors for this folder.
                                                        </p>
                                                        <button
                                                             type="button"
@@ -745,64 +740,7 @@ export default function InspectPage() {
                                              </p>
                                         </div>
                                    ) : plotPoints ? (
-                                        <Plot
-                                             data={[
-                                                  {
-                                                       type: "scatter3d",
-                                                       mode: "markers",
-                                                       x: plotPoints.x,
-                                                       y: plotPoints.y,
-                                                       z: plotPoints.z,
-                                                       text: plotPoints.text,
-                                                       hovertemplate: "%{text}<extra></extra>",
-                                                       marker: {
-                                                            size: dotSize,
-                                                            opacity: 0.85,
-                                                            color: plotPoints.y,
-                                                            colorscale: "Viridis",
-                                                       },
-                                                  },
-                                             ]}
-                                             layout={{
-                                                  title: {
-                                                       text: selectedFolder
-                                                            ? `3D Embeddings · ${selectedFolder}`
-                                                            : "3D Embeddings",
-                                                  },
-                                                  scene: {
-                                                       xaxis: {
-                                                            showgrid: false,
-                                                            zeroline: false,
-                                                            showline: false,
-                                                            ticks: "",
-                                                            showticklabels: false,
-                                                       },
-                                                       yaxis: {
-                                                            showgrid: false,
-                                                            zeroline: false,
-                                                            showline: false,
-                                                            ticks: "",
-                                                            showticklabels: false,
-                                                       },
-                                                       zaxis: {
-                                                            showgrid: false,
-                                                            zeroline: false,
-                                                            showline: false,
-                                                            ticks: "",
-                                                            showticklabels: false,
-                                                       },
-                                                       bgcolor: "rgba(0,0,0,0)",
-                                                  },
-                                                  paper_bgcolor: "rgba(0,0,0,0)",
-                                                  plot_bgcolor: "rgba(0,0,0,0)",
-                                                  margin: { l: 0, r: 0, t: 40, b: 0 },
-                                             }}
-                                             config={{
-                                                  responsive: true,
-                                                  displaylogo: false,
-                                             }}
-                                             style={{ width: "100%", height: "100%" }}
-                                        />
+                                        <ThreeEmbeddingViewer points={plotPoints} pointSize={dotSize} />
                                    ) : (
                                         <div className="flex items-center justify-center h-full">
                                              <p className="text-sm text-black/60 dark:text-white/60">

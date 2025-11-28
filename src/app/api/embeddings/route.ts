@@ -1,13 +1,9 @@
 import type { Buffer } from "node:buffer";
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import db from "@/server/db";
 import { embeddings } from "@/server/db/schema";
-
-const DEFAULT_STAGE = "ast-node-test";
-
-const buildStageClause = (stage: string) => sql`json_extract(${embeddings.metadata}, '$.stage') = ${stage}`;
 
 const toVector = (buffer: Buffer, dim: number) => {
      const floatView = new Float32Array(buffer.buffer, buffer.byteOffset, dim);
@@ -16,19 +12,13 @@ const toVector = (buffer: Buffer, dim: number) => {
 
 export async function GET(req: NextRequest) {
      const folderName = req.nextUrl.searchParams.get("folderName");
-     const stageParam = req.nextUrl.searchParams.get("stage");
 
      if (!folderName) {
           return NextResponse.json({ error: "folderName is required" }, { status: 400 });
      }
 
      try {
-          let whereClause: any = eq(embeddings.folderName, folderName);
-          const stage = stageParam === "all" ? null : (stageParam ?? DEFAULT_STAGE);
-
-          if (stage) {
-               whereClause = and(whereClause, buildStageClause(stage));
-          }
+          const whereClause = eq(embeddings.folderName, folderName);
 
           const rows = db
                .select({
@@ -62,21 +52,13 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
      const folderName = req.nextUrl.searchParams.get("folderName");
-     const stageParam = req.nextUrl.searchParams.get("stage");
 
      if (!folderName) {
           return NextResponse.json({ error: "folderName is required" }, { status: 400 });
      }
 
      try {
-          let whereClause: any = eq(embeddings.folderName, folderName);
-          const stage = stageParam === "all" ? null : (stageParam ?? DEFAULT_STAGE);
-
-          if (stage) {
-               whereClause = and(whereClause, buildStageClause(stage));
-          }
-
-          const { changes } = db.delete(embeddings).where(whereClause).run();
+          const { changes } = db.delete(embeddings).where(eq(embeddings.folderName, folderName)).run();
 
           return NextResponse.json({ deleted: changes ?? 0 });
      } catch (error) {
