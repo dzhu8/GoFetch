@@ -223,7 +223,7 @@ class CliWatcherClient extends EventEmitter<CliWatcherEvents> {
 
                if (response.ok) {
                     this.watchedFolders.add(normalizePathForComparison(folderPath));
-                    console.log(`[cliWatcher] Started watching: ${folderPath}`);
+                    //console.log(`[cliWatcher] Started watching: ${folderPath}`);
                     return true;
                }
 

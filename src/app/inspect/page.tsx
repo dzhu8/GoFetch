@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Trash2, X } from "lucide-react";
+import { Folder, Loader2, Plus, Trash2, X } from "lucide-react";
 import { UMAP } from "umap-js";
 
 import { cn } from "@/lib/utils";
@@ -80,10 +80,18 @@ const persistSelectionVersion = (version: number) => {
 
 const VIEW_TABS = [
      { id: "visualize", label: "Visualize embeddings" },
+     { id: "query", label: "Visualize query" },
      { id: "delete", label: "Delete embeddings" },
 ] as const;
 
 type ViewTab = (typeof VIEW_TABS)[number]["id"];
+
+type QueryPoint = {
+     x: number;
+     y: number;
+     z: number;
+     text: string;
+};
 
 export default function InspectPage() {
      const [folders, setFolders] = useState<RegisteredFolder[]>([]);
@@ -109,6 +117,16 @@ export default function InspectPage() {
      const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
      const lastSelectionVersionRef = useRef(0);
      const cliPollingErrorLoggedRef = useRef(false);
+
+     // Query visualization state
+     const [querySelectedFolders, setQuerySelectedFolders] = useState<Set<string>>(new Set());
+     const [isQueryModalOpen, setIsQueryModalOpen] = useState(false);
+     const [queryText, setQueryText] = useState("");
+     const [isQueryVisualizing, setIsQueryVisualizing] = useState(false);
+     const [queryPlotPoints, setQueryPlotPoints] = useState<PlotPoints | null>(null);
+     const [queryPoint, setQueryPoint] = useState<QueryPoint | null>(null);
+     const [isQueryPlotOpen, setIsQueryPlotOpen] = useState(false);
+     const [queryLoadProgress, setQueryLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
 
      const requestCliSelection = useCallback(async () => {
           const useProxy = shouldProxyCliRequests();
@@ -523,6 +541,170 @@ export default function InspectPage() {
           [fetchFolders, handleClosePlot, selectedFolder]
      );
 
+     // Query visualization handlers
+     const handleToggleQueryFolder = (folderName: string) => {
+          setQuerySelectedFolders((prev) => {
+               const next = new Set(prev);
+               if (next.has(folderName)) {
+                    next.delete(folderName);
+               } else {
+                    next.add(folderName);
+               }
+               return next;
+          });
+     };
+
+     const truncateQueryText = (text: string, maxLength: number = 40) => {
+          if (text.length <= maxLength) return text;
+          return text.slice(0, maxLength) + "...";
+     };
+
+     const handleCloseQueryPlot = useCallback(() => {
+          setIsQueryPlotOpen(false);
+          setQueryPlotPoints(null);
+          setQueryPoint(null);
+          setIsQueryVisualizing(false);
+          setQueryLoadProgress(null);
+     }, []);
+
+     const handleVisualizeQuery = async () => {
+          if (querySelectedFolders.size === 0) {
+               setErrorMessage("Please select at least one folder.");
+               return;
+          }
+
+          if (!queryText.trim()) {
+               setErrorMessage("Please enter a query.");
+               return;
+          }
+
+          setIsQueryModalOpen(false);
+          setIsQueryPlotOpen(true);
+          setIsQueryVisualizing(true);
+          setQueryPlotPoints(null);
+          setQueryPoint(null);
+          setQueryLoadProgress(null);
+
+          try {
+               // Step 1: Compute embedding for the query
+               const queryRes = await fetch("/api/embeddings/query", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ query: queryText.trim() }),
+               });
+               const queryData = (await queryRes.json().catch(() => ({}))) as {
+                    vector?: number[];
+                    error?: string;
+               };
+
+               if (!queryRes.ok) {
+                    throw new Error(queryData?.error || "Failed to compute query embedding");
+               }
+
+               const queryVector = queryData.vector;
+               if (!queryVector || queryVector.length === 0) {
+                    throw new Error("Query embedding response did not contain a vector");
+               }
+
+               // Step 2: Fetch all embeddings from selected folders
+               const allRows: EmbeddingRow[] = [];
+               const selectedFolderNames = Array.from(querySelectedFolders);
+               let totalEmbeddings = 0;
+
+               // First, get total counts
+               for (const folderName of selectedFolderNames) {
+                    const folder = folders.find((f) => f.name === folderName);
+                    totalEmbeddings += folder?.embeddingCount ?? 0;
+               }
+
+               setQueryLoadProgress({ loaded: 0, total: totalEmbeddings });
+
+               for (const folderName of selectedFolderNames) {
+                    let offset = 0;
+                    const batchSize = 500;
+                    let hasMore = true;
+
+                    while (hasMore) {
+                         const params = new URLSearchParams({
+                              folderName,
+                              limit: String(batchSize),
+                              offset: String(offset),
+                         });
+
+                         const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
+                         const data = (await res.json().catch(() => ({}))) as {
+                              embeddings?: EmbeddingRow[];
+                              error?: string;
+                              hasMore?: boolean;
+                              total?: number;
+                         };
+
+                         if (!res.ok) {
+                              throw new Error(data?.error || `Failed to load embeddings for ${folderName}`);
+                         }
+
+                         const rows = data.embeddings ?? [];
+                         allRows.push(...rows);
+                         hasMore = data.hasMore ?? false;
+                         offset += rows.length;
+
+                         setQueryLoadProgress({ loaded: allRows.length, total: totalEmbeddings });
+
+                         // Safety limit
+                         if (allRows.length > 10000) {
+                              console.warn("Reached safety limit of 10000 embeddings");
+                              break;
+                         }
+                    }
+               }
+
+               if (allRows.length === 0) {
+                    setErrorMessage("No embeddings found in selected folders.");
+                    handleCloseQueryPlot();
+                    return;
+               }
+
+               // Step 3: Run UMAP on all vectors including the query vector
+               const allVectors = [...allRows.map((row) => row.vector), queryVector];
+               const nNeighbors = Math.min(15, Math.max(2, allVectors.length - 1));
+               const reducer = new UMAP({ nComponents: 3, nNeighbors, minDist: 0.25 });
+               const coordinates =
+                    allVectors.length > 1 ? reducer.fit(allVectors) : allVectors.map((vec) => [vec[0] ?? 0, 0, 0]);
+
+               // Separate regular points and query point
+               const regularCoords = coordinates.slice(0, -1);
+               const queryCoord = coordinates[coordinates.length - 1];
+
+               const payload: PlotPoints = { x: [], y: [], z: [], text: [] };
+               regularCoords.forEach((point, index) => {
+                    const [x = 0, y = 0, z = 0] = point || [];
+                    payload.x.push(x);
+                    payload.y.push(y);
+                    payload.z.push(z);
+                    payload.text.push(buildLabel(allRows[index]));
+               });
+
+               const queryPointData: QueryPoint = {
+                    x: queryCoord?.[0] ?? 0,
+                    y: queryCoord?.[1] ?? 0,
+                    z: queryCoord?.[2] ?? 0,
+                    text: `User query: ${truncateQueryText(queryText.trim())}`,
+               };
+
+               setQueryPlotPoints(payload);
+               setQueryPoint(queryPointData);
+               setQueryLoadProgress(null);
+          } catch (error) {
+               console.error("Failed to visualize query", error);
+               setQueryPlotPoints(null);
+               setQueryPoint(null);
+               setErrorMessage(error instanceof Error ? error.message : "Failed to visualize query.");
+               handleCloseQueryPlot();
+          } finally {
+               setIsQueryVisualizing(false);
+          }
+     };
+
      return (
           <div className="h-full flex flex-col">
                <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-4">
@@ -663,6 +845,101 @@ export default function InspectPage() {
                                         </div>
                                         <div className="border-2 border-dashed border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/30 dark:bg-dark-primary/40 p-4 text-sm text-black/70 dark:text-white/70 text-center">
                                              Click any folder to open the embedding viewer.
+                                        </div>
+                                   </>
+                              )}
+                         </div>
+                    )}
+
+                    {activeView === "query" && (
+                         <div className="max-w-6xl mx-auto space-y-6">
+                              {isBusy ? (
+                                   <div className="flex flex-col items-center justify-center py-12">
+                                        <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
+                                        <p className="text-sm text-black/60 dark:text-white/60">Loading folders...</p>
+                                   </div>
+                              ) : folders.length === 0 ? (
+                                   <div className="flex flex-col items-center justify-center py-12 text-center">
+                                        <p className="text-base font-medium text-black/70 dark:text-white/70 mb-1">
+                                             No folders are registered yet
+                                        </p>
+                                        <p className="text-sm text-black/50 dark:text-white/50">
+                                             Add folders from the Sync view to start collecting embeddings.
+                                        </p>
+                                   </div>
+                              ) : (
+                                   <>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                             {folders.map((folder) => {
+                                                  const isSelected = querySelectedFolders.has(folder.name);
+                                                  return (
+                                                       <div
+                                                            key={folder.name}
+                                                            role="button"
+                                                            tabIndex={0}
+                                                            onClick={() => handleToggleQueryFolder(folder.name)}
+                                                            onKeyDown={(event) => {
+                                                                 if (event.key === "Enter" || event.key === " ") {
+                                                                      event.preventDefault();
+                                                                      handleToggleQueryFolder(folder.name);
+                                                                 }
+                                                            }}
+                                                            className={cn(
+                                                                 "border-2 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F8B692] cursor-pointer",
+                                                                 isSelected
+                                                                      ? "border-[#F8B692]"
+                                                                      : "border-light-200 dark:border-dark-200 hover:border-[#F8B692]/70"
+                                                            )}
+                                                       >
+                                                            <div className="flex items-start justify-between gap-3">
+                                                                 <p className="text-sm font-semibold text-black dark:text-white">
+                                                                      {folder.name}
+                                                                 </p>
+                                                                 <input
+                                                                      type="checkbox"
+                                                                      checked={isSelected}
+                                                                      onChange={() =>
+                                                                           handleToggleQueryFolder(folder.name)
+                                                                      }
+                                                                      onClick={(e) => e.stopPropagation()}
+                                                                      className="w-4 h-4 rounded border-2 border-light-200 dark:border-dark-200 text-[#F8B692] focus:ring-[#F8B692] cursor-pointer"
+                                                                 />
+                                                            </div>
+                                                            <p className="text-xs text-black/60 dark:text-white/60 truncate">
+                                                                 {folder.rootPath}
+                                                            </p>
+                                                            <div className="flex items-center justify-between text-[10px] text-black/40 dark:text-white/40 mt-1">
+                                                                 <span>{folder.embeddingCount ?? 0} embeddings</span>
+                                                                 {folder.updatedAt && (
+                                                                      <span>
+                                                                           Updated{" "}
+                                                                           {new Date(
+                                                                                folder.updatedAt
+                                                                           ).toLocaleDateString()}
+                                                                      </span>
+                                                                 )}
+                                                            </div>
+                                                            <p className="text-[11px] text-black/50 dark:text-white/50">
+                                                                 {isSelected ? "Selected for query" : "Click to select"}
+                                                            </p>
+                                                       </div>
+                                                  );
+                                             })}
+                                        </div>
+                                        <div className="flex flex-col items-center gap-4">
+                                             <button
+                                                  type="button"
+                                                  onClick={() => setIsQueryModalOpen(true)}
+                                                  disabled={querySelectedFolders.size === 0}
+                                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-black font-medium text-sm hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                                             >
+                                                  Write test query
+                                             </button>
+                                             <p className="text-xs text-black/50 dark:text-white/50 text-center">
+                                                  {querySelectedFolders.size === 0
+                                                       ? "Select folders to enable query visualization"
+                                                       : `${querySelectedFolders.size} folder${querySelectedFolders.size > 1 ? "s" : ""} selected`}
+                                             </p>
                                         </div>
                                    </>
                               )}
@@ -868,6 +1145,156 @@ export default function InspectPage() {
                                         <div className="flex items-center justify-center h-full">
                                              <p className="text-sm text-black/60 dark:text-white/60">
                                                   Select a folder to generate the 3D embedding map.
+                                             </p>
+                                        </div>
+                                   )}
+                              </div>
+                         </div>
+                    </div>
+               )}
+
+               {isQueryModalOpen && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+                         <div className="w-full max-w-lg bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl p-6 shadow-lg">
+                              <div className="flex items-start justify-between gap-4 mb-4">
+                                   <div>
+                                        <h2 className="text-lg font-semibold text-black dark:text-white">
+                                             Write test query
+                                        </h2>
+                                        <p className="text-xs text-black/60 dark:text-white/60 mt-1">
+                                             Enter a query to visualize against selected folder embeddings
+                                        </p>
+                                   </div>
+                                   <button
+                                        type="button"
+                                        onClick={() => {
+                                             setIsQueryModalOpen(false);
+                                             setQueryText("");
+                                        }}
+                                        className="p-2 rounded-full border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                        aria-label="Close query modal"
+                                   >
+                                        <X className="w-4 h-4" />
+                                   </button>
+                              </div>
+                              {/* Selected folders chips */}
+                              <div className="mb-4">
+                                   <p className="text-xs font-medium text-black/70 dark:text-white/70 mb-2">
+                                        Selected folders
+                                   </p>
+                                   <div className="flex flex-wrap gap-2">
+                                        {Array.from(querySelectedFolders).map((folderName) => (
+                                             <div
+                                                  key={folderName}
+                                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 text-xs text-black/70 dark:text-white/70"
+                                             >
+                                                  <Folder className="w-3 h-3" />
+                                                  <span>{folderName}</span>
+                                             </div>
+                                        ))}
+                                   </div>
+                              </div>
+                              {/* Query input */}
+                              <div className="mb-6">
+                                   <label className="text-xs font-medium text-black/70 dark:text-white/70">Query</label>
+                                   <textarea
+                                        value={queryText}
+                                        onChange={(e) => setQueryText(e.target.value)}
+                                        rows={4}
+                                        className="mt-1 w-full px-3 py-2 text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692] resize-none"
+                                        placeholder="Enter your search query or code snippet..."
+                                        autoFocus
+                                   />
+                              </div>
+                              <div className="flex justify-end gap-3">
+                                   <button
+                                        type="button"
+                                        onClick={() => {
+                                             setIsQueryModalOpen(false);
+                                             setQueryText("");
+                                        }}
+                                        className="px-4 py-2 rounded-lg border border-light-200 dark:border-dark-200 text-sm text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                   >
+                                        Cancel
+                                   </button>
+                                   <button
+                                        type="button"
+                                        onClick={handleVisualizeQuery}
+                                        disabled={!queryText.trim()}
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-black text-sm font-medium hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                   >
+                                        Visualize query
+                                   </button>
+                              </div>
+                         </div>
+                    </div>
+               )}
+
+               {isQueryPlotOpen && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+                         <div className="w-full max-w-5xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl p-6 shadow-2xl">
+                              <div className="flex items-start justify-between gap-4 mb-4">
+                                   <div>
+                                        <p className="text-lg font-semibold text-black dark:text-white">
+                                             Query visualization
+                                        </p>
+                                        <p className="text-xs text-black/60 dark:text-white/60">
+                                             {queryPoint
+                                                  ? `Query: "${truncateQueryText(queryText.trim(), 50)}"`
+                                                  : "Preparing visualization..."}
+                                        </p>
+                                   </div>
+                                   <button
+                                        type="button"
+                                        onClick={handleCloseQueryPlot}
+                                        className="p-2 rounded-full border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                        aria-label="Close query viewer"
+                                   >
+                                        <X className="w-4 h-4" />
+                                   </button>
+                              </div>
+                              <div className="h-[60vh] min-h-[360px]">
+                                   {isQueryVisualizing ? (
+                                        <div className="flex flex-col items-center justify-center h-full gap-4">
+                                             <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60" />
+                                             {queryLoadProgress ? (
+                                                  <div className="w-full max-w-sm space-y-2">
+                                                       <div className="flex items-center justify-between text-xs text-black/60 dark:text-white/60">
+                                                            <span>Loading embeddings...</span>
+                                                            <span>
+                                                                 {queryLoadProgress.loaded} / {queryLoadProgress.total}
+                                                            </span>
+                                                       </div>
+                                                       <div className="h-2 w-full rounded-full bg-light-200 dark:bg-dark-200 overflow-hidden">
+                                                            <div
+                                                                 className="h-full bg-[#F8B692] transition-all duration-300 ease-out"
+                                                                 style={{
+                                                                      width: `${queryLoadProgress.total > 0 ? (queryLoadProgress.loaded / queryLoadProgress.total) * 100 : 0}%`,
+                                                                 }}
+                                                            />
+                                                       </div>
+                                                       <p className="text-center text-xs text-black/50 dark:text-white/50">
+                                                            {queryLoadProgress.loaded >= queryLoadProgress.total
+                                                                 ? "Running UMAP dimensionality reduction..."
+                                                                 : `Fetching embeddings from ${querySelectedFolders.size} folder${querySelectedFolders.size > 1 ? "s" : ""}`}
+                                                       </p>
+                                                  </div>
+                                             ) : (
+                                                  <p className="text-sm text-black/60 dark:text-white/60">
+                                                       Computing query embedding...
+                                                  </p>
+                                             )}
+                                        </div>
+                                   ) : queryPlotPoints && queryPoint ? (
+                                        <ThreeEmbeddingViewer
+                                             points={queryPlotPoints}
+                                             pointSize={dotSize}
+                                             queryPoint={queryPoint}
+                                        />
+                                   ) : (
+                                        <div className="flex items-center justify-center h-full">
+                                             <p className="text-sm text-black/60 dark:text-white/60">
+                                                  Enter a query to generate the 3D visualization.
                                              </p>
                                         </div>
                                    )}

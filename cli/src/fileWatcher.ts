@@ -106,7 +106,7 @@ class FileWatcherService {
                     pendingChanges: new Map(),
                });
 
-               console.log(`[watcher] Started watching: ${normalizedPath}`);
+               //console.log(`[watcher] Started watching: ${normalizedPath}`);
           } catch (error) {
                console.error(`[watcher] Failed to watch ${normalizedPath}:`, error);
           }

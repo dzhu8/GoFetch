@@ -11,9 +11,17 @@ type PlotPoints = {
      text: string[];
 };
 
+type QueryPoint = {
+     x: number;
+     y: number;
+     z: number;
+     text: string;
+};
+
 type ThreeEmbeddingViewerProps = {
      points: PlotPoints;
      pointSize: number;
+     queryPoint?: QueryPoint;
 };
 
 const clampPointSize = (value: number) => Math.min(Math.max(value, 2), 60);
@@ -59,7 +67,7 @@ const createAxisLabelSprite = (text: string, color: string) => {
      return sprite;
 };
 
-export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddingViewerProps) {
+export default function ThreeEmbeddingViewer({ points, pointSize, queryPoint }: ThreeEmbeddingViewerProps) {
      const mountRef = useRef<HTMLDivElement>(null);
      const hoverLabelRef = useRef<HTMLDivElement>(null);
      const compassRef = useRef<HTMLDivElement>(null);
@@ -99,22 +107,27 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
           controls.minDistance = 1.5;
           controls.maxDistance = 32;
 
+          // Include query point in bounds calculation if present
+          const allX = queryPoint ? [...points.x, queryPoint.x] : points.x;
+          const allY = queryPoint ? [...points.y, queryPoint.y] : points.y;
+          const allZ = queryPoint ? [...points.z, queryPoint.z] : points.z;
+
+          const minX = Math.min(...allX);
+          const maxX = Math.max(...allX);
+          const minY = Math.min(...allY);
+          const maxY = Math.max(...allY);
+          const minZ = Math.min(...allZ);
+          const maxZ = Math.max(...allZ);
+          const centerX = (minX + maxX) / 2;
+          const centerY = (minY + maxY) / 2;
+          const centerZ = (minZ + maxZ) / 2;
+          const spread = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
+
           const positionAttribute = new Float32Array(count * 3);
           const colorAttribute = new Float32Array(count * 3);
           const xValues = points.x;
           const yValues = points.y;
           const zValues = points.z;
-
-          const minX = Math.min(...xValues);
-          const maxX = Math.max(...xValues);
-          const minY = Math.min(...yValues);
-          const maxY = Math.max(...yValues);
-          const minZ = Math.min(...zValues);
-          const maxZ = Math.max(...zValues);
-          const centerX = (minX + maxX) / 2;
-          const centerY = (minY + maxY) / 2;
-          const centerZ = (minZ + maxZ) / 2;
-          const spread = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
 
           for (let i = 0; i < count; i += 1) {
                const posIndex = i * 3;
@@ -144,6 +157,32 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
           const pointCloud = new THREE.Points(geometry, material);
           scene.add(pointCloud);
 
+          // Create query point if provided (red, twice the size)
+          let queryGeometry: THREE.BufferGeometry | null = null;
+          let queryMaterial: THREE.PointsMaterial | null = null;
+          let queryPosition: Float32Array | null = null;
+
+          if (queryPoint) {
+               queryGeometry = new THREE.BufferGeometry();
+               queryPosition = new Float32Array([
+                    normalizeValue(queryPoint.x, centerX, spread),
+                    normalizeValue(queryPoint.y, centerY, spread),
+                    normalizeValue(queryPoint.z, centerZ, spread),
+               ]);
+               queryGeometry.setAttribute("position", new THREE.BufferAttribute(queryPosition, 3));
+
+               queryMaterial = new THREE.PointsMaterial({
+                    size: clampPointSize(pointSize) * 0.035 * 2, // Twice the size
+                    color: 0xff0000, // Red color
+                    transparent: true,
+                    opacity: 1.0,
+                    depthWrite: false,
+               });
+
+               const queryCloud = new THREE.Points(queryGeometry, queryMaterial);
+               scene.add(queryCloud);
+          }
+
           const pointer = new THREE.Vector2();
           let hoveredIndex: number | null = null;
 
@@ -171,6 +210,20 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
                let closestIndex: number | null = null;
                let closestDistSq = Infinity;
                const threshold = 0.03; // Screen-space threshold for selection
+
+               // Check query point first if present (it has higher priority)
+               if (queryPoint && queryPosition) {
+                    const queryVec = new THREE.Vector3(queryPosition[0], queryPosition[1], queryPosition[2]);
+                    queryVec.project(camera);
+                    const queryDx = queryVec.x - pointer.x;
+                    const queryDy = queryVec.y - pointer.y;
+                    const queryDistSq = queryDx * queryDx + queryDy * queryDy;
+
+                    if (queryDistSq < threshold * threshold * 4) {
+                         updateHoverLabel(queryPoint.text);
+                         return;
+                    }
+               }
 
                const tempVec = new THREE.Vector3();
                for (let i = 0; i < count; i += 1) {
@@ -318,6 +371,8 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
                controls.dispose();
                geometry.dispose();
                material.dispose();
+               queryGeometry?.dispose();
+               queryMaterial?.dispose();
                renderer.dispose();
                if (mount.contains(renderer.domElement)) {
                     mount.removeChild(renderer.domElement);
@@ -327,7 +382,7 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
                     compassRenderer.dispose();
                }
           };
-     }, [points, pointSize]);
+     }, [points, pointSize, queryPoint]);
 
      return (
           <div className="relative h-full w-full">
@@ -342,8 +397,16 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
                     ref={compassRef}
                     className="pointer-events-none absolute bottom-3 left-3 h-24 w-24 overflow-hidden rounded-full border border-white/10 bg-black/30 backdrop-blur-sm"
                />
-               <div className="pointer-events-none absolute bottom-3 right-4 rounded-full bg-black/60 px-3 py-1 text-[10px] uppercase tracking-wide text-white">
-                    Drag to rotate · Scroll to zoom
+               <div className="pointer-events-none absolute bottom-3 right-4 flex flex-col items-end gap-1">
+                    {queryPoint && (
+                         <div className="flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-[10px] text-white">
+                              <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+                              <span>Query point</span>
+                         </div>
+                    )}
+                    <div className="rounded-full bg-black/60 px-3 py-1 text-[10px] uppercase tracking-wide text-white">
+                         Drag to rotate · Scroll to zoom
+                    </div>
                </div>
           </div>
      );
