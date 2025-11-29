@@ -35,7 +35,6 @@ class MerkleStore {
                     rootPath,
                     rootHash,
                     updatedAt: now,
-                    lastCheckedAt: now,
                })
                .run();
 
@@ -123,13 +122,6 @@ class MerkleStore {
           }
 
           db.delete(merkleFolders).where(eq(merkleFolders.id, folderRow.id)).run();
-     }
-
-     touchFolderCheck(folderId: number): void {
-          db.update(merkleFolders)
-               .set({ lastCheckedAt: new Date().toISOString() })
-               .where(eq(merkleFolders.id, folderId))
-               .run();
      }
 
      private getParentPath(relativePath: string): string | null {

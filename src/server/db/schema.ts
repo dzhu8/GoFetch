@@ -158,9 +158,6 @@ export const merkleFolders = sqliteTable(
           updatedAt: text("updated_at")
                .default(sql`CURRENT_TIMESTAMP`)
                .notNull(),
-          lastCheckedAt: text("last_checked_at")
-               .default(sql`CURRENT_TIMESTAMP`)
-               .notNull(),
      },
      (table) => ({
           folderNameUniqueIdx: uniqueIndex("merkle_folders_folder_name_idx").on(table.folderName),
