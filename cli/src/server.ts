@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import path from "node:path";
 import { selectFolderInteractive, deriveFolderName } from "./folderPicker";
 import { findFolderByPath } from "./db";
+import fileWatcher from "./fileWatcher";
 
 type FolderSelectionEvent = {
      path: string;
@@ -156,6 +157,66 @@ const server = createServer(async (req, res) => {
           return;
      }
 
+     // SSE endpoint for file change events
+     if (req.method === "GET" && pathname === "/watch/events") {
+          res.writeHead(200, {
+               "Content-Type": "text/event-stream",
+               "Cache-Control": "no-cache",
+               Connection: "keep-alive",
+               "Access-Control-Allow-Origin": "*",
+          });
+
+          // Send initial connection event
+          res.write(`event: connected\ndata: {"timestamp":${Date.now()}}\n\n`);
+
+          fileWatcher.addSseClient(res);
+          return;
+     }
+
+     // Start watching a folder
+     if (req.method === "POST" && pathname === "/watch") {
+          try {
+               const body = await readJsonBody<{ path?: string }>(req);
+               if (!body.path || typeof body.path !== "string") {
+                    sendJson(res, 400, { error: "'path' is required" });
+                    return;
+               }
+
+               const normalizedPath = normalizeFolderPath(body.path);
+               fileWatcher.watchFolder(normalizedPath);
+               sendJson(res, 200, { status: "watching", path: normalizedPath });
+          } catch (error) {
+               console.error("Failed to watch folder:", error);
+               sendJson(res, 500, { error: "Failed to watch folder" });
+          }
+          return;
+     }
+
+     // Stop watching a folder
+     if (req.method === "DELETE" && pathname === "/watch") {
+          try {
+               const body = await readJsonBody<{ path?: string }>(req);
+               if (!body.path || typeof body.path !== "string") {
+                    sendJson(res, 400, { error: "'path' is required" });
+                    return;
+               }
+
+               const normalizedPath = normalizeFolderPath(body.path);
+               fileWatcher.unwatchFolder(normalizedPath);
+               sendJson(res, 200, { status: "unwatched", path: normalizedPath });
+          } catch (error) {
+               console.error("Failed to unwatch folder:", error);
+               sendJson(res, 500, { error: "Failed to unwatch folder" });
+          }
+          return;
+     }
+
+     // Get list of watched folders
+     if (req.method === "GET" && pathname === "/watch") {
+          sendJson(res, 200, { folders: fileWatcher.getWatchedFolders() });
+          return;
+     }
+
      sendJson(res, 404, { error: "Not implemented" });
 });
 
@@ -166,6 +227,7 @@ server.listen(port, () => {
 
 const shutdown = () => {
      console.log("Shutting down GoFetch CLI helper...");
+     fileWatcher.shutdown();
      server.close(() => {
           process.exit(0);
      });
