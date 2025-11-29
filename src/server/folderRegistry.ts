@@ -3,12 +3,13 @@ import path from "path";
 import { execSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import db from "@/server/db";
-import { folders as foldersTable } from "@/server/db/schema";
+import { folders as foldersTable, astFileSnapshots, embeddings } from "@/server/db/schema";
 import { IGNORED_DIRECTORY_NAMES, IGNORED_FILE_NAMES } from "./folderIgnore";
 import { indexFolder, removeFolderIndex } from "./merkle/service";
 import merkleMonitor from "./merkle/monitor";
 import monitorService from "./monitoring/monitorService";
 import { cancelInitialEmbedding, ensureFolderPrimed, scheduleInitialEmbedding } from "@/lib/embed/initial";
+import folderEvents from "./folderEvents";
 
 //@ts-ignore
 export type FolderTree = Record<string, FolderTree | null>;
@@ -19,6 +20,7 @@ export interface FolderRegistration {
      tree: FolderTree;
      githubUrl: string | null;
      isGitConnected: boolean;
+     updatedAt?: string;
 }
 
 export class FolderRegistry {
@@ -53,6 +55,7 @@ export class FolderRegistry {
           merkleMonitor.registerFolder(registration);
           monitorService.enable(name, registration.rootPath);
           scheduleInitialEmbedding(registration);
+          folderEvents.notifyChange();
           return registration;
      }
 
@@ -81,6 +84,7 @@ export class FolderRegistry {
           merkleMonitor.updateFolder(registration);
           monitorService.disable(name);
           monitorService.enable(name, registration.rootPath);
+          folderEvents.notifyChange();
           return registration;
      }
 
@@ -99,13 +103,30 @@ export class FolderRegistry {
                this.folders.delete(name);
           }
 
+          // Clean up AST snapshots and embeddings for this folder.
+          // astNodes cascade-delete from astFileSnapshots, and embeddings.fileSnapshotId
+          // also cascades, but embeddings without a snapshot link must be deleted explicitly.
+          this.cleanupFolderData(name);
+
           this.deleteFolderRecord(name);
+          folderEvents.notifyChange();
+     }
+
+     private cleanupFolderData(folderName: string): void {
+          try {
+               // Delete embeddings first (some may not have fileSnapshotId set)
+               db.delete(embeddings).where(eq(embeddings.folderName, folderName)).run();
+               // Delete AST snapshots (astNodes cascade automatically)
+               db.delete(astFileSnapshots).where(eq(astFileSnapshots.folderName, folderName)).run();
+          } catch (error) {
+               console.error(`[folderRegistry] Failed to clean up data for ${folderName}:`, error);
+          }
      }
 
      private buildRegistration(
           name: string,
           rootPath: string,
-          metadata?: Partial<Pick<FolderRegistration, "githubUrl" | "isGitConnected">>
+          metadata?: Partial<Pick<FolderRegistration, "githubUrl" | "isGitConnected" | "updatedAt">>
      ): FolderRegistration {
           const absoluteRoot = path.resolve(rootPath);
           this.assertDirectoryExists(absoluteRoot);
@@ -117,6 +138,7 @@ export class FolderRegistry {
                tree,
                githubUrl: metadata?.githubUrl ?? null,
                isGitConnected: metadata?.isGitConnected ?? false,
+               updatedAt: metadata?.updatedAt,
           };
      }
 
@@ -128,6 +150,7 @@ export class FolderRegistry {
                          rootPath: foldersTable.rootPath,
                          githubUrl: foldersTable.githubUrl,
                          isGitConnected: foldersTable.isGitConnected,
+                         updatedAt: foldersTable.updatedAt,
                     })
                     .from(foldersTable)
                     .all();
@@ -137,6 +160,7 @@ export class FolderRegistry {
                          const registration = this.buildRegistration(record.name, record.rootPath, {
                               githubUrl: record.githubUrl,
                               isGitConnected: Boolean(record.isGitConnected),
+                              updatedAt: record.updatedAt,
                          });
                          this.folders.set(record.name, registration);
                          this.safeIndexFolder(registration);
@@ -164,7 +188,7 @@ export class FolderRegistry {
      private persistFolderRecord(
           name: string,
           rootPath: string
-     ): Pick<FolderRegistration, "githubUrl" | "isGitConnected"> {
+     ): Pick<FolderRegistration, "githubUrl" | "isGitConnected" | "updatedAt"> {
           const metadata = this.computeGitMetadata(rootPath);
           const now = new Date().toISOString();
 
@@ -210,7 +234,10 @@ export class FolderRegistry {
                throw error instanceof Error ? error : new Error(message);
           }
 
-          return metadata;
+          return {
+               ...metadata,
+               updatedAt: now,
+          };
      }
 
      private deleteFolderRecord(name: string): void {

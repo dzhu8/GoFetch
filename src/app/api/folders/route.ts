@@ -3,6 +3,9 @@ import folderRegistry from "@/server/folderRegistry";
 import { exec } from "child_process";
 import { promisify } from "util";
 import path from "path";
+import db from "@/server/db";
+import { embeddings } from "@/server/db/schema";
+import { count } from "drizzle-orm";
 
 const execAsync = promisify(exec);
 
@@ -14,14 +17,31 @@ export async function GET(req: NextRequest) {
 
           const folders = folderRegistry.getFolders();
 
+          // Fetch embedding counts
+          const embeddingCounts = await db
+               .select({
+                    folderName: embeddings.folderName,
+                    count: count(),
+               })
+               .from(embeddings)
+               .groupBy(embeddings.folderName)
+               .all();
+
+          const countsMap = new Map(embeddingCounts.map((e) => [e.folderName, e.count]));
+
+          const foldersWithCounts = folders.map((folder) => ({
+               ...folder,
+               embeddingCount: countsMap.get(folder.name) || 0,
+          }));
+
           if (!includeGitData) {
                // Return basic folder information
-               return NextResponse.json({ folders });
+               return NextResponse.json({ folders: foldersWithCounts });
           }
 
           // Include GitHub sync data
           const foldersWithGitData = await Promise.all(
-               folders.map(async (folder) => {
+               foldersWithCounts.map(async (folder) => {
                     if (!folder.isGitConnected) {
                          return {
                               ...folder,

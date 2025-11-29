@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 
 import type { EmbeddingProgressState } from "./types";
+import folderEvents from "@/server/folderEvents";
 
 const states = new Map<string, EmbeddingProgressState>();
 
@@ -38,6 +39,12 @@ export function updateEmbeddingProgress(
 
      states.set(folderName, next);
      embeddingProgressEmitter.emit("update", next);
+
+     // Notify folder SSE clients when embedding phase changes (for count updates)
+     if (patch.phase === "completed" || patch.phase === "error") {
+          folderEvents.notifyChange();
+     }
+
      return next;
 }
 

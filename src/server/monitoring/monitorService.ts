@@ -56,6 +56,13 @@ class MonitorService {
 
      private logDagChange(folderId: number, diff: MerkleDiff): void {
           try {
+               // Guard against race conditions where folder was deleted during polling
+               const folderExists = db.select({ id: folders.id }).from(folders).where(eq(folders.id, folderId)).get();
+
+               if (!folderExists) {
+                    return;
+               }
+
                const filesToIndex = [...diff.changedFiles, ...diff.addedFiles];
                for (const filePath of filesToIndex) {
                     db.insert(monitorEvents)

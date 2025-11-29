@@ -5,13 +5,14 @@ import crypto from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 
 import {
+     filterFocusNodes,
      inferFocusSymbolName,
      parseFolderRegistration,
      type ParsedFileAst,
      type SerializedNode,
      type SupportedLanguage,
 } from "@/lib/ast";
-import type { FolderRegistration } from "@/server/folderRegistry";
+import folderRegistry, { type FolderRegistration } from "@/server/folderRegistry";
 import db from "@/server/db";
 import { astFileSnapshots, astNodes, embeddings as embeddingsTable } from "@/server/db/schema";
 import modelRegistry from "@/server/providerRegistry";
@@ -20,10 +21,10 @@ import type { ModelPreference } from "@/lib/models/modelPreference";
 import type { EmbeddingModelClient, MinimalProvider } from "@/lib/models/types";
 import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import { clearEmbeddingProgress, embeddingProgressEmitter, updateEmbeddingProgress } from "@/lib/embed/progress";
+import folderEvents from "@/server/folderEvents";
 
-const MAX_AST_LINES = 256;
-const MAX_SNIPPET_LENGTH = 120;
-const EMBEDDING_BATCH_SIZE = 16;
+const MAX_NODE_SNIPPET = 256;
+const EMBEDDING_BATCH_SIZE = 64;
 
 interface ScheduledEmbeddingJob {
      cancelled: boolean;
@@ -81,7 +82,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               phase: "embedding",
                               totalFiles: total,
                               embeddedFiles: 0,
-                              message: total > 0 ? `Embedding 0/${total} files` : "Preparing embeddings...",
+                              message: total > 0 ? `Embedding 0/${total} nodes` : "Preparing embeddings...",
                          });
                     },
                     onProgress: (processed, total) => {
@@ -92,7 +93,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               phase: "embedding",
                               totalFiles: total,
                               embeddedFiles: processed,
-                              message: total > 0 ? `Embedding ${processed}/${total} files` : "Preparing embeddings...",
+                              message: total > 0 ? `Embedding ${processed}/${total} nodes` : "Preparing embeddings...",
                          });
                     },
                });
@@ -105,7 +106,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                     phase: "completed",
                     totalFiles: totalDocuments,
                     embeddedFiles: totalDocuments,
-                    message: totalDocuments > 0 ? "Initial embeddings ready" : "No eligible files detected",
+                    message: totalDocuments > 0 ? "Initial embeddings ready" : "No eligible nodes detected",
                });
                embeddingProgressEmitter.emit("embedding:complete", { folderName: folder.name });
           })
@@ -231,7 +232,10 @@ function persistAstSnapshots(folderName: string, parsedFiles: ParsedFileAst[]): 
                     .run();
 
                const fileId = Number(snapshotResult.lastInsertRowid);
-               const nodeRows = flattenAstNodes(fileAst.ast, fileId, fileAst.language);
+
+               // Filter to focus nodes before flattening
+               const focusAst = filterFocusNodes(fileAst.ast, fileAst.language, { requireMultiLine: true });
+               const nodeRows = flattenAstNodes(focusAst, fileId, fileAst.language);
 
                if (nodeRows.length === 0) {
                     continue;
@@ -254,45 +258,140 @@ interface EmbedOptions {
      onProgress?: (processed: number, total: number) => void;
 }
 
+interface NodeDocument {
+     snapshotId: number;
+     filePath: string;
+     relativePath: string;
+     language: string;
+     nodePath: string;
+     nodeType: string;
+     symbolName: string | null;
+     content: string;
+}
+
 async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptions): Promise<void> {
-     const astRows = db
+     let snapshots = db
           .select({
                id: astFileSnapshots.id,
                filePath: astFileSnapshots.filePath,
                relativePath: astFileSnapshots.relativePath,
                language: astFileSnapshots.language,
-               ast: astFileSnapshots.ast,
           })
           .from(astFileSnapshots)
           .where(eq(astFileSnapshots.folderName, folderName))
           .all();
 
-     if (astRows.length === 0) {
-          console.warn(`[embed] Skipping embeddings for ${folderName}; no AST snapshots found.`);
+     // If no AST snapshots exist, try to create them
+     if (snapshots.length === 0) {
+          const folder = folderRegistry.getFolderByName(folderName);
+          if (!folder) {
+               console.warn(`[embed] Skipping embeddings for ${folderName}; folder not found in registry.`);
+               options?.onStart?.(0);
+               return;
+          }
+
+          console.info(`[embed] No AST snapshots for ${folderName}; creating them now.`);
+          const { fileCount } = await ensureAstSnapshots(folder);
+          if (fileCount === 0) {
+               console.warn(`[embed] No parseable files found for ${folderName}.`);
+               options?.onStart?.(0);
+               return;
+          }
+
+          // Re-fetch snapshots after creation
+          snapshots = db
+               .select({
+                    id: astFileSnapshots.id,
+                    filePath: astFileSnapshots.filePath,
+                    relativePath: astFileSnapshots.relativePath,
+                    language: astFileSnapshots.language,
+               })
+               .from(astFileSnapshots)
+               .where(eq(astFileSnapshots.folderName, folderName))
+               .all();
+
+          if (snapshots.length === 0) {
+               console.warn(`[embed] AST snapshot creation succeeded but no snapshots found for ${folderName}.`);
+               options?.onStart?.(0);
+               return;
+          }
+     }
+
+     const snapshotIds = snapshots.map((row) => row.id).filter((id): id is number => typeof id === "number");
+     if (snapshotIds.length === 0) {
+          options?.onStart?.(0);
+          return;
+     }
+
+     const snapshotById = new Map<number, (typeof snapshots)[number]>();
+     for (const row of snapshots) {
+          snapshotById.set(row.id, row);
+     }
+
+     const nodeRows = db
+          .select({
+               id: astNodes.id,
+               fileId: astNodes.fileId,
+               nodePath: astNodes.nodePath,
+               type: astNodes.type,
+               textSnippet: astNodes.textSnippet,
+               startRow: astNodes.startRow,
+               startColumn: astNodes.startColumn,
+               endRow: astNodes.endRow,
+               endColumn: astNodes.endColumn,
+               metadata: astNodes.metadata,
+          })
+          .from(astNodes)
+          .where(inArray(astNodes.fileId, snapshotIds))
+          .all();
+
+     if (nodeRows.length === 0) {
+          console.warn(`[embed] No AST nodes found for folder ${folderName}.`);
+          options?.onStart?.(0);
+          return;
+     }
+
+     const documents: NodeDocument[] = [];
+     for (const node of nodeRows) {
+          const snapshot = snapshotById.get(node.fileId);
+          if (!snapshot) {
+               continue;
+          }
+
+          const nodeMetadata = parseNodeMetadata(node.metadata);
+          const symbolName = typeof nodeMetadata.symbolName === "string" ? nodeMetadata.symbolName : null;
+
+          documents.push({
+               snapshotId: snapshot.id,
+               filePath: snapshot.filePath,
+               relativePath: snapshot.relativePath,
+               language: snapshot.language,
+               nodePath: node.nodePath,
+               nodeType: node.type,
+               symbolName,
+               content: formatNodeDocument(snapshot, node, symbolName),
+          });
+     }
+
+     if (documents.length === 0) {
+          console.warn(`[embed] All AST nodes were filtered out for folder ${folderName}.`);
           options?.onStart?.(0);
           return;
      }
 
      const preference = resolveEmbeddingPreferenceFromSettings();
-
      const provider = modelRegistry.getProviderById(preference.providerId);
      if (!provider) {
-          throw new Error(`Provider ${preference.providerId} not found; cannot embed initial snapshots.`);
+          throw new Error(`Provider ${preference.providerId} not found; cannot embed AST nodes.`);
      }
 
      const embeddingModel: EmbeddingModelClient = await provider.provider.loadEmbeddingModel(preference.modelKey);
-     const documents = astRows.map((row) => ({
-          snapshotId: row.id,
-          filePath: row.filePath,
-          relativePath: row.relativePath,
-          language: row.language,
-          content: serializeAstForEmbedding(row.relativePath, row.language, row.ast as SerializedNode),
-     }));
 
      deleteExistingInitialEmbeddings(folderName);
 
      options?.onStart?.(documents.length);
      const rowsToInsert: (typeof embeddingsTable.$inferInsert)[] = [];
+
      for (let i = 0; i < documents.length; i += EMBEDDING_BATCH_SIZE) {
           const batch = documents.slice(i, i + EMBEDDING_BATCH_SIZE);
           const vectors = await embeddingModel.embedDocuments(batch.map((doc) => doc.content));
@@ -310,6 +409,9 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
                     metadata: {
                          stage: "initial",
                          language: doc.language,
+                         nodePath: doc.nodePath,
+                         nodeType: doc.nodeType,
+                         ...(doc.symbolName ? { symbolName: doc.symbolName } : {}),
                     },
                });
           });
@@ -337,6 +439,56 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
           }
           return undefined;
      });
+
+     // Notify SSE clients that embedding counts have changed
+     folderEvents.notifyChange();
+}
+
+function parseNodeMetadata(value: unknown): Record<string, unknown> {
+     if (!value) {
+          return {};
+     }
+     if (typeof value === "object") {
+          return value as Record<string, unknown>;
+     }
+     try {
+          return JSON.parse(String(value)) as Record<string, unknown>;
+     } catch {
+          return {};
+     }
+}
+
+function formatNodeDocument(
+     snapshot: { relativePath: string; language: string },
+     node: {
+          nodePath: string;
+          type: string;
+          textSnippet: string | null;
+          startRow: number;
+          startColumn: number;
+          endRow: number;
+          endColumn: number;
+     },
+     symbolName: string | null
+): string {
+     const snippet = node.textSnippet ? truncate(node.textSnippet, MAX_NODE_SNIPPET) : "<no snippet>";
+     const lines = [
+          `Path: ${snapshot.relativePath}`,
+          `Language: ${snapshot.language}`,
+          `Node Path: ${node.nodePath}`,
+          `Node Type: ${node.type}`,
+     ];
+
+     if (symbolName) {
+          lines.push(`Symbol: ${symbolName}`);
+     }
+
+     lines.push(
+          `Span: (${node.startRow},${node.startColumn})-(${node.endRow},${node.endColumn})`,
+          `Snippet: ${snippet}`
+     );
+
+     return lines.join("\n");
 }
 
 function resolveEmbeddingPreferenceFromSettings(): ModelPreference {
@@ -370,7 +522,12 @@ function deleteExistingInitialEmbeddings(folderName: string): void {
           return;
      }
 
-     db.delete(embeddingsTable).where(inArray(embeddingsTable.id, initialIds)).run();
+     // Batch delete to avoid SQLite variable limit
+     const batchSize = 500;
+     for (let i = 0; i < initialIds.length; i += batchSize) {
+          const batch = initialIds.slice(i, i + batchSize);
+          db.delete(embeddingsTable).where(inArray(embeddingsTable.id, batch)).run();
+     }
 }
 
 function flattenAstNodes(
@@ -380,7 +537,15 @@ function flattenAstNodes(
 ): (typeof astNodes.$inferInsert)[] {
      const rows: (typeof astNodes.$inferInsert)[] = [];
 
-     const walk = (node: SerializedNode, path: string): void => {
+     // Only embed top-level focus nodes (direct children of the root).
+     // Do NOT recurse into nested focus nodes (e.g., methods inside classes,
+     // inner functions inside functions) to avoid embedding thousands of
+     // nested arrow functions, callbacks, etc. that bloat the embedding store.
+     // The text snippet of a focus node already captures its full content,
+     // making nested embeddings redundant.
+     for (let index = 0; index < ast.children.length; index++) {
+          const node = ast.children[index];
+          const path = `root.${index}`;
           const symbolName = inferFocusSymbolName(language, node);
           const metadata = {
                truncatedByDepth: node.truncatedByDepth ?? false,
@@ -407,40 +572,9 @@ function flattenAstNodes(
                textSnippet: node.textSnippet ?? null,
                metadata,
           });
+     }
 
-          node.children.forEach((child, index) => {
-               const childPath = path ? `${path}.${index}` : `${index}`;
-               walk(child, childPath);
-          });
-     };
-
-     walk(ast, "root");
      return rows;
-}
-
-function serializeAstForEmbedding(relativePath: string, language: string, ast: SerializedNode): string {
-     const lines: string[] = [];
-
-     const walk = (node: SerializedNode, depth: number): void => {
-          if (lines.length >= MAX_AST_LINES) {
-               return;
-          }
-
-          const indent = " ".repeat(Math.min(depth, 8) * 2);
-          const snippet = node.textSnippet ? `: ${truncate(node.textSnippet, MAX_SNIPPET_LENGTH)}` : "";
-          lines.push(`${indent}${node.type}${snippet}`.trimEnd());
-
-          for (const child of node.children) {
-               if (lines.length >= MAX_AST_LINES) {
-                    break;
-               }
-               walk(child, depth + 1);
-          }
-     };
-
-     walk(ast, 0);
-
-     return [`Path: ${relativePath}`, `Language: ${language}`, "AST:", ...lines].join("\n");
 }
 
 function truncate(value: string, maxLength: number): string {

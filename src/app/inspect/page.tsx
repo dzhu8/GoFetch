@@ -12,6 +12,8 @@ type RegisteredFolder = {
      rootPath: string;
      githubUrl?: string | null;
      isGitConnected?: boolean;
+     updatedAt?: string;
+     embeddingCount?: number;
 };
 
 type EmbeddingRow = {
@@ -104,6 +106,7 @@ export default function InspectPage() {
      const [isVisualizing, setIsVisualizing] = useState(false);
      const [dotSize, setDotSize] = useState(5);
      const [isPlotOpen, setIsPlotOpen] = useState(false);
+     const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
      const lastSelectionVersionRef = useRef(0);
      const cliPollingErrorLoggedRef = useRef(false);
 
@@ -153,24 +156,68 @@ export default function InspectPage() {
           return data;
      }, []);
 
-     const fetchFolders = useCallback(async () => {
+     const fetchFolders = useCallback(async (silent = false) => {
           try {
-               setLoadingFolders(true);
+               if (!silent) {
+                    setLoadingFolders(true);
+               }
                const res = await fetch("/api/folders", { cache: "no-store" });
                if (!res.ok) throw new Error("Failed to load folders");
                const data = (await res.json()) as { folders: RegisteredFolder[] };
                setFolders(data.folders ?? []);
           } catch (error) {
                console.error("Failed to load folders", error);
-               setErrorMessage("Unable to load folders. Please try again.");
+               if (!silent) {
+                    setErrorMessage("Unable to load folders. Please try again.");
+               }
           } finally {
-               setLoadingFolders(false);
+               if (!silent) {
+                    setLoadingFolders(false);
+               }
           }
      }, []);
 
+     // Use Server-Sent Events for real-time folder updates instead of polling
      useEffect(() => {
-          fetchFolders();
-     }, [fetchFolders]);
+          let eventSource: EventSource | null = null;
+          let reconnectTimeout: ReturnType<typeof setTimeout> | undefined;
+          let isActive = true;
+
+          const connect = () => {
+               if (!isActive) return;
+
+               eventSource = new EventSource("/api/folders/stream");
+
+               eventSource.onmessage = (event) => {
+                    try {
+                         const data = JSON.parse(event.data) as { folders: RegisteredFolder[] };
+                         setFolders(data.folders ?? []);
+                         setLoadingFolders(false);
+                    } catch (error) {
+                         console.error("Failed to parse SSE data:", error);
+                    }
+               };
+
+               eventSource.onerror = () => {
+                    // Connection lost, attempt to reconnect after a delay
+                    eventSource?.close();
+                    eventSource = null;
+                    if (isActive) {
+                         reconnectTimeout = setTimeout(connect, 5000);
+                    }
+               };
+          };
+
+          connect();
+
+          return () => {
+               isActive = false;
+               eventSource?.close();
+               if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+               }
+          };
+     }, []);
 
      useEffect(() => {
           const fetchCliPreference = async () => {
@@ -314,6 +361,7 @@ export default function InspectPage() {
           setPlotPoints(null);
           setSelectedFolder(null);
           setIsVisualizing(false);
+          setLoadProgress(null);
      }, []);
 
      const handleVisualizeFolder = async (folder: RegisteredFolder) => {
@@ -321,28 +369,67 @@ export default function InspectPage() {
           setIsPlotOpen(true);
           setIsVisualizing(true);
           setPlotPoints(null);
+          setLoadProgress(null);
 
           try {
-               const params = new URLSearchParams({
-                    folderName: folder.name,
-               });
+               // Fetch all embeddings in batches
+               const allRows: EmbeddingRow[] = [];
+               let offset = 0;
+               const batchSize = 500;
+               let hasMore = true;
+               let total = 0;
 
-               const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
-               const data = (await res.json().catch(() => ({}))) as { embeddings?: EmbeddingRow[]; error?: string };
+               while (hasMore) {
+                    const params = new URLSearchParams({
+                         folderName: folder.name,
+                         limit: String(batchSize),
+                         offset: String(offset),
+                    });
 
-               if (!res.ok) {
-                    throw new Error(data?.error || "Failed to load embeddings");
+                    const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
+                    const data = (await res.json().catch(() => ({}))) as {
+                         embeddings?: EmbeddingRow[];
+                         error?: string;
+                         hasMore?: boolean;
+                         total?: number;
+                    };
+
+                    if (!res.ok) {
+                         throw new Error(data?.error || "Failed to load embeddings");
+                    }
+
+                    // Get total from first response
+                    if (offset === 0) {
+                         total = data.total ?? 0;
+                         if (total === 0) {
+                              setErrorMessage(`No embeddings found for ${folder.name}.`);
+                              handleClosePlot();
+                              return;
+                         }
+                         setLoadProgress({ loaded: 0, total });
+                    }
+
+                    const rows = data.embeddings ?? [];
+                    allRows.push(...rows);
+                    hasMore = data.hasMore ?? false;
+                    offset += rows.length;
+
+                    setLoadProgress({ loaded: allRows.length, total });
+
+                    // Safety limit to prevent infinite loops
+                    if (offset > 10000) {
+                         console.warn("Reached safety limit of 10000 embeddings");
+                         break;
+                    }
                }
 
-               const rows = data.embeddings ?? [];
-
-               if (rows.length === 0) {
+               if (allRows.length === 0) {
                     setErrorMessage(`No embeddings found for ${folder.name}.`);
                     handleClosePlot();
                     return;
                }
 
-               const vectors = rows.map((row) => row.vector);
+               const vectors = allRows.map((row) => row.vector);
                const nNeighbors = Math.min(15, Math.max(2, vectors.length - 1));
                const reducer = new UMAP({ nComponents: 3, nNeighbors, minDist: 0.25 });
                const coordinates =
@@ -354,10 +441,11 @@ export default function InspectPage() {
                     payload.x.push(x);
                     payload.y.push(y);
                     payload.z.push(z);
-                    payload.text.push(buildLabel(rows[index]));
+                    payload.text.push(buildLabel(allRows[index]));
                });
 
                setPlotPoints(payload);
+               setLoadProgress(null);
           } catch (error) {
                console.error("Failed to visualize embeddings", error);
                setPlotPoints(null);
@@ -555,6 +643,17 @@ export default function InspectPage() {
                                                             <p className="text-xs text-black/60 dark:text-white/60 truncate">
                                                                  {folder.rootPath}
                                                             </p>
+                                                            <div className="flex items-center justify-between text-[10px] text-black/40 dark:text-white/40 mt-1">
+                                                                 <span>{folder.embeddingCount ?? 0} embeddings</span>
+                                                                 {folder.updatedAt && (
+                                                                      <span>
+                                                                           Updated{" "}
+                                                                           {new Date(
+                                                                                folder.updatedAt
+                                                                           ).toLocaleDateString()}
+                                                                      </span>
+                                                                 )}
+                                                            </div>
                                                             <p className="text-[11px] text-black/50 dark:text-white/50">
                                                                  Click to visualize embeddings in 3D space.
                                                             </p>
@@ -733,11 +832,35 @@ export default function InspectPage() {
                               </div>
                               <div className="h-[60vh] min-h-[360px]">
                                    {isVisualizing ? (
-                                        <div className="flex flex-col items-center justify-center h-full">
-                                             <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
-                                             <p className="text-sm text-black/60 dark:text-white/60">
-                                                  Preparing UMAP projection...
-                                             </p>
+                                        <div className="flex flex-col items-center justify-center h-full gap-4">
+                                             <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60" />
+                                             {loadProgress ? (
+                                                  <div className="w-full max-w-sm space-y-2">
+                                                       <div className="flex items-center justify-between text-xs text-black/60 dark:text-white/60">
+                                                            <span>Loading embeddings...</span>
+                                                            <span>
+                                                                 {loadProgress.loaded} / {loadProgress.total}
+                                                            </span>
+                                                       </div>
+                                                       <div className="h-2 w-full rounded-full bg-light-200 dark:bg-dark-200 overflow-hidden">
+                                                            <div
+                                                                 className="h-full bg-[#F8B692] transition-all duration-300 ease-out"
+                                                                 style={{
+                                                                      width: `${loadProgress.total > 0 ? (loadProgress.loaded / loadProgress.total) * 100 : 0}%`,
+                                                                 }}
+                                                            />
+                                                       </div>
+                                                       <p className="text-center text-xs text-black/50 dark:text-white/50">
+                                                            {loadProgress.loaded >= loadProgress.total
+                                                                 ? "Running UMAP dimensionality reduction..."
+                                                                 : `Fetching ${loadProgress.total} AST node embeddings`}
+                                                       </p>
+                                                  </div>
+                                             ) : (
+                                                  <p className="text-sm text-black/60 dark:text-white/60">
+                                                       Preparing UMAP projection...
+                                                  </p>
+                                             )}
                                         </div>
                                    ) : plotPoints ? (
                                         <ThreeEmbeddingViewer points={plotPoints} pointSize={dotSize} />
