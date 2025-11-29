@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Download, Loader2, RefreshCcw, X } from "lucide-react";
 import { toast } from "sonner";
+import Image from "next/image";
+import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 import type { MinimalProvider } from "@/lib/models/types";
 import { cn } from "@/lib/utils";
 
@@ -591,7 +593,14 @@ const ModelsPage = () => {
                                    </p>
                               </div>
                          ) : (
-                              <div className="max-w-6xl mx-auto space-y-6">
+                              <div className="relative max-w-6xl mx-auto space-y-6 pt-10">
+                                   <Image
+                                        src={GoFetchDog}
+                                        alt="GoFetch dog mascot"
+                                        width={80}
+                                        height={80}
+                                        className="absolute top-0 -left z pointer-events-none"
+                                   />
                                    {providers.map((provider) => renderProviderTable(provider))}
                               </div>
                          )}

@@ -144,7 +144,6 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
           const pointCloud = new THREE.Points(geometry, material);
           scene.add(pointCloud);
 
-          const raycaster = new THREE.Raycaster();
           const pointer = new THREE.Vector2();
           let hoveredIndex: number | null = null;
 
@@ -167,10 +166,34 @@ export default function ThreeEmbeddingViewer({ points, pointSize }: ThreeEmbeddi
                const rect = renderer.domElement.getBoundingClientRect();
                pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
                pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-               raycaster.setFromCamera(pointer, camera);
-               const intersects = raycaster.intersectObject(pointCloud);
-               if (intersects.length > 0 && typeof intersects[0].index === "number") {
-                    hoveredIndex = intersects[0].index;
+
+               // Find closest point using only 2D screen coordinates (ignoring depth)
+               let closestIndex: number | null = null;
+               let closestDistSq = Infinity;
+               const threshold = 0.03; // Screen-space threshold for selection
+
+               const tempVec = new THREE.Vector3();
+               for (let i = 0; i < count; i += 1) {
+                    const posIndex = i * 3;
+                    tempVec.set(
+                         positionAttribute[posIndex],
+                         positionAttribute[posIndex + 1],
+                         positionAttribute[posIndex + 2]
+                    );
+                    // Project point to screen space
+                    tempVec.project(camera);
+                    // Calculate 2D distance (only X and Y, ignoring Z depth)
+                    const dx = tempVec.x - pointer.x;
+                    const dy = tempVec.y - pointer.y;
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq < closestDistSq && distSq < threshold * threshold) {
+                         closestDistSq = distSq;
+                         closestIndex = i;
+                    }
+               }
+
+               if (closestIndex !== null) {
+                    hoveredIndex = closestIndex;
                     updateHoverLabel(points.text[hoveredIndex] ?? `Point ${hoveredIndex + 1}`);
                } else {
                     hoveredIndex = null;
