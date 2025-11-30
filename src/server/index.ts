@@ -27,6 +27,9 @@ class ConfigManager {
                defaultChatModel: null,
                defaultEmbeddingModel: null,
                embeddingPointSize: "5",
+               hnswM: 32,
+               hnswEfConstruction: 200,
+               hnswEfSearch: 64,
           },
           personalization: {},
           modelProviders: [],
@@ -76,6 +79,45 @@ class ConfigManager {
                     description: "Controls the size of 3D scatter markers in the Inspect view.",
                     default: "5",
                     scope: "client",
+               },
+               {
+                    name: "HNSW M (Links per Node)",
+                    key: "hnswM",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Number of bi-directional links per node in the HNSW graph. Higher values improve recall but increase memory and construction time.",
+                    default: 32,
+                    min: 4,
+                    max: 128,
+                    placeholder: "32",
+                    scope: "server",
+               },
+               {
+                    name: "HNSW efConstruction",
+                    key: "hnswEfConstruction",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Size of the dynamic candidate list during index construction. Higher values improve index quality but slow construction.",
+                    default: 200,
+                    min: 16,
+                    max: 1000,
+                    placeholder: "200",
+                    scope: "server",
+               },
+               {
+                    name: "HNSW efSearch",
+                    key: "hnswEfSearch",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Size of the dynamic candidate list during search. Higher values improve recall but slow down search.",
+                    default: 64,
+                    min: 16,
+                    max: 512,
+                    placeholder: "64",
+                    scope: "server",
                },
           ],
           personalization: [
@@ -205,6 +247,15 @@ class ConfigManager {
           }
           if (this.currentConfig.preferences.embeddingPointSize === undefined) {
                this.currentConfig.preferences.embeddingPointSize = "5";
+          }
+          if (this.currentConfig.preferences.hnswM === undefined) {
+               this.currentConfig.preferences.hnswM = 32;
+          }
+          if (this.currentConfig.preferences.hnswEfConstruction === undefined) {
+               this.currentConfig.preferences.hnswEfConstruction = 200;
+          }
+          if (this.currentConfig.preferences.hnswEfSearch === undefined) {
+               this.currentConfig.preferences.hnswEfSearch = 64;
           }
      }
 

@@ -4,7 +4,12 @@ import { ConfigModelProvider } from "../models/types";
 // Appearance of various UI config fields- can have input box that accepts string, a selection menu,
 // box w/ special properties for passwords, switch, text area fields that are equivalent to string config
 // fields, but for long-form entry
-export type UIConfigField = StringUIConfigField | SelectUIConfigField | TextareaUIConfigField | SwitchUIConfigField;
+export type UIConfigField =
+     | StringUIConfigField
+     | SelectUIConfigField
+     | TextareaUIConfigField
+     | SwitchUIConfigField
+     | NumberUIConfigField;
 
 type BaseUIConfigField = {
      name: string;
@@ -41,6 +46,15 @@ export type TextareaUIConfigField = BaseUIConfigField & {
 export type SwitchUIConfigField = BaseUIConfigField & {
      type: "switch";
      default?: boolean;
+};
+
+export type NumberUIConfigField = BaseUIConfigField & {
+     type: "number";
+     placeholder?: string;
+     default?: number;
+     min?: number;
+     max?: number;
+     step?: number;
 };
 
 export type ModelProviderUISection = {

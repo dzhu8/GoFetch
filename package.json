@@ -17,7 +17,8 @@
           "dump:sqlite": "node test/dumpSqlite.js",
           "embed:test": "tsx test/embedJsMonitorNodes.js",
           "visualize:test": "tsx test/visualizeNodeEmbeddings.js",
-          "delete:test-embeddings": "tsx test/deleteJsMonitorEmbeddings.js"
+          "delete:test-embeddings": "tsx test/deleteJsMonitorEmbeddings.js",
+          "hnsw:test": "tsx test/testHNSWSearch.js"
      },
      "dependencies": {
           "@headlessui/react": "^2.2.9",
@@ -37,6 +38,7 @@
           "better-sqlite3": "^12.4.1",
           "clsx": "^2.1.1",
           "drizzle-orm": "^0.44.7",
+          "faiss-node": "^0.5.1",
           "framer-motion": "^12.23.24",
           "lucide-react": "^0.552.0",
           "markdown-to-jsx": "^8.0.0",
