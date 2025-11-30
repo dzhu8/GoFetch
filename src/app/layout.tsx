@@ -1,4 +1,6 @@
-export const dynamic = "force-dynamic";
+// Use ISR with a short revalidation period instead of force-dynamic
+// This allows pages to be cached and served quickly while still updating
+export const revalidate = 60; // Revalidate every 60 seconds
 
 import type { Metadata } from "next";
 import { Montserrat } from "next/font/google";

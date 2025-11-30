@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 import { BookCopy, FolderSync, Home, MessageSquareMore, Search } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useSelectedLayoutSegments } from "next/navigation";
-import React, { useState, type ReactNode } from "react";
+import { useSelectedLayoutSegments, useRouter } from "next/navigation";
+import React, { useState, useEffect, type ReactNode } from "react";
 import Layout from "./Layout";
 import SettingsButton from "./settings/SettingsButton";
 
@@ -16,6 +16,7 @@ const VerticalIconContainer = ({ children }: { children: ReactNode }) => {
 
 const Sidebar = ({ children }: { children: React.ReactNode }) => {
      const segments = useSelectedLayoutSegments();
+     const router = useRouter();
      const [isOpen, setIsOpen] = useState<boolean>(true);
 
      const navLinks = [
@@ -50,6 +51,13 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
                label: "Models",
           },
      ];
+
+     // Prefetch all routes on mount for faster navigation
+     useEffect(() => {
+          navLinks.forEach((link) => {
+               router.prefetch(link.href);
+          });
+     }, [router]);
 
      return (
           <div>

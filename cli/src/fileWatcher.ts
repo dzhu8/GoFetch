@@ -1,34 +1,34 @@
-import fs from "node:fs";
 import path from "node:path";
 import type { ServerResponse } from "node:http";
+import chokidar, { type FSWatcher } from "chokidar";
 
 /**
  * Directories that should never be watched (common build artifacts, deps, etc.)
  */
-const IGNORED_DIRECTORIES = new Set([
-     "node_modules",
-     ".git",
-     ".svn",
-     ".hg",
-     "dist",
-     "build",
-     "out",
-     ".next",
-     ".nuxt",
-     ".output",
-     "coverage",
-     "__pycache__",
-     ".pytest_cache",
-     ".mypy_cache",
-     "venv",
-     ".venv",
-     "env",
-     ".env",
-     "vendor",
-     "target",
-     ".idea",
-     ".vscode",
-]);
+const IGNORED_DIRECTORIES = [
+     "**/node_modules/**",
+     "**/.git/**",
+     "**/.svn/**",
+     "**/.hg/**",
+     "**/dist/**",
+     "**/build/**",
+     "**/out/**",
+     "**/.next/**",
+     "**/.nuxt/**",
+     "**/.output/**",
+     "**/coverage/**",
+     "**/__pycache__/**",
+     "**/.pytest_cache/**",
+     "**/.mypy_cache/**",
+     "**/venv/**",
+     "**/.venv/**",
+     "**/env/**",
+     "**/.env/**",
+     "**/vendor/**",
+     "**/target/**",
+     "**/.idea/**",
+     "**/.vscode/**",
+];
 
 /**
  * File extensions that are supported for AST parsing.
@@ -57,6 +57,12 @@ const SUPPORTED_EXTENSIONS = new Set([
  */
 const DEBOUNCE_MS = 500;
 
+/**
+ * Grace period in milliseconds after watch setup to ignore spurious events.
+ * This helps prevent false positives from initial file system scans.
+ */
+const WATCH_SETUP_GRACE_PERIOD_MS = 1000;
+
 export type FileChangeEvent = {
      type: "change" | "add" | "unlink";
      folderPath: string;
@@ -66,9 +72,10 @@ export type FileChangeEvent = {
 
 type WatchedFolder = {
      path: string;
-     watcher: fs.FSWatcher;
+     watcher: FSWatcher;
      debounceTimer: NodeJS.Timeout | null;
      pendingChanges: Map<string, FileChangeEvent["type"]>;
+     watchStartTime: number;
 };
 
 class FileWatcherService {
@@ -88,10 +95,29 @@ class FileWatcherService {
           }
 
           try {
-               const watcher = fs.watch(normalizedPath, { recursive: true }, (eventType, filename) => {
-                    if (filename) {
-                         this.handleFileEvent(normalizedPath, filename, eventType);
-                    }
+               const watcher = chokidar.watch(normalizedPath, {
+                    ignored: IGNORED_DIRECTORIES,
+                    persistent: true,
+                    ignoreInitial: true, // Don't fire events for existing files on startup
+                    awaitWriteFinish: {
+                         stabilityThreshold: 300,
+                         pollInterval: 100,
+                    },
+                    usePolling: false, // Use native events, more efficient
+               });
+
+               const watchStartTime = Date.now();
+
+               watcher.on("change", (filePath) => {
+                    this.handleFileEvent(normalizedPath, filePath, "change", watchStartTime);
+               });
+
+               watcher.on("add", (filePath) => {
+                    this.handleFileEvent(normalizedPath, filePath, "add", watchStartTime);
+               });
+
+               watcher.on("unlink", (filePath) => {
+                    this.handleFileEvent(normalizedPath, filePath, "unlink", watchStartTime);
                });
 
                watcher.on("error", (error) => {
@@ -104,6 +130,7 @@ class FileWatcherService {
                     watcher,
                     debounceTimer: null,
                     pendingChanges: new Map(),
+                    watchStartTime,
                });
 
                //console.log(`[watcher] Started watching: ${normalizedPath}`);
@@ -160,17 +187,22 @@ class FileWatcherService {
      /**
       * Handle a file system event with debouncing.
       */
-     private handleFileEvent(folderPath: string, filename: string, eventType: string): void {
-          // Check if the file is in an ignored directory
-          const parts = filename.split(path.sep);
-          for (const part of parts) {
-               if (IGNORED_DIRECTORIES.has(part)) {
-                    return;
-               }
+     private handleFileEvent(
+          folderPath: string,
+          filePath: string,
+          eventType: FileChangeEvent["type"],
+          watchStartTime: number
+     ): void {
+          // Ignore events within grace period after watch setup (spurious initial events)
+          if (Date.now() - watchStartTime < WATCH_SETUP_GRACE_PERIOD_MS) {
+               return;
           }
 
+          // Get the relative path from the folder being watched
+          const relativePath = path.relative(folderPath, filePath);
+
           // Only track files with supported extensions
-          const ext = path.extname(filename).toLowerCase();
+          const ext = path.extname(relativePath).toLowerCase();
           if (!SUPPORTED_EXTENSIONS.has(ext)) {
                return;
           }
@@ -180,9 +212,7 @@ class FileWatcherService {
                return;
           }
 
-          // Map fs.watch event types to our types
-          const changeType: FileChangeEvent["type"] = eventType === "rename" ? "change" : "change";
-          watched.pendingChanges.set(filename, changeType);
+          watched.pendingChanges.set(relativePath, eventType);
 
           // Clear existing debounce timer
           if (watched.debounceTimer) {

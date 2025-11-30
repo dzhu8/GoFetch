@@ -11,10 +11,14 @@ import { eq } from "drizzle-orm";
 import db from "@/server/db";
 import { appSettings } from "@/server/db/schema";
 
+// Cache invalidation time in milliseconds (5 seconds for faster dev experience)
+const CONFIG_CACHE_TTL = 5000;
+
 // config file is initially nonexistent, and is created and populated at start up at run time
 class ConfigManager {
      configPath: string = path.join(process.env.DATA_DIR || process.cwd(), "/data/config.json");
      configVersion = 1;
+     private lastRefreshTime = 0;
      currentConfig: any = {
           version: this.configVersion,
           setupComplete: false,
@@ -139,6 +143,13 @@ class ConfigManager {
      }
 
      private refreshConfigFromDisk(): void {
+          // Skip refresh if within cache TTL to reduce disk I/O
+          const now = Date.now();
+          if (now - this.lastRefreshTime < CONFIG_CACHE_TTL) {
+               return;
+          }
+          this.lastRefreshTime = now;
+
           this.syncConfigFromDisk();
           this.loadSettingsFromDatabase({ persistToDisk: false });
      }
