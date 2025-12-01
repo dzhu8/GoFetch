@@ -6,6 +6,7 @@ import { UMAP } from "umap-js";
 
 import { cn } from "@/lib/utils";
 import ThreeEmbeddingViewer from "@/components/ThreeEmbeddingViewer";
+import { useEmbeddingProgressActions } from "@/components/embed/EmbeddingProgressProvider";
 
 type RegisteredFolder = {
      name: string;
@@ -127,6 +128,8 @@ export default function InspectPage() {
      const [queryPoint, setQueryPoint] = useState<QueryPoint | null>(null);
      const [isQueryPlotOpen, setIsQueryPlotOpen] = useState(false);
      const [queryLoadProgress, setQueryLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
+
+     const { trackFolderEmbedding } = useEmbeddingProgressActions();
 
      const requestCliSelection = useCallback(async () => {
           const useProxy = shouldProxyCliRequests();
@@ -336,7 +339,10 @@ export default function InspectPage() {
      };
 
      const handleAddFolder = async () => {
-          await saveFolder(newFolderName, newFolderPath);
+          const success = await saveFolder(newFolderName, newFolderPath);
+          if (success) {
+               trackFolderEmbedding(newFolderName.trim());
+          }
      };
 
      const handleAddFolderButton = async () => {

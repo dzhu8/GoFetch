@@ -16,26 +16,26 @@ const INITIAL_PROGRESS_MESSAGE = "Analyzing project files...";
 
 export function EmbeddingProgressProvider({ children }: { children: React.ReactNode }) {
      const [entries, setEntries] = useState<Record<string, EmbeddingProgressState>>({});
-     const pollingHandlesRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+     const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
-     const stopPollingFolder = useCallback((folderName: string) => {
-          const handle = pollingHandlesRef.current.get(folderName);
-          if (handle) {
-               clearTimeout(handle);
-               pollingHandlesRef.current.delete(folderName);
+     const stopTrackingFolder = useCallback((folderName: string) => {
+          const eventSource = eventSourcesRef.current.get(folderName);
+          if (eventSource) {
+               eventSource.close();
+               eventSourcesRef.current.delete(folderName);
           }
      }, []);
 
-     const clearAllPolling = useCallback(() => {
-          for (const handle of pollingHandlesRef.current.values()) {
-               clearTimeout(handle);
+     const clearAllEventSources = useCallback(() => {
+          for (const eventSource of eventSourcesRef.current.values()) {
+               eventSource.close();
           }
-          pollingHandlesRef.current.clear();
+          eventSourcesRef.current.clear();
      }, []);
 
      const dismissProgressEntry = useCallback(
           (folderName: string) => {
-               stopPollingFolder(folderName);
+               stopTrackingFolder(folderName);
                setEntries((prev) => {
                     if (!prev[folderName]) {
                          return prev;
@@ -45,7 +45,7 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
                     return next;
                });
           },
-          [stopPollingFolder]
+          [stopTrackingFolder]
      );
 
      const trackFolderEmbedding = useCallback(
@@ -55,7 +55,9 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
                     return;
                }
 
-               stopPollingFolder(trimmedName);
+               // Close any existing connection for this folder
+               stopTrackingFolder(trimmedName);
+
                const now = new Date().toISOString();
                setEntries((prev) => ({
                     ...prev,
@@ -70,50 +72,46 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
                     },
                }));
 
-               const poll = async () => {
+               // Create SSE connection
+               const eventSource = new EventSource(
+                    `/api/folders/${encodeURIComponent(trimmedName)}/embedding-status`
+               );
+
+               eventSource.onmessage = (event) => {
                     try {
-                         const res = await fetch(`/api/folders/${encodeURIComponent(trimmedName)}/embedding-status`, {
-                              cache: "no-store",
-                         });
+                         const progress = JSON.parse(event.data) as EmbeddingProgressState;
+                         setEntries((prev) => ({
+                              ...prev,
+                              [trimmedName]: progress,
+                         }));
 
-                         if (!res.ok) {
-                              throw new Error("Failed to fetch embedding progress");
-                         }
-
-                         const data = (await res.json().catch(() => null)) as {
-                              progress?: EmbeddingProgressState;
-                         } | null;
-
-                         const progress = data?.progress;
-                         if (progress) {
-                              setEntries((prev) => ({
-                                   ...prev,
-                                   [trimmedName]: progress,
-                              }));
-
-                              if (progress.phase === "completed" || progress.phase === "error") {
-                                   stopPollingFolder(trimmedName);
-                                   return;
-                              }
+                         // Close connection when embedding is complete or errored
+                         if (progress.phase === "completed" || progress.phase === "error") {
+                              stopTrackingFolder(trimmedName);
                          }
                     } catch (error) {
-                         console.error("Error polling embedding progress:", error);
+                         console.error("Error parsing SSE message:", error);
                     }
-
-                    const timeoutId = setTimeout(poll, 2000);
-                    pollingHandlesRef.current.set(trimmedName, timeoutId);
                };
 
-               poll();
+               eventSource.onerror = () => {
+                    // EventSource will automatically try to reconnect on error
+                    // Only close if we're in an unrecoverable state
+                    if (eventSource.readyState === EventSource.CLOSED) {
+                         stopTrackingFolder(trimmedName);
+                    }
+               };
+
+               eventSourcesRef.current.set(trimmedName, eventSource);
           },
-          [stopPollingFolder]
+          [stopTrackingFolder]
      );
 
      useEffect(() => {
           return () => {
-               clearAllPolling();
+               clearAllEventSources();
           };
-     }, [clearAllPolling]);
+     }, [clearAllEventSources]);
 
      const actions = useMemo<EmbeddingProgressActions>(
           () => ({

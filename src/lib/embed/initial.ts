@@ -12,9 +12,10 @@ import {
      type SerializedNode,
      type SupportedLanguage,
 } from "@/lib/ast";
+import { chunkFolderRegistration, type ChunkedFile, type SupportedTextFormat } from "@/lib/chunk";
 import folderRegistry, { type FolderRegistration } from "@/server/folderRegistry";
 import db from "@/server/db";
-import { astFileSnapshots, astNodes, embeddings as embeddingsTable } from "@/server/db/schema";
+import { astFileSnapshots, astNodes, embeddings as embeddingsTable, textChunkSnapshots } from "@/server/db/schema";
 import modelRegistry from "@/server/providerRegistry";
 import configManager from "@/server";
 import type { ModelPreference } from "@/lib/models/modelPreference";
@@ -40,10 +41,14 @@ interface SettingsSnapshot {
 }
 
 export async function ensureFolderPrimed(folder: FolderRegistration): Promise<void> {
-     const { fileCount } = await ensureAstSnapshots(folder);
+     const [astResult, chunkResult] = await Promise.all([
+          ensureAstSnapshots(folder),
+          ensureTextChunkSnapshots(folder),
+     ]);
      const hasEmbeddings = folderHasEmbeddings(folder.name);
+     const totalSourceCount = astResult.fileCount + chunkResult.chunkCount;
 
-     if (!hasEmbeddings && fileCount > 0) {
+     if (!hasEmbeddings && totalSourceCount > 0) {
           await embedFolderFromSnapshots(folder.name);
      }
 }
@@ -62,13 +67,14 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
           startedAt: new Date().toISOString(),
      });
 
-     ensureAstSnapshots(folder)
-          .then(async ({ fileCount }) => {
+     Promise.all([ensureAstSnapshots(folder), ensureTextChunkSnapshots(folder)])
+          .then(async ([astResult, chunkResult]) => {
                if (job.cancelled) {
                     return;
                }
 
-               embeddingProgressEmitter.emit("ast:complete", { folderName: folder.name, fileCount });
+               const totalSourceFiles = astResult.fileCount + chunkResult.chunkCount;
+               embeddingProgressEmitter.emit("ast:complete", { folderName: folder.name, fileCount: totalSourceFiles });
 
                let totalDocuments = 0;
                await embedFolderFromSnapshots(folder.name, {
@@ -82,7 +88,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               phase: "embedding",
                               totalFiles: total,
                               embeddedFiles: 0,
-                              message: total > 0 ? `Embedding 0/${total} nodes` : "Preparing embeddings...",
+                              message: total > 0 ? `Embedding 0/${total} documents` : "Preparing embeddings...",
                          });
                     },
                     onProgress: (processed, total) => {
@@ -93,7 +99,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               phase: "embedding",
                               totalFiles: total,
                               embeddedFiles: processed,
-                              message: total > 0 ? `Embedding ${processed}/${total} nodes` : "Preparing embeddings...",
+                              message: total > 0 ? `Embedding ${processed}/${total} documents` : "Preparing embeddings...",
                          });
                     },
                });
@@ -106,7 +112,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                     phase: "completed",
                     totalFiles: totalDocuments,
                     embeddedFiles: totalDocuments,
-                    message: totalDocuments > 0 ? "Initial embeddings ready" : "No eligible nodes detected",
+                    message: totalDocuments > 0 ? "Initial embeddings ready" : "No eligible documents detected",
                });
                embeddingProgressEmitter.emit("embedding:complete", { folderName: folder.name });
           })
@@ -252,6 +258,89 @@ function persistAstSnapshots(folderName: string, parsedFiles: ParsedFileAst[]): 
      });
 }
 
+interface TextChunkSnapshotResult {
+     created: boolean;
+     chunkCount: number;
+}
+
+async function ensureTextChunkSnapshots(folder: FolderRegistration): Promise<TextChunkSnapshotResult> {
+     if (folderHasTextChunks(folder.name)) {
+          return {
+               created: false,
+               chunkCount: countTextChunkSnapshots(folder.name),
+          };
+     }
+
+     const chunkedFiles = chunkFolderRegistration(folder);
+     let totalChunks = 0;
+     for (const file of chunkedFiles) {
+          totalChunks += file.chunks.length;
+     }
+
+     persistTextChunkSnapshots(folder.name, chunkedFiles);
+
+     return {
+          created: true,
+          chunkCount: totalChunks,
+     };
+}
+
+function folderHasTextChunks(folderName: string): boolean {
+     const existing = db
+          .select({ id: textChunkSnapshots.id })
+          .from(textChunkSnapshots)
+          .where(eq(textChunkSnapshots.folderName, folderName))
+          .limit(1)
+          .get();
+
+     return Boolean(existing);
+}
+
+function countTextChunkSnapshots(folderName: string): number {
+     const result = db
+          .select({ value: sql<number>`count(*)` })
+          .from(textChunkSnapshots)
+          .where(eq(textChunkSnapshots.folderName, folderName))
+          .get();
+
+     return result?.value ?? 0;
+}
+
+function persistTextChunkSnapshots(folderName: string, chunkedFiles: ChunkedFile[]): void {
+     db.transaction((tx) => {
+          tx.delete(textChunkSnapshots).where(eq(textChunkSnapshots.folderName, folderName)).run();
+
+          for (const file of chunkedFiles) {
+               const fileContentHash = crypto.createHash("sha256").update(file.filePath).digest("hex");
+
+               for (const chunk of file.chunks) {
+                    tx.insert(textChunkSnapshots)
+                         .values({
+                              folderName,
+                              filePath: file.filePath,
+                              relativePath: file.relativePath,
+                              format: file.format,
+                              contentHash: fileContentHash,
+                              chunkIndex: chunk.index,
+                              startIndex: chunk.startIndex,
+                              endIndex: chunk.endIndex,
+                              startRow: chunk.startPosition.row,
+                              startColumn: chunk.startPosition.column,
+                              endRow: chunk.endPosition.row,
+                              endColumn: chunk.endPosition.column,
+                              content: chunk.content,
+                              tokenCount: chunk.tokenCount,
+                              truncated: chunk.truncated,
+                              metadata: {},
+                         })
+                         .run();
+               }
+          }
+
+          return undefined;
+     });
+}
+
 interface EmbedOptions {
      isCancelled?: () => boolean;
      onStart?: (total: number) => void;
@@ -269,112 +358,29 @@ interface NodeDocument {
      content: string;
 }
 
+interface ChunkDocument {
+     chunkId: number;
+     filePath: string;
+     relativePath: string;
+     format: SupportedTextFormat;
+     chunkIndex: number;
+     label: string;
+     content: string;
+}
+
 async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptions): Promise<void> {
-     let snapshots = db
-          .select({
-               id: astFileSnapshots.id,
-               filePath: astFileSnapshots.filePath,
-               relativePath: astFileSnapshots.relativePath,
-               language: astFileSnapshots.language,
-          })
-          .from(astFileSnapshots)
-          .where(eq(astFileSnapshots.folderName, folderName))
-          .all();
+     const folder = folderRegistry.getFolderByName(folderName);
 
-     // If no AST snapshots exist, try to create them
-     if (snapshots.length === 0) {
-          const folder = folderRegistry.getFolderByName(folderName);
-          if (!folder) {
-               console.warn(`[embed] Skipping embeddings for ${folderName}; folder not found in registry.`);
-               options?.onStart?.(0);
-               return;
-          }
+     // Collect AST node documents
+     const nodeDocuments = await collectAstNodeDocuments(folderName, folder);
 
-          console.info(`[embed] No AST snapshots for ${folderName}; creating them now.`);
-          const { fileCount } = await ensureAstSnapshots(folder);
-          if (fileCount === 0) {
-               console.warn(`[embed] No parseable files found for ${folderName}.`);
-               options?.onStart?.(0);
-               return;
-          }
+     // Collect text chunk documents
+     const chunkDocuments = await collectTextChunkDocuments(folderName, folder);
 
-          // Re-fetch snapshots after creation
-          snapshots = db
-               .select({
-                    id: astFileSnapshots.id,
-                    filePath: astFileSnapshots.filePath,
-                    relativePath: astFileSnapshots.relativePath,
-                    language: astFileSnapshots.language,
-               })
-               .from(astFileSnapshots)
-               .where(eq(astFileSnapshots.folderName, folderName))
-               .all();
+     const totalDocuments = nodeDocuments.length + chunkDocuments.length;
 
-          if (snapshots.length === 0) {
-               console.warn(`[embed] AST snapshot creation succeeded but no snapshots found for ${folderName}.`);
-               options?.onStart?.(0);
-               return;
-          }
-     }
-
-     const snapshotIds = snapshots.map((row) => row.id).filter((id): id is number => typeof id === "number");
-     if (snapshotIds.length === 0) {
-          options?.onStart?.(0);
-          return;
-     }
-
-     const snapshotById = new Map<number, (typeof snapshots)[number]>();
-     for (const row of snapshots) {
-          snapshotById.set(row.id, row);
-     }
-
-     const nodeRows = db
-          .select({
-               id: astNodes.id,
-               fileId: astNodes.fileId,
-               nodePath: astNodes.nodePath,
-               type: astNodes.type,
-               textSnippet: astNodes.textSnippet,
-               startRow: astNodes.startRow,
-               startColumn: astNodes.startColumn,
-               endRow: astNodes.endRow,
-               endColumn: astNodes.endColumn,
-               metadata: astNodes.metadata,
-          })
-          .from(astNodes)
-          .where(inArray(astNodes.fileId, snapshotIds))
-          .all();
-
-     if (nodeRows.length === 0) {
-          console.warn(`[embed] No AST nodes found for folder ${folderName}.`);
-          options?.onStart?.(0);
-          return;
-     }
-
-     const documents: NodeDocument[] = [];
-     for (const node of nodeRows) {
-          const snapshot = snapshotById.get(node.fileId);
-          if (!snapshot) {
-               continue;
-          }
-
-          const nodeMetadata = parseNodeMetadata(node.metadata);
-          const symbolName = typeof nodeMetadata.symbolName === "string" ? nodeMetadata.symbolName : null;
-
-          documents.push({
-               snapshotId: snapshot.id,
-               filePath: snapshot.filePath,
-               relativePath: snapshot.relativePath,
-               language: snapshot.language,
-               nodePath: node.nodePath,
-               nodeType: node.type,
-               symbolName,
-               content: formatNodeDocument(snapshot, node, symbolName),
-          });
-     }
-
-     if (documents.length === 0) {
-          console.warn(`[embed] All AST nodes were filtered out for folder ${folderName}.`);
+     if (totalDocuments === 0) {
+          console.warn(`[embed] No documents (AST nodes or text chunks) found for folder ${folderName}.`);
           options?.onStart?.(0);
           return;
      }
@@ -382,18 +388,20 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
      const preference = resolveEmbeddingPreferenceFromSettings();
      const provider = modelRegistry.getProviderById(preference.providerId);
      if (!provider) {
-          throw new Error(`Provider ${preference.providerId} not found; cannot embed AST nodes.`);
+          throw new Error(`Provider ${preference.providerId} not found; cannot embed documents.`);
      }
 
      const embeddingModel: EmbeddingModelClient = await provider.provider.loadEmbeddingModel(preference.modelKey);
 
      deleteExistingInitialEmbeddings(folderName);
 
-     options?.onStart?.(documents.length);
+     options?.onStart?.(totalDocuments);
      const rowsToInsert: (typeof embeddingsTable.$inferInsert)[] = [];
+     let processedCount = 0;
 
-     for (let i = 0; i < documents.length; i += EMBEDDING_BATCH_SIZE) {
-          const batch = documents.slice(i, i + EMBEDDING_BATCH_SIZE);
+     // Embed AST node documents
+     for (let i = 0; i < nodeDocuments.length; i += EMBEDDING_BATCH_SIZE) {
+          const batch = nodeDocuments.slice(i, i + EMBEDDING_BATCH_SIZE);
           const vectors = await embeddingModel.embedDocuments(batch.map((doc) => doc.content));
 
           vectors.forEach((vector: number[], index: number) => {
@@ -408,6 +416,7 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
                     dim: vector.length,
                     metadata: {
                          stage: "initial",
+                         type: "ast-node",
                          language: doc.language,
                          nodePath: doc.nodePath,
                          nodeType: doc.nodeType,
@@ -416,7 +425,41 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
                });
           });
 
-          options?.onProgress?.(Math.min(i + batch.length, documents.length), documents.length);
+          processedCount += batch.length;
+          options?.onProgress?.(processedCount, totalDocuments);
+
+          if (options?.isCancelled?.()) {
+               return;
+          }
+     }
+
+     // Embed text chunk documents
+     for (let i = 0; i < chunkDocuments.length; i += EMBEDDING_BATCH_SIZE) {
+          const batch = chunkDocuments.slice(i, i + EMBEDDING_BATCH_SIZE);
+          const vectors = await embeddingModel.embedDocuments(batch.map((doc) => doc.content));
+
+          vectors.forEach((vector: number[], index: number) => {
+               const doc = batch[index];
+               rowsToInsert.push({
+                    folderName,
+                    filePath: doc.filePath,
+                    relativePath: doc.relativePath,
+                    fileSnapshotId: null, // Text chunks don't have AST file snapshots
+                    content: doc.content,
+                    embedding: vectorToBuffer(vector),
+                    dim: vector.length,
+                    metadata: {
+                         stage: "initial",
+                         type: "text-chunk",
+                         format: doc.format,
+                         chunkIndex: doc.chunkIndex,
+                         label: doc.label,
+                    },
+               });
+          });
+
+          processedCount += batch.length;
+          options?.onProgress?.(processedCount, totalDocuments);
 
           if (options?.isCancelled?.()) {
                return;
@@ -442,6 +485,169 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
 
      // Notify SSE clients that embedding counts have changed
      folderEvents.notifyChange();
+}
+
+async function collectAstNodeDocuments(
+     folderName: string,
+     folder: FolderRegistration | undefined
+): Promise<NodeDocument[]> {
+     let snapshots = db
+          .select({
+               id: astFileSnapshots.id,
+               filePath: astFileSnapshots.filePath,
+               relativePath: astFileSnapshots.relativePath,
+               language: astFileSnapshots.language,
+          })
+          .from(astFileSnapshots)
+          .where(eq(astFileSnapshots.folderName, folderName))
+          .all();
+
+     // If no AST snapshots exist, try to create them
+     if (snapshots.length === 0 && folder) {
+          console.info(`[embed] No AST snapshots for ${folderName}; creating them now.`);
+          const { fileCount } = await ensureAstSnapshots(folder);
+          if (fileCount === 0) {
+               return [];
+          }
+
+          // Re-fetch snapshots after creation
+          snapshots = db
+               .select({
+                    id: astFileSnapshots.id,
+                    filePath: astFileSnapshots.filePath,
+                    relativePath: astFileSnapshots.relativePath,
+                    language: astFileSnapshots.language,
+               })
+               .from(astFileSnapshots)
+               .where(eq(astFileSnapshots.folderName, folderName))
+               .all();
+     }
+
+     const snapshotIds = snapshots.map((row) => row.id).filter((id): id is number => typeof id === "number");
+     if (snapshotIds.length === 0) {
+          return [];
+     }
+
+     const snapshotById = new Map<number, (typeof snapshots)[number]>();
+     for (const row of snapshots) {
+          snapshotById.set(row.id, row);
+     }
+
+     const nodeRows = db
+          .select({
+               id: astNodes.id,
+               fileId: astNodes.fileId,
+               nodePath: astNodes.nodePath,
+               type: astNodes.type,
+               textSnippet: astNodes.textSnippet,
+               startRow: astNodes.startRow,
+               startColumn: astNodes.startColumn,
+               endRow: astNodes.endRow,
+               endColumn: astNodes.endColumn,
+               metadata: astNodes.metadata,
+          })
+          .from(astNodes)
+          .where(inArray(astNodes.fileId, snapshotIds))
+          .all();
+
+     const documents: NodeDocument[] = [];
+     for (const node of nodeRows) {
+          const snapshot = snapshotById.get(node.fileId);
+          if (!snapshot) {
+               continue;
+          }
+
+          const nodeMetadata = parseNodeMetadata(node.metadata);
+          const symbolName = typeof nodeMetadata.symbolName === "string" ? nodeMetadata.symbolName : null;
+
+          documents.push({
+               snapshotId: snapshot.id,
+               filePath: snapshot.filePath,
+               relativePath: snapshot.relativePath,
+               language: snapshot.language,
+               nodePath: node.nodePath,
+               nodeType: node.type,
+               symbolName,
+               content: formatNodeDocument(snapshot, node, symbolName),
+          });
+     }
+
+     return documents;
+}
+
+async function collectTextChunkDocuments(
+     folderName: string,
+     folder: FolderRegistration | undefined
+): Promise<ChunkDocument[]> {
+     let chunks = db
+          .select({
+               id: textChunkSnapshots.id,
+               filePath: textChunkSnapshots.filePath,
+               relativePath: textChunkSnapshots.relativePath,
+               format: textChunkSnapshots.format,
+               chunkIndex: textChunkSnapshots.chunkIndex,
+               content: textChunkSnapshots.content,
+               startRow: textChunkSnapshots.startRow,
+               startColumn: textChunkSnapshots.startColumn,
+               endRow: textChunkSnapshots.endRow,
+               endColumn: textChunkSnapshots.endColumn,
+          })
+          .from(textChunkSnapshots)
+          .where(eq(textChunkSnapshots.folderName, folderName))
+          .all();
+
+     // If no text chunk snapshots exist, try to create them
+     if (chunks.length === 0 && folder) {
+          console.info(`[embed] No text chunk snapshots for ${folderName}; creating them now.`);
+          const { chunkCount } = await ensureTextChunkSnapshots(folder);
+          if (chunkCount === 0) {
+               return [];
+          }
+
+          // Re-fetch chunks after creation
+          chunks = db
+               .select({
+                    id: textChunkSnapshots.id,
+                    filePath: textChunkSnapshots.filePath,
+                    relativePath: textChunkSnapshots.relativePath,
+                    format: textChunkSnapshots.format,
+                    chunkIndex: textChunkSnapshots.chunkIndex,
+                    content: textChunkSnapshots.content,
+                    startRow: textChunkSnapshots.startRow,
+                    startColumn: textChunkSnapshots.startColumn,
+                    endRow: textChunkSnapshots.endRow,
+                    endColumn: textChunkSnapshots.endColumn,
+               })
+               .from(textChunkSnapshots)
+               .where(eq(textChunkSnapshots.folderName, folderName))
+               .all();
+     }
+
+     const documents: ChunkDocument[] = [];
+     for (const chunk of chunks) {
+          const formatted = formatChunkDocument({
+               relativePath: chunk.relativePath,
+               format: chunk.format as SupportedTextFormat,
+               chunkIndex: chunk.chunkIndex,
+               content: chunk.content,
+               startRow: chunk.startRow,
+               startColumn: chunk.startColumn,
+               endRow: chunk.endRow,
+               endColumn: chunk.endColumn,
+          });
+
+          documents.push({
+               chunkId: chunk.id,
+               filePath: chunk.filePath,
+               relativePath: chunk.relativePath,
+               format: chunk.format as SupportedTextFormat,
+               chunkIndex: chunk.chunkIndex,
+               label: formatted.label,
+               content: formatted.content,
+          });
+     }
+
+     return documents;
 }
 
 function parseNodeMetadata(value: unknown): Record<string, unknown> {
@@ -489,6 +695,36 @@ function formatNodeDocument(
      );
 
      return lines.join("\n");
+}
+
+const MAX_CHUNK_LABEL = 50;
+
+function formatChunkDocument(
+     chunk: {
+          relativePath: string;
+          format: SupportedTextFormat;
+          chunkIndex: number;
+          content: string;
+          startRow: number;
+          startColumn: number;
+          endRow: number;
+          endColumn: number;
+     }
+): { label: string; content: string } {
+     // Create label from first 50 characters (cleaned up)
+     const rawLabel = chunk.content.slice(0, MAX_CHUNK_LABEL).replace(/\s+/g, " ").trim();
+     const label = rawLabel.length < chunk.content.length ? `${rawLabel}...` : rawLabel;
+
+     const lines = [
+          `Path: ${chunk.relativePath}`,
+          `Format: ${chunk.format}`,
+          `Chunk: ${chunk.chunkIndex}`,
+          `Label: ${label}`,
+          `Span: (${chunk.startRow},${chunk.startColumn})-(${chunk.endRow},${chunk.endColumn})`,
+          `Content: ${chunk.content}`,
+     ];
+
+     return { label, content: lines.join("\n") };
 }
 
 function resolveEmbeddingPreferenceFromSettings(): ModelPreference {

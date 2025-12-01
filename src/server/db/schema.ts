@@ -205,3 +205,44 @@ export const monitorEvents = sqliteTable("monitor_events", {
           .notNull()
           .default(sql`CURRENT_TIMESTAMP`),
 });
+
+const TEXT_FORMAT_ENUM = [
+     "markdown",
+     "text",
+     "json",
+     "yaml",
+     "toml",
+     "xml",
+     "csv",
+     "ini",
+     "log",
+     "env",
+] as const;
+
+type TextChunkMetadata = Record<string, unknown>;
+
+export const textChunkSnapshots = sqliteTable("text_chunk_snapshots", {
+     id: integer("id").primaryKey(),
+     folderName: text("folder_name").notNull(),
+     filePath: text("file_path").notNull(),
+     relativePath: text("relative_path").notNull(),
+     format: text("format", { enum: TEXT_FORMAT_ENUM }).$type<(typeof TEXT_FORMAT_ENUM)[number]>().notNull(),
+     contentHash: text("content_hash").notNull(),
+     chunkIndex: integer("chunk_index").notNull(),
+     startIndex: integer("start_index").notNull(),
+     endIndex: integer("end_index").notNull(),
+     startRow: integer("start_row").notNull(),
+     startColumn: integer("start_column").notNull(),
+     endRow: integer("end_row").notNull(),
+     endColumn: integer("end_column").notNull(),
+     content: text("content").notNull(),
+     tokenCount: integer("token_count").notNull(),
+     truncated: integer("truncated", { mode: "boolean" }).notNull(),
+     metadata: text("metadata", { mode: "json" })
+          .$type<TextChunkMetadata>()
+          .default(sql`'{}'`)
+          .notNull(),
+     createdAt: text("created_at")
+          .default(sql`CURRENT_TIMESTAMP`)
+          .notNull(),
+});
