@@ -30,6 +30,7 @@ class ConfigManager {
                hnswM: 32,
                hnswEfConstruction: 200,
                hnswEfSearch: 64,
+               hnswScoreThreshold: 0.3,
           },
           personalization: {},
           modelProviders: [],
@@ -117,6 +118,20 @@ class ConfigManager {
                     min: 16,
                     max: 512,
                     placeholder: "64",
+                    scope: "server",
+               },
+               {
+                    name: "HNSW Score Threshold",
+                    key: "hnswScoreThreshold",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Minimum similarity score (0-1) for search results. Only results with scores at or above this threshold are returned when using threshold-based search.",
+                    default: 0.3,
+                    min: 0,
+                    max: 1,
+                    step: 0.05,
+                    placeholder: "0.3",
                     scope: "server",
                },
           ],
@@ -256,6 +271,9 @@ class ConfigManager {
           }
           if (this.currentConfig.preferences.hnswEfSearch === undefined) {
                this.currentConfig.preferences.hnswEfSearch = 64;
+          }
+          if (this.currentConfig.preferences.hnswScoreThreshold === undefined) {
+               this.currentConfig.preferences.hnswScoreThreshold = 0.3;
           }
      }
 

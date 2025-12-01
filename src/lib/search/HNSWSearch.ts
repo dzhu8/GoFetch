@@ -13,11 +13,14 @@ import configManager from "@/server";
  *   Higher values improve index quality but slow down construction. Default: 200
  * @property efSearch - Size of the dynamic candidate list during search.
  *   Higher values improve recall but slow down search. Default: 64
+ * @property scoreThreshold - Minimum similarity score (0-1) for results. Only results with
+ *   scores at or above this threshold are returned by searchWithThreshold. Default: 0.3
  */
 export interface HNSWConfig {
      M?: number;
      efConstruction?: number;
      efSearch?: number;
+     scoreThreshold?: number;
 }
 
 /**
@@ -105,6 +108,7 @@ export class HNSWSearch {
           M: 32,
           efConstruction: 200,
           efSearch: 64,
+          scoreThreshold: 0.3,
      };
 
      /**
@@ -121,11 +125,16 @@ export class HNSWSearch {
                HNSWSearch.DEFAULT_CONFIG.efConstruction
           );
           const efSearch = configManager.getConfig("preferences.hnswEfSearch", HNSWSearch.DEFAULT_CONFIG.efSearch);
+          const scoreThreshold = configManager.getConfig(
+               "preferences.hnswScoreThreshold",
+               HNSWSearch.DEFAULT_CONFIG.scoreThreshold
+          );
 
           return new HNSWSearch({
                M: Number(M),
                efConstruction: Number(efConstruction),
                efSearch: Number(efSearch),
+               scoreThreshold: Number(scoreThreshold),
           });
      }
 
@@ -139,6 +148,7 @@ export class HNSWSearch {
                M: config.M ?? HNSWSearch.DEFAULT_CONFIG.M,
                efConstruction: config.efConstruction ?? HNSWSearch.DEFAULT_CONFIG.efConstruction,
                efSearch: config.efSearch ?? HNSWSearch.DEFAULT_CONFIG.efSearch,
+               scoreThreshold: config.scoreThreshold ?? HNSWSearch.DEFAULT_CONFIG.scoreThreshold,
           };
      }
 
@@ -160,6 +170,19 @@ export class HNSWSearch {
                throw new Error("efSearch must be at least 1");
           }
           (this.config as { efSearch: number }).efSearch = efSearch;
+     }
+
+     /**
+      * Updates the score threshold parameter. This can be changed at any time
+      * to adjust the minimum similarity score for threshold-based searches.
+      *
+      * @param scoreThreshold - New score threshold value (0-1)
+      */
+     setScoreThreshold(scoreThreshold: number): void {
+          if (scoreThreshold < 0 || scoreThreshold > 1) {
+               throw new Error("scoreThreshold must be between 0 and 1");
+          }
+          (this.config as { scoreThreshold: number }).scoreThreshold = scoreThreshold;
      }
 
      /**
@@ -406,6 +429,56 @@ export class HNSWSearch {
      }
 
      /**
+      * Performs a similarity search and returns only results with scores at or above the configured threshold.
+      * This is useful for returning a variable number of results based on relevance rather than a fixed k.
+      *
+      * @param queryVector - Query embedding vector
+      * @param maxResults - Maximum number of results to return (searches this many, then filters by threshold)
+      * @param threshold - Optional score threshold override (0-1). If not provided, uses the configured threshold.
+      * @returns Array of search results with scores >= threshold, sorted by similarity (highest first)
+      */
+     async searchWithThreshold(
+          queryVector: number[],
+          maxResults: number = 100,
+          threshold?: number
+     ): Promise<SearchResult[]> {
+          const scoreThreshold = threshold ?? this.config.scoreThreshold;
+
+          // Search for maxResults candidates
+          const results = await this.search(queryVector, maxResults);
+
+          // Filter by threshold
+          return results.filter((r) => r.score >= scoreThreshold);
+     }
+
+     /**
+      * Searches for similar embeddings in specific folders and returns only results above the score threshold.
+      *
+      * @param queryVector - Query embedding vector
+      * @param folderNames - Folder names to filter results by
+      * @param maxResults - Maximum number of results to return before threshold filtering
+      * @param threshold - Optional score threshold override (0-1). If not provided, uses the configured threshold.
+      * @returns Array of search results from specified folders with scores >= threshold
+      */
+     async searchInFoldersWithThreshold(
+          queryVector: number[],
+          folderNames: string[],
+          maxResults: number = 100,
+          threshold?: number
+     ): Promise<SearchResult[]> {
+          const scoreThreshold = threshold ?? this.config.scoreThreshold;
+
+          // Search for more results to account for filtering
+          const searchK = Math.min(maxResults * 3, this.indexMap.length);
+          const results = await this.search(queryVector, searchK);
+
+          const folderSet = new Set(folderNames);
+          const filtered = results.filter((r) => folderSet.has(r.folderName) && r.score >= scoreThreshold);
+
+          return filtered.slice(0, maxResults);
+     }
+
+     /**
       * Clears the index and all associated data.
       */
      clear(): void {
@@ -440,6 +513,9 @@ export class HNSWSearch {
                }
                if (config.efSearch !== undefined) {
                     (this.config as { efSearch: number }).efSearch = config.efSearch;
+               }
+               if (config.scoreThreshold !== undefined) {
+                    (this.config as { scoreThreshold: number }).scoreThreshold = config.scoreThreshold;
                }
           }
 

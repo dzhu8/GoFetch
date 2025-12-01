@@ -1,6 +1,7 @@
 **/test/*
 **/dist/*
 data/*
+temp/*
 node_modules/
 next-env.d.ts
 .prettierrc
