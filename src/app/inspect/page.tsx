@@ -773,7 +773,8 @@ export default function InspectPage() {
                                              No folders are registered yet
                                         </p>
                                         <p className="text-sm text-black/50 dark:text-white/50">
-                                             Add folders from the Sync view to start collecting embeddings.
+                                             Add folders on this page or from the Sync view to start collecting
+                                             embeddings.
                                         </p>
                                    </div>
                               ) : (

@@ -31,6 +31,8 @@ class ConfigManager {
                hnswEfConstruction: 200,
                hnswEfSearch: 64,
                hnswScoreThreshold: 0.3,
+               textChunkMaxTokens: 1000,
+               textChunkOverlapTokens: 100,
           },
           personalization: {},
           modelProviders: [],
@@ -132,6 +134,31 @@ class ConfigManager {
                     max: 1,
                     step: 0.05,
                     placeholder: "0.3",
+                    scope: "server",
+               },
+               {
+                    name: "Text Chunk Max Tokens",
+                    key: "textChunkMaxTokens",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Maximum number of tokens per chunk when splitting text files for embedding. Lower values create more granular chunks.",
+                    default: 1000,
+                    min: 100,
+                    max: 4000,
+                    placeholder: "1000",
+                    scope: "server",
+               },
+               {
+                    name: "Text Chunk Overlap Tokens",
+                    key: "textChunkOverlapTokens",
+                    type: "number",
+                    required: false,
+                    description: "Number of overlapping tokens between consecutive chunks for context continuity.",
+                    default: 100,
+                    min: 0,
+                    max: 500,
+                    placeholder: "100",
                     scope: "server",
                },
           ],
@@ -274,6 +301,12 @@ class ConfigManager {
           }
           if (this.currentConfig.preferences.hnswScoreThreshold === undefined) {
                this.currentConfig.preferences.hnswScoreThreshold = 0.3;
+          }
+          if (this.currentConfig.preferences.textChunkMaxTokens === undefined) {
+               this.currentConfig.preferences.textChunkMaxTokens = 1000;
+          }
+          if (this.currentConfig.preferences.textChunkOverlapTokens === undefined) {
+               this.currentConfig.preferences.textChunkOverlapTokens = 100;
           }
      }
 
