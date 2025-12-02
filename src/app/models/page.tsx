@@ -13,6 +13,7 @@ interface NormalizedModelRow {
      displayName: string;
      description?: string;
      sizeLabel: string;
+     contextWindowLabel: string;
      parameterLabel: string;
      supportsChat: boolean;
      supportsEmbedding: boolean;
@@ -40,6 +41,16 @@ type TestTabId = (typeof TEST_TABS)[number]["id"];
 
 const deriveParameterLabelFromName = (value?: string) => {
      if (!value) return "—";
+     
+     // First try to match after the colon
+     const afterColon = value.split(":").pop() ?? "";
+     const colonMatch = afterColon.match(/^(?<amount>\d+(?:\.\d+)?)\s*(?<unit>[bm])/i);
+     if (colonMatch?.groups) {
+          const unit = colonMatch.groups.unit?.toUpperCase();
+          return `${colonMatch.groups.amount}${unit}`;
+     }
+     
+     // Fallback: match anywhere in the string
      const match = value.match(/(?<amount>\d+(?:\.\d+)?)\s*(?<unit>[bm])/i);
      if (!match || !match.groups) return "—";
      const unit = match.groups.unit?.toUpperCase();
@@ -155,6 +166,7 @@ const ModelsPage = () => {
                               displayName: model.name,
                               description: model.description,
                               sizeLabel: formatSizeLabel(model.size),
+                              contextWindowLabel: model.contextWindow ?? "—",
                               parameterLabel: deriveParameterLabelFromName(model.name),
                               supportsChat: Boolean(model.supportsChat),
                               supportsEmbedding: Boolean(model.supportsEmbedding),
@@ -174,6 +186,7 @@ const ModelsPage = () => {
                          displayName: model.displayName ?? model.name ?? model.key,
                          description: model.description,
                          sizeLabel: model.sizeLabel ?? "—",
+                         contextWindowLabel: model.contextWindow ?? "—",
                          parameterLabel:
                               model.parameterLabel ??
                               deriveParameterLabelFromName(model.displayName ?? model.name ?? model.key),
@@ -380,6 +393,7 @@ const ModelsPage = () => {
                                         <tr className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 uppercase">
                                              <th className="py-2 pr-4 font-medium">Model</th>
                                              <th className="py-2 pr-4 font-medium">Size</th>
+                                             <th className="py-2 pr-4 font-medium">Context</th>
                                              <th className="py-2 pr-4 font-medium">Parameters</th>
                                              <th className="py-2 pr-4 font-medium">Chat</th>
                                              <th className="py-2 pr-4 font-medium">Embeddings</th>
@@ -422,6 +436,9 @@ const ModelsPage = () => {
                                                        </td>
                                                        <td className="py-3 pr-4 text-black/70 dark:text-white/70">
                                                             {model.sizeLabel}
+                                                       </td>
+                                                       <td className="py-3 pr-4 text-black/70 dark:text-white/70">
+                                                            {model.contextWindowLabel}
                                                        </td>
                                                        <td className="py-3 pr-4 text-black/70 dark:text-white/70">
                                                             {model.parameterLabel}
