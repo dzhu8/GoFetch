@@ -73,9 +73,7 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
                }));
 
                // Create SSE connection
-               const eventSource = new EventSource(
-                    `/api/folders/${encodeURIComponent(trimmedName)}/embedding-status`
-               );
+               const eventSource = new EventSource(`/api/folders/${encodeURIComponent(trimmedName)}/embedding-status`);
 
                eventSource.onmessage = (event) => {
                     try {

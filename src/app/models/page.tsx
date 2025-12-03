@@ -41,7 +41,7 @@ type TestTabId = (typeof TEST_TABS)[number]["id"];
 
 const deriveParameterLabelFromName = (value?: string) => {
      if (!value) return "—";
-     
+
      // First try to match after the colon
      const afterColon = value.split(":").pop() ?? "";
      const colonMatch = afterColon.match(/^(?<amount>\d+(?:\.\d+)?)\s*(?<unit>[bm])/i);
@@ -49,7 +49,7 @@ const deriveParameterLabelFromName = (value?: string) => {
           const unit = colonMatch.groups.unit?.toUpperCase();
           return `${colonMatch.groups.amount}${unit}`;
      }
-     
+
      // Fallback: match anywhere in the string
      const match = value.match(/(?<amount>\d+(?:\.\d+)?)\s*(?<unit>[bm])/i);
      if (!match || !match.groups) return "—";

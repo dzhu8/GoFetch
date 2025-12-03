@@ -206,18 +206,7 @@ export const monitorEvents = sqliteTable("monitor_events", {
           .default(sql`CURRENT_TIMESTAMP`),
 });
 
-const TEXT_FORMAT_ENUM = [
-     "markdown",
-     "text",
-     "json",
-     "yaml",
-     "toml",
-     "xml",
-     "csv",
-     "ini",
-     "log",
-     "env",
-] as const;
+const TEXT_FORMAT_ENUM = ["markdown", "text", "json", "yaml", "toml", "xml", "csv", "ini", "log", "env"] as const;
 
 type TextChunkMetadata = Record<string, unknown>;
 

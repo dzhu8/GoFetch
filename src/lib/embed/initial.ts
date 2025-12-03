@@ -41,10 +41,7 @@ interface SettingsSnapshot {
 }
 
 export async function ensureFolderPrimed(folder: FolderRegistration): Promise<void> {
-     const [astResult, chunkResult] = await Promise.all([
-          ensureAstSnapshots(folder),
-          ensureTextChunkSnapshots(folder),
-     ]);
+     const [astResult, chunkResult] = await Promise.all([ensureAstSnapshots(folder), ensureTextChunkSnapshots(folder)]);
      const hasEmbeddings = folderHasEmbeddings(folder.name);
      const totalSourceCount = astResult.fileCount + chunkResult.chunkCount;
 
@@ -99,7 +96,8 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               phase: "embedding",
                               totalFiles: total,
                               embeddedFiles: processed,
-                              message: total > 0 ? `Embedding ${processed}/${total} documents` : "Preparing embeddings...",
+                              message:
+                                   total > 0 ? `Embedding ${processed}/${total} documents` : "Preparing embeddings...",
                          });
                     },
                });
@@ -699,18 +697,16 @@ function formatNodeDocument(
 
 const MAX_CHUNK_LABEL = 50;
 
-function formatChunkDocument(
-     chunk: {
-          relativePath: string;
-          format: SupportedTextFormat;
-          chunkIndex: number;
-          content: string;
-          startRow: number;
-          startColumn: number;
-          endRow: number;
-          endColumn: number;
-     }
-): { label: string; content: string } {
+function formatChunkDocument(chunk: {
+     relativePath: string;
+     format: SupportedTextFormat;
+     chunkIndex: number;
+     content: string;
+     startRow: number;
+     startColumn: number;
+     endRow: number;
+     endColumn: number;
+}): { label: string; content: string } {
      // Create label from first 50 characters (cleaned up)
      const rawLabel = chunk.content.slice(0, MAX_CHUNK_LABEL).replace(/\s+/g, " ").trim();
      const label = rawLabel.length < chunk.content.length ? `${rawLabel}...` : rawLabel;
