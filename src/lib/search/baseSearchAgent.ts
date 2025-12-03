@@ -1,5 +1,4 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { Embeddings } from "@langchain/core/embeddings";
 import { ChatPromptTemplate, MessagesPlaceholder } from "@langchain/core/prompts";
 import { RunnableLambda, RunnableMap, RunnableSequence } from "@langchain/core/runnables";
 import { BaseMessage, BaseMessageLike } from "@langchain/core/messages";
@@ -7,24 +6,15 @@ import { StringOutputParser } from "@langchain/core/output_parsers";
 import { Document } from "@langchain/core/documents";
 import { StreamEvent } from "@langchain/core/tracers/log_stream";
 
-import path from "node:path";
-import fs from "node:fs";
 import eventEmitter from "events";
 
-import computeSimilarity from "../utils/computeSimilarity";
 import formatChatHistoryAsString from "../utils/formatHistory";
 
 export interface BaseSearchAgentConfig {
-     rerank: boolean;
-     rerankThreshold: number;
      queryGeneratorPrompt: string;
      queryGeneratorFewShots: BaseMessageLike[];
      responsePrompt: string;
-     /** If true, skip rerankDocs (useful when search retriever already ranks results) */
-     skipRerank?: boolean;
 }
-
-export type OptimizationMode = "speed" | "balanced" | "quality";
 
 export type BasicChainInput = {
      chat_history: BaseMessage[] | string;
@@ -58,9 +48,6 @@ export abstract class BaseSearchAgent {
       */
      protected async createAnsweringChain(
           llm: BaseChatModel,
-          fileIds: string[],
-          embeddings: Embeddings,
-          optimizationMode: OptimizationMode,
           systemInstructions: string,
           searchRetrieverChainArgs: any[] = []
      ) {
@@ -89,20 +76,7 @@ export abstract class BaseSearchAgent {
                          const query = searchRetrieverResult.query;
                          const docs = searchRetrieverResult.docs;
 
-                         // Skip reranking if configured (e.g., when search retriever already ranks results)
-                         if (this.config.skipRerank) {
-                              return docs;
-                         }
-
-                         const sortedDocs = await this.rerankDocs(
-                              query,
-                              docs ?? [],
-                              fileIds,
-                              embeddings,
-                              optimizationMode
-                         );
-
-                         return sortedDocs;
+                         return docs;
                     })
                          .withConfig({
                               runName: "FinalSourceRetriever",
@@ -119,124 +93,6 @@ export abstract class BaseSearchAgent {
           ]).withConfig({
                runName: "FinalResponseGenerator",
           });
-     }
-
-     /**
-      * Reranks documents based on similarity to the query.
-      */
-     protected async rerankDocs(
-          query: string,
-          docs: Document[],
-          fileIds: string[],
-          embeddings: Embeddings,
-          optimizationMode: OptimizationMode
-     ): Promise<Document[]> {
-          if (docs.length === 0 && fileIds.length === 0) {
-               return docs;
-          }
-
-          const filesData = fileIds
-               .map((file) => {
-                    const filePath = path.join(process.cwd(), "uploads", file);
-
-                    const contentPath = filePath + "-extracted.json";
-                    const embeddingsPath = filePath + "-embeddings.json";
-
-                    const content = JSON.parse(fs.readFileSync(contentPath, "utf8"));
-                    const embeddingsData = JSON.parse(fs.readFileSync(embeddingsPath, "utf8"));
-
-                    const fileSimilaritySearchObject = content.contents.map((c: string, i: number) => {
-                         return {
-                              fileName: content.title,
-                              content: c,
-                              embeddings: embeddingsData.embeddings[i],
-                         };
-                    });
-
-                    return fileSimilaritySearchObject;
-               })
-               .flat();
-
-          if (query.toLocaleLowerCase() === "summarize") {
-               return docs.slice(0, 15);
-          }
-
-          const docsWithContent = docs.filter((doc) => doc.pageContent && doc.pageContent.length > 0);
-
-          if (optimizationMode === "speed" || this.config.rerank === false) {
-               if (filesData.length > 0) {
-                    const [queryEmbedding] = await Promise.all([embeddings.embedQuery(query)]);
-
-                    const fileDocs = filesData.map((fileData) => {
-                         return new Document({
-                              pageContent: fileData.content,
-                              metadata: {
-                                   title: fileData.fileName,
-                                   url: `File`,
-                              },
-                         });
-                    });
-
-                    const similarity = filesData.map((fileData, i) => {
-                         const sim = computeSimilarity(queryEmbedding, fileData.embeddings);
-
-                         return {
-                              index: i,
-                              similarity: sim,
-                         };
-                    });
-
-                    let sortedDocs = similarity
-                         .filter((sim) => sim.similarity > (this.config.rerankThreshold ?? 0.3))
-                         .sort((a, b) => b.similarity - a.similarity)
-                         .slice(0, 15)
-                         .map((sim) => fileDocs[sim.index]);
-
-                    sortedDocs = docsWithContent.length > 0 ? sortedDocs.slice(0, 8) : sortedDocs;
-
-                    return [...sortedDocs, ...docsWithContent.slice(0, 15 - sortedDocs.length)];
-               } else {
-                    return docsWithContent.slice(0, 15);
-               }
-          } else if (optimizationMode === "balanced") {
-               const [docEmbeddings, queryEmbedding] = await Promise.all([
-                    embeddings.embedDocuments(docsWithContent.map((doc) => doc.pageContent)),
-                    embeddings.embedQuery(query),
-               ]);
-
-               docsWithContent.push(
-                    ...filesData.map((fileData) => {
-                         return new Document({
-                              pageContent: fileData.content,
-                              metadata: {
-                                   title: fileData.fileName,
-                                   url: `File`,
-                              },
-                         });
-                    })
-               );
-
-               docEmbeddings.push(...filesData.map((fileData) => fileData.embeddings));
-
-               const similarity = docEmbeddings.map((docEmbedding, i) => {
-                    const sim = computeSimilarity(queryEmbedding, docEmbedding);
-
-                    return {
-                         index: i,
-                         similarity: sim,
-                    };
-               });
-
-               const sortedDocs = similarity
-                    .filter((sim) => sim.similarity > (this.config.rerankThreshold ?? 0.3))
-                    .sort((a, b) => b.similarity - a.similarity)
-                    .slice(0, 15)
-                    .map((sim) => docsWithContent[sim.index]);
-
-               return sortedDocs;
-          }
-
-          return [];
      }
 
      /**
@@ -273,9 +129,6 @@ export abstract class BaseSearchAgent {
           message: string,
           history: BaseMessage[],
           llm: BaseChatModel,
-          embeddings: Embeddings,
-          optimizationMode: OptimizationMode,
-          fileIds: string[],
           systemInstructions: string,
           searchRetrieverChainArgs: any[] = []
      ): Promise<eventEmitter> {
@@ -283,9 +136,6 @@ export abstract class BaseSearchAgent {
 
           const answeringChain = await this.createAnsweringChain(
                llm,
-               fileIds,
-               embeddings,
-               optimizationMode,
                systemInstructions,
                searchRetrieverChainArgs
           );

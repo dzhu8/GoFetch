@@ -16,8 +16,6 @@ import configManager from "@/server/index";
 export interface CodeSearchAgentConfig extends BaseSearchAgentConfig {
      maxNDocuments: number;
      activeEngines: string[];
-     /** Defaults to true since HNSWSearch already ranks results */
-     skipRerank?: boolean;
 }
 
 // Helper to get query embedding using the configured default model
@@ -50,9 +48,8 @@ class CodeSearchAgent extends BaseSearchAgent {
      declare protected config: CodeSearchAgentConfig;
 
      constructor(config: CodeSearchAgentConfig) {
-          // Default skipRerank to true since HNSWSearch already ranks results
-          super({ ...config, skipRerank: config.skipRerank ?? true });
-          this.config = { ...config, skipRerank: config.skipRerank ?? true };
+          super(config);
+          this.config = config;
      }
 
      /**
