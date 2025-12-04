@@ -1,9 +1,11 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import TextareaAutosize from "react-textarea-autosize";
 import Attach from "./messageActions/Attach";
 import { useChat } from "@/lib/chat/Chat";
 import ModelSelector from "./messageActions/ChatModelSelector";
+import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
      const { sendMessage } = useChat();
@@ -53,7 +55,16 @@ const EmptyChatMessageInput = () => {
                }}
                className="w-full"
           >
-               <div className="flex flex-col bg-light-secondary dark:bg-dark-secondary px-3 pt-5 pb-3 rounded-2xl w-full border border-light-200 dark:border-dark-200 shadow-sm shadow-light-200/10 dark:shadow-black/20 transition-all duration-200 focus-within:border-light-300 dark:focus-within:border-dark-300">
+               <div className="relative">
+                    <div className="absolute -top-14 -left-0 pointer-events-none">
+                         <Image
+                              src={GoFetchDog}
+                              alt="GoFetch dog mascot"
+                              width={64}
+                              height={64}
+                         />
+                    </div>
+                    <div className="flex flex-col bg-light-secondary dark:bg-dark-secondary px-3 pt-5 pb-3 rounded-2xl w-full border border-light-200 dark:border-dark-200 shadow-sm shadow-light-200/10 dark:shadow-black/20 transition-all duration-200 focus-within:border-light-300 dark:focus-within:border-dark-300">
                     <TextareaAutosize
                          ref={inputRef}
                          value={message}
@@ -75,6 +86,7 @@ const EmptyChatMessageInput = () => {
                                    <ArrowRight className="bg-background" size={17} />
                               </button>
                          </div>
+                    </div>
                     </div>
                </div>
           </form>

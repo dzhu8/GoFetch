@@ -26,7 +26,10 @@ const chatModelSchema = z.object({
 const bodySchema = z.object({
      message: messageSchema,
      focusMode: z.string().default("code"),
-     history: z.array(z.tuple([z.string(), z.string()])).optional().default([]),
+     history: z
+          .array(z.tuple([z.string(), z.string()]))
+          .optional()
+          .default([]),
      files: z.array(z.string()).optional().default([]),
      folderNames: z.array(z.string()).optional(),
      chatModel: chatModelSchema,
@@ -250,7 +253,7 @@ export const POST = async (req: Request) => {
                );
           }
 
-          const llm = await provider.provider.loadChatModel(body.chatModel.key) as BaseChatModel;
+          const llm = (await provider.provider.loadChatModel(body.chatModel.key)) as BaseChatModel;
 
           const humanMessageId = message.messageId ?? crypto.randomBytes(7).toString("hex");
 

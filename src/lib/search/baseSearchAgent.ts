@@ -134,11 +134,7 @@ export abstract class BaseSearchAgent {
      ): Promise<eventEmitter> {
           const emitter = new eventEmitter();
 
-          const answeringChain = await this.createAnsweringChain(
-               llm,
-               systemInstructions,
-               searchRetrieverChainArgs
-          );
+          const answeringChain = await this.createAnsweringChain(llm, systemInstructions, searchRetrieverChainArgs);
 
           const stream = answeringChain.streamEvents(
                {
