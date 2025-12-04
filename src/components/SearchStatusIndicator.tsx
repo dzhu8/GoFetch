@@ -53,25 +53,17 @@ const SearchStatusIndicator = ({ status }: SearchStatusIndicatorProps) => {
                          </motion.div>
                     </div>
                     <div className="flex-1 min-w-0">
-                         <p className="text-sm font-medium text-black/80 dark:text-white/80">
-                              {status.message}
-                         </p>
+                         <p className="text-sm font-medium text-black/80 dark:text-white/80">{status.message}</p>
                          {status.details && (
                               <div className="mt-1 text-xs text-black/50 dark:text-white/50">
                                    {status.details.folderNames && status.details.folderNames.length > 0 && (
-                                        <span>
-                                             Folders: {status.details.folderNames.join(", ")}
-                                        </span>
+                                        <span>Folders: {status.details.folderNames.join(", ")}</span>
                                    )}
                                    {status.details.embeddingCount !== undefined && (
-                                        <span className="ml-2">
-                                             • {status.details.embeddingCount} embeddings
-                                        </span>
+                                        <span className="ml-2">• {status.details.embeddingCount} embeddings</span>
                                    )}
                                    {status.details.resultCount !== undefined && (
-                                        <span className="ml-2">
-                                             • {status.details.resultCount} results
-                                        </span>
+                                        <span className="ml-2">• {status.details.resultCount} results</span>
                                    )}
                               </div>
                          )}

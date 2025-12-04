@@ -249,7 +249,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      const [isConfigReady, setIsConfigReady] = useState(false);
      const [hasError, setHasError] = useState(false);
      const [isReady, setIsReady] = useState(false);
-     
+
      /** Current search status for loading indicators */
      const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null);
 

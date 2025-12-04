@@ -87,10 +87,10 @@ class CodeSearchAgent extends BaseSearchAgent {
 
           // Capture folderNames in closure for use in the lambda
           const capturedFolderNames = folderNames;
-          
+
           // Capture emitStatus for use in the lambda
           const emitStatus = this.emitStatus.bind(this);
-          
+
           // Get registered folders info for status updates (lazy loaded)
           const folderRegistry = getFolderRegistry();
           const registeredFolders = folderRegistry.getFolders();
@@ -289,7 +289,7 @@ class CodeSearchAgent extends BaseSearchAgent {
 
                          // Add folders to the index
                          const indexedCount = await hnswSearch.addFolders(capturedFolderNames);
-                         
+
                          // Emit status: embedding query
                          emitStatus({
                               stage: "embedding",
@@ -302,7 +302,7 @@ class CodeSearchAgent extends BaseSearchAgent {
                          // Search with threshold filtering
                          // Embed the query using the configured default model
                          const queryEmbedding = await embedQuery(question);
-                         
+
                          // Emit status: retrieving results
                          emitStatus({
                               stage: "retrieving",
@@ -313,13 +313,14 @@ class CodeSearchAgent extends BaseSearchAgent {
                               queryEmbedding,
                               this.config.maxNDocuments
                          );
-                         
+
                          // Emit status: results found
                          emitStatus({
                               stage: "generating",
-                              message: results.length > 0 
-                                   ? `Found ${results.length} relevant code snippet(s)` 
-                                   : "No matching code found in embeddings",
+                              message:
+                                   results.length > 0
+                                        ? `Found ${results.length} relevant code snippet(s)`
+                                        : "No matching code found in embeddings",
                               details: {
                                    resultCount: results.length,
                               },

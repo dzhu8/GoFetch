@@ -129,11 +129,11 @@ class ConfigManager {
                     required: false,
                     description:
                          "Minimum similarity score (0-1) for search results. Only results with scores at or above this threshold are returned when using threshold-based search.",
-                    default: 0.3,
+                    default: 0.5,
                     min: 0,
                     max: 1,
                     step: 0.05,
-                    placeholder: "0.3",
+                    placeholder: "0.5",
                     scope: "server",
                },
                {
