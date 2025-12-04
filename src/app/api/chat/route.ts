@@ -136,6 +136,17 @@ const handleEmitterEvents = async (
                          createdAt: new Date().toString(),
                     })
                     .execute();
+          } else if (parsedData.type === "status") {
+               // Forward status updates to the client for loading indicators
+               writer.write(
+                    encoder.encode(
+                         JSON.stringify({
+                              type: "status",
+                              data: parsedData.data,
+                              messageId: aiMessageId,
+                         }) + "\n"
+                    )
+               );
           }
      });
 

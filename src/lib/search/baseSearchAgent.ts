@@ -26,12 +26,33 @@ export interface SearchRetrieverResult {
      docs: Document[];
 }
 
+/** Status update emitted during search process */
+export interface SearchStatus {
+     stage: "analyzing" | "searching" | "embedding" | "retrieving" | "generating";
+     message: string;
+     details?: {
+          folderCount?: number;
+          folderNames?: string[];
+          embeddingCount?: number;
+          resultCount?: number;
+     };
+}
+
 export abstract class BaseSearchAgent {
      protected config: BaseSearchAgentConfig;
      protected strParser = new StringOutputParser();
+     /** Emitter for status updates during search - set by searchAndAnswer */
+     protected statusEmitter: eventEmitter | null = null;
 
      constructor(config: BaseSearchAgentConfig) {
           this.config = config;
+     }
+
+     /** Emit a status update to the client */
+     protected emitStatus(status: SearchStatus): void {
+          if (this.statusEmitter) {
+               this.statusEmitter.emit("data", JSON.stringify({ type: "status", data: status }));
+          }
      }
 
      /**
@@ -137,6 +158,9 @@ export abstract class BaseSearchAgent {
           searchRetrieverChainArgs: any[] = []
      ): Promise<eventEmitter> {
           const emitter = new eventEmitter();
+
+          // Set the status emitter so createSearchRetrieverChain can emit status updates
+          this.statusEmitter = emitter;
 
           const answeringChain = await this.createAnsweringChain(llm, systemInstructions, searchRetrieverChainArgs);
 

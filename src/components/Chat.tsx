@@ -4,10 +4,11 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import MessageInput from "./MessageInput";
 import MessageBox from "./MessageBox";
 import MessageBoxLoading from "./MessageBoxLoading";
+import SearchStatusIndicator from "./SearchStatusIndicator";
 import { useChat } from "@/lib/chat/Chat";
 
 const Chat = () => {
-     const { sections, chatTurns, loading, messageAppeared } = useChat();
+     const { sections, chatTurns, loading, messageAppeared, searchStatus } = useChat();
 
      const [dividerWidth, setDividerWidth] = useState(0);
      const dividerRef = useRef<HTMLDivElement | null>(null);
@@ -68,7 +69,12 @@ const Chat = () => {
                          </Fragment>
                     );
                })}
-               {loading && !messageAppeared && <MessageBoxLoading />}
+               {loading && !messageAppeared && (
+                    <>
+                         <SearchStatusIndicator status={searchStatus} />
+                         {!searchStatus && <MessageBoxLoading />}
+                    </>
+               )}
                <div ref={messageEnd} className="h-0" />
                {dividerWidth > 0 && (
                     <div className="bottom-24 lg:bottom-10 fixed z-40" style={{ width: dividerWidth }}>

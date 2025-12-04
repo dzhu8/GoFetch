@@ -9,9 +9,30 @@ import FileLinksOutputParser from "../outputParsers/fileLinksOutputParser";
 import LineOutputParser from "../outputParsers/lineOutputParser";
 
 import { getDocumentsFromSnippets } from "../utils/snippetRetriever";
-import { HNSWSearch } from "./HNSWSearch";
-import modelRegistry from "@/server/providerRegistry";
-import configManager from "@/server/index";
+// HNSWSearch is loaded lazily to avoid faiss-node being bundled
+import type { HNSWSearch as HNSWSearchType } from "./HNSWSearch";
+
+// Lazy load server modules to avoid better-sqlite3 being bundled
+function getModelRegistry() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/providerRegistry").default;
+}
+function getConfigManager() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/index").default;
+}
+
+// Lazy load folderRegistry to avoid circular dependencies during bundling
+function getFolderRegistry() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/folderRegistry").default;
+}
+
+// Lazy load HNSWSearch to avoid faiss-node being bundled at module load time
+function getHNSWSearch(): typeof HNSWSearchType {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("./HNSWSearch").HNSWSearch;
+}
 
 export interface CodeSearchAgentConfig extends BaseSearchAgentConfig {
      maxNDocuments: number;
@@ -20,6 +41,7 @@ export interface CodeSearchAgentConfig extends BaseSearchAgentConfig {
 
 // Helper to get query embedding using the configured default model
 async function embedQuery(query: string): Promise<number[]> {
+     const configManager = getConfigManager();
      const defaultEmbeddingModel = configManager.getConfig("preferences.defaultEmbeddingModel");
 
      if (!defaultEmbeddingModel) {
@@ -33,6 +55,7 @@ async function embedQuery(query: string): Promise<number[]> {
           throw new Error("Invalid default embedding model configuration");
      }
 
+     const modelRegistry = getModelRegistry();
      const provider = modelRegistry.getProviderById(providerId);
      if (!provider) {
           throw new Error(`Provider ${providerId} not found`);
@@ -64,6 +87,13 @@ class CodeSearchAgent extends BaseSearchAgent {
 
           // Capture folderNames in closure for use in the lambda
           const capturedFolderNames = folderNames;
+          
+          // Capture emitStatus for use in the lambda
+          const emitStatus = this.emitStatus.bind(this);
+          
+          // Get registered folders info for status updates (lazy loaded)
+          const folderRegistry = getFolderRegistry();
+          const registeredFolders = folderRegistry.getFolders();
 
           return RunnableSequence.from([
                ChatPromptTemplate.fromMessages([
@@ -85,6 +115,16 @@ class CodeSearchAgent extends BaseSearchAgent {
                llm,
                this.strParser,
                RunnableLambda.from(async (llmOutput: string): Promise<SearchRetrieverResult> => {
+                    // Emit initial status
+                    emitStatus({
+                         stage: "analyzing",
+                         message: "Analyzing your query...",
+                         details: {
+                              folderCount: registeredFolders.length,
+                              folderNames: registeredFolders.map((f: { name: string }) => f.name),
+                         },
+                    });
+
                     const fileLinksOutputParser = new FileLinksOutputParser({
                          key: "links",
                     });
@@ -97,6 +137,10 @@ class CodeSearchAgent extends BaseSearchAgent {
                     let question = (await questionOutputParser.parse(llmOutput)) ?? llmOutput;
 
                     if (question === "not_needed") {
+                         emitStatus({
+                              stage: "generating",
+                              message: "No code search needed for this query",
+                         });
                          return { query: "", docs: [] };
                     }
 
@@ -229,19 +273,57 @@ class CodeSearchAgent extends BaseSearchAgent {
                     } else {
                          question = question.replace(/<think>.*?<\/think>/g, "");
 
-                         // Initialize HNSW search from app config
+                         // Emit status: searching embeddings
+                         emitStatus({
+                              stage: "searching",
+                              message: `Searching code embeddings in ${capturedFolderNames.length} folder(s)...`,
+                              details: {
+                                   folderCount: capturedFolderNames.length,
+                                   folderNames: capturedFolderNames,
+                              },
+                         });
+
+                         // Initialize HNSW search from app config (lazy loaded)
+                         const HNSWSearch = getHNSWSearch();
                          const hnswSearch = HNSWSearch.fromConfig();
 
                          // Add folders to the index
-                         await hnswSearch.addFolders(capturedFolderNames);
+                         const indexedCount = await hnswSearch.addFolders(capturedFolderNames);
+                         
+                         // Emit status: embedding query
+                         emitStatus({
+                              stage: "embedding",
+                              message: `Indexed ${indexedCount} embeddings. Generating query embedding...`,
+                              details: {
+                                   embeddingCount: indexedCount,
+                              },
+                         });
 
                          // Search with threshold filtering
                          // Embed the query using the configured default model
                          const queryEmbedding = await embedQuery(question);
+                         
+                         // Emit status: retrieving results
+                         emitStatus({
+                              stage: "retrieving",
+                              message: "Finding relevant code snippets...",
+                         });
+
                          const results = await hnswSearch.searchWithThreshold(
                               queryEmbedding,
                               this.config.maxNDocuments
                          );
+                         
+                         // Emit status: results found
+                         emitStatus({
+                              stage: "generating",
+                              message: results.length > 0 
+                                   ? `Found ${results.length} relevant code snippet(s)` 
+                                   : "No matching code found in embeddings",
+                              details: {
+                                   resultCount: results.length,
+                              },
+                         });
 
                          const documents = results.map(
                               (result) =>

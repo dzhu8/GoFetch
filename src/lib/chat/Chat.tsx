@@ -4,6 +4,7 @@ import {
      AssistantMessage,
      ChatTurn,
      Message,
+     SearchStatus,
      SourceMessage,
      SuggestionMessage,
      UserMessage,
@@ -43,6 +44,8 @@ type ChatContext = {
      chatModelProvider: ChatModelProvider;
      embeddingModelProvider: EmbeddingModelProvider;
      systemInstructions: string;
+     /** Current search status for loading indicators */
+     searchStatus: SearchStatus | null;
      setFiles: (files: File[]) => void;
      setFileIds: (fileIds: string[]) => void;
      sendMessage: (message: string, messageId?: string, rewrite?: boolean) => Promise<void>;
@@ -201,6 +204,7 @@ export const chatContext = createContext<ChatContext>({
      chatModelProvider: { key: "", providerId: "" },
      embeddingModelProvider: { key: "", providerId: "" },
      systemInstructions: "",
+     searchStatus: null,
      rewrite: () => {},
      sendMessage: async () => {},
      setFileIds: () => {},
@@ -245,6 +249,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      const [isConfigReady, setIsConfigReady] = useState(false);
      const [hasError, setHasError] = useState(false);
      const [isReady, setIsReady] = useState(false);
+     
+     /** Current search status for loading indicators */
+     const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null);
 
      const messagesRef = useRef<Message[]>([]);
 
@@ -471,10 +478,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                if (data.type === "error") {
                     toast.error(data.data);
                     setLoading(false);
+                    setSearchStatus(null);
+                    return;
+               }
+
+               if (data.type === "status") {
+                    // Update search status for loading indicators
+                    setSearchStatus(data.data as SearchStatus);
                     return;
                }
 
                if (data.type === "sources") {
+                    // Clear search status when sources arrive
+                    setSearchStatus(null);
+                    // Mark message as appeared even if sources are empty - search phase is complete
+                    setMessageAppeared(true);
                     setMessages((prevMessages) => [
                          ...prevMessages,
                          {
@@ -485,9 +503,6 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                               createdAt: new Date(),
                          },
                     ]);
-                    if (data.data && data.data.length > 0) {
-                         setMessageAppeared(true);
-                    }
                }
 
                if (data.type === "message") {
@@ -526,6 +541,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     ]);
 
                     setLoading(false);
+                    setSearchStatus(null);
 
                     const lastMsg = messagesRef.current[messagesRef.current.length - 1];
 
@@ -645,6 +661,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     embeddingModelProvider,
                     setEmbeddingModelProvider,
                     systemInstructions,
+                    searchStatus,
                }}
           >
                {children}

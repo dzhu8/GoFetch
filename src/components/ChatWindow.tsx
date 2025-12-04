@@ -35,6 +35,18 @@ export interface SuggestionMessage extends BaseMessage {
      suggestions: string[];
 }
 
+/** Search status updates shown during code retrieval */
+export interface SearchStatus {
+     stage: "analyzing" | "searching" | "embedding" | "retrieving" | "generating";
+     message: string;
+     details?: {
+          folderCount?: number;
+          folderNames?: string[];
+          embeddingCount?: number;
+          resultCount?: number;
+     };
+}
+
 export type Message = AssistantMessage | UserMessage | SourceMessage | SuggestionMessage;
 export type ChatTurn = UserMessage | AssistantMessage;
 
