@@ -2,7 +2,7 @@
 
 import GoFetchLogo from "@/assets/GoFetch-logo.svg";
 import { cn } from "@/lib/utils";
-import { BookCopy, FolderSync, Home, MessageSquareMore, Search } from "lucide-react";
+import { BookCopy, FolderSync, History, Home, MessageSquareMore, Search } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useSelectedLayoutSegments, useRouter } from "next/navigation";
@@ -25,6 +25,12 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
                href: "/",
                active: segments.length === 0 || segments.includes("c"),
                label: "Home",
+          },
+          {
+               icon: History,
+               href: "/chats",
+               active: segments.includes("chats"),
+               label: "History",
           },
           {
                icon: BookCopy,
