@@ -97,10 +97,14 @@ export abstract class BaseSearchAgent {
 
      /**
       * Formats documents into a string for the LLM context.
+      * Includes similarity score if available.
       */
      protected processDocs(docs: Document[]): string {
           return docs
-               .map((_, index) => `${index + 1}. ${docs[index].metadata.title} ${docs[index].pageContent}`)
+               .map((doc, index) => {
+                    const score = doc.metadata.score !== undefined ? ` [score: ${doc.metadata.score.toFixed(3)}]` : "";
+                    return `${index + 1}. ${doc.metadata.title}${score} ${doc.pageContent}`;
+               })
                .join("\n");
      }
 

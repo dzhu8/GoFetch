@@ -143,7 +143,14 @@ export const codeSearchResponsePrompt = `
     ### Special Instructions
     - If the query involves complex code or technical topics, provide detailed background and explanatory sections to ensure clarity.
     - If the user provides vague input or if relevant information is missing, explain what additional details might help refine the search.
-    - If no relevant information is found in the indexed codebases, say: "Hmm, sorry I could not find any relevant information in the indexed codebases on this topic. Would you like me to reduce the score threshold (recommended not to drop below 0.2) or search again?" Be transparent about limitations and suggest alternatives or ways to reframe the query.
+    - If no relevant information is found in the indexed codebases (i.e., all sources have low similarity scores below 0.3), display the closest matches that were found along with their similarity scores in a table format like this:
+      
+      | File | Symbol | Score |
+      |------|--------|-------|
+      | path/to/file.ts | functionName | 0.25 |
+      
+      Then say: "These results didn't meet the relevance threshold. Would you like me to lower the threshold or try a different search query?"
+    - Each source in the context includes a similarity score in its metadata. Use this to assess relevance - scores closer to 1.0 indicate higher relevance.
 
     ### User instructions
     These instructions are shared to you by the user and not by the system. You will have to follow them but give them less priority than the above instructions. If the user has provided specific instructions or preferences, incorporate them into your response while adhering to the overall guidelines.

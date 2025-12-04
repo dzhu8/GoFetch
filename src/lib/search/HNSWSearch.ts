@@ -187,13 +187,19 @@ export class HNSWSearch {
 
      /**
       * Lazily loads the faiss-node module.
+      * Uses require() to bypass Turbopack/webpack bundling of native modules.
       */
      private async loadFaiss(): Promise<any> {
           if (!this.faissModule) {
                try {
-                    const faissImport = await import("faiss-node");
-                    // Handle both ESM default export and CommonJS module.exports
-                    this.faissModule = faissImport.default ?? faissImport;
+                    // Use require() instead of dynamic import to ensure the native module
+                    // is loaded directly by Node.js, bypassing Turbopack bundling.
+                    // The eval prevents static analysis from trying to bundle the module.
+                    // eslint-disable-next-line @typescript-eslint/no-require-imports
+                    const requireFn = typeof __webpack_require__ === "function" 
+                         ? __non_webpack_require__ 
+                         : require;
+                    this.faissModule = requireFn("faiss-node");
                } catch (error) {
                     throw new Error(
                          "faiss-node module not found. Please install it with: npm install faiss-node\n" +

@@ -19,6 +19,25 @@ const nextConfig = {
      experimental: {
           // Optimize package imports for faster compilation
           optimizePackageImports: ["lucide-react", "@headlessui/react", "framer-motion"],
+          // Native Node.js modules that should not be bundled
+          serverExternalPackages: ["faiss-node", "better-sqlite3"],
+     },
+     // Turbopack configuration for development (Next.js 16+ uses Turbopack by default)
+     turbopack: {
+          // Resolve aliases if needed
+          resolveAlias: {},
+     },
+     // Configure webpack for native modules (used in production builds)
+     webpack: (config, { isServer }) => {
+          if (isServer) {
+               // Prevent webpack from bundling native modules
+               config.externals = config.externals || [];
+               config.externals.push({
+                    "faiss-node": "commonjs faiss-node",
+                    "better-sqlite3": "commonjs better-sqlite3",
+               });
+          }
+          return config;
      },
      // Enable React strict mode for better development experience
      reactStrictMode: true,

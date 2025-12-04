@@ -7,7 +7,7 @@ import { chats, messages as messagesSchema, folders } from "@/server/db/schema";
 import { and, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 import modelRegistry from "@/server/providerRegistry";
-import { searchHandlers } from "@/lib/search";
+import { getSearchHandlers } from "@/lib/search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,10 +82,11 @@ function getAllFolderNames(): string[] {
  * Get the appropriate search agent based on focus mode.
  */
 function getSearchAgent(focusMode: string) {
-     const agent = searchHandlers[focusMode];
+     const handlers = getSearchHandlers();
+     const agent = handlers[focusMode];
      if (!agent) {
           // Default to code search if focus mode not found
-          return searchHandlers.code;
+          return handlers.code;
      }
      return agent;
 }
