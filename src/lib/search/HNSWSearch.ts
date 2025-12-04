@@ -1,8 +1,19 @@
 import type { Buffer } from "node:buffer";
 import { inArray } from "drizzle-orm";
-import db from "@/server/db";
-import { embeddings, folders } from "@/server/db/schema";
-import configManager from "@/server";
+
+// Lazy load server modules to avoid better-sqlite3 being bundled at module analysis time
+function getDb() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/db").default;
+}
+function getSchema() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/db/schema");
+}
+function getConfigManager() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server").default;
+}
 
 /**
  * Configuration options for HNSW index parameters.
@@ -119,6 +130,7 @@ export class HNSWSearch {
       * @returns A new HNSWSearch instance configured from app settings
       */
      static fromConfig(): HNSWSearch {
+          const configManager = getConfigManager();
           const M = configManager.getConfig("preferences.hnswM", HNSWSearch.DEFAULT_CONFIG.M);
           const efConstruction = configManager.getConfig(
                "preferences.hnswEfConstruction",
@@ -187,20 +199,20 @@ export class HNSWSearch {
 
      /**
       * Lazily loads the faiss-node module.
-      * Uses require() to bypass Turbopack/webpack bundling of native modules.
+      * Uses createRequire from node:module with process.cwd() to get Node.js's native require,
+      * completely bypassing bundler transformations.
       */
      private async loadFaiss(): Promise<any> {
           if (!this.faissModule) {
                try {
-                    // Use require() instead of dynamic import to ensure the native module
-                    // is loaded directly by Node.js, bypassing Turbopack bundling.
-                    // The eval prevents static analysis from trying to bundle the module.
-                    // eslint-disable-next-line @typescript-eslint/no-require-imports
-                    const requireFn = typeof __webpack_require__ === "function" 
-                         ? __non_webpack_require__ 
-                         : require;
-                    this.faissModule = requireFn("faiss-node");
+                    // Use createRequire from node:module to get the real Node.js require
+                    // Using process.cwd() ensures we resolve from the project root
+                    const { createRequire } = await import("node:module");
+                    const path = await import("node:path");
+                    const nativeRequire = createRequire(path.join(process.cwd(), "package.json"));
+                    this.faissModule = nativeRequire("faiss-node");
                } catch (error) {
+                    console.error("[HNSWSearch] Failed to load faiss-node:", error);
                     throw new Error(
                          "faiss-node module not found. Please install it with: npm install faiss-node\n" +
                               "Note: faiss-node requires native compilation. See https://github.com/ewfian/faiss-node for installation instructions."
@@ -243,7 +255,21 @@ export class HNSWSearch {
                return [];
           }
 
-          const rows = db
+          const db = getDb();
+          const { embeddings } = getSchema();
+
+          interface EmbeddingRow {
+               id: number;
+               folderName: string;
+               filePath: string;
+               relativePath: string;
+               content: string | null;
+               metadata: unknown;
+               embedding: Buffer;
+               dim: number;
+          }
+
+          const rows: EmbeddingRow[] = db
                .select({
                     id: embeddings.id,
                     folderName: embeddings.folderName,
@@ -275,7 +301,10 @@ export class HNSWSearch {
       * @returns Array of folder names
       */
      private getAllFolderNames(): string[] {
-          const rows = db.select({ name: folders.name }).from(folders).all();
+          const db = getDb();
+          const { folders } = getSchema();
+
+          const rows: { name: string }[] = db.select({ name: folders.name }).from(folders).all();
           return rows.map((row) => row.name);
      }
 

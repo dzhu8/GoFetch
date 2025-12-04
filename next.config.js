@@ -26,6 +26,14 @@ const nextConfig = {
      turbopack: {
           // Resolve aliases if needed
           resolveAlias: {},
+          // Rules for handling specific modules
+          rules: {
+               // Exclude native modules from bundling
+               "*.node": {
+                    loaders: [],
+                    as: "*.node",
+               },
+          },
      },
      // Configure webpack for native modules (used in production builds)
      webpack: (config, { isServer }) => {

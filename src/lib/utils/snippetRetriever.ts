@@ -1,8 +1,32 @@
 import { eq, sql } from "drizzle-orm";
-import db from "@/server/db";
-import { astNodes, astFileSnapshots } from "@/server/db/schema";
 import type { SupportedLanguage } from "@/lib/ast/types";
 import { Document } from "@langchain/core/documents";
+
+// Lazy load database to avoid better-sqlite3 being bundled
+function getDb() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/db").default;
+}
+function getSchema() {
+     // eslint-disable-next-line @typescript-eslint/no-require-imports
+     return require("@/server/db/schema");
+}
+
+/** Internal type for AST node query results */
+interface AstNodeQueryResult {
+     id: number;
+     nodeType: string;
+     textSnippet: string | null;
+     startRow: number;
+     startColumn: number;
+     endRow: number;
+     endColumn: number;
+     metadata: unknown;
+     filePath: string;
+     relativePath: string;
+     language: SupportedLanguage;
+     folderName: string;
+}
 
 /**
  * Represents a code snippet retrieved from the database.
@@ -92,6 +116,9 @@ export async function retrieveSnippetBySymbol(symbolName: string, folderName?: s
      // The symbolName is stored in the metadata JSON field
      const metadataPattern = `%"symbolName":"${symbolName}"%`;
 
+     const db = getDb();
+     const { astNodes, astFileSnapshots } = getSchema();
+
      let query = db
           .select({
                id: astNodes.id,
@@ -112,7 +139,7 @@ export async function retrieveSnippetBySymbol(symbolName: string, folderName?: s
           .innerJoin(astFileSnapshots, eq(astNodes.fileId, astFileSnapshots.id))
           .where(sql`json_extract(${astNodes.metadata}, '$.symbolName') = ${symbolName}`);
 
-     const results = query.all();
+     const results: AstNodeQueryResult[] = query.all();
 
      // Filter by folder if specified
      const filteredResults = folderName ? results.filter((r) => r.folderName === folderName) : results;
@@ -306,6 +333,9 @@ export interface FileInfo {
  */
 export async function retrieveSnippetsByFile(fileInfo: FileInfo, folderName?: string): Promise<CodeSnippet[]> {
      // Search for files matching the filename (using LIKE for partial path matching)
+     const db = getDb();
+     const { astNodes, astFileSnapshots } = getSchema();
+
      const query = db
           .select({
                id: astNodes.id,
@@ -325,7 +355,7 @@ export async function retrieveSnippetsByFile(fileInfo: FileInfo, folderName?: st
           .innerJoin(astFileSnapshots, eq(astNodes.fileId, astFileSnapshots.id))
           .where(sql`${astFileSnapshots.relativePath} LIKE ${"%" + fileInfo.filename}`);
 
-     const results = query.all();
+     const results: AstNodeQueryResult[] = query.all();
 
      // Filter by folder if specified
      const filteredResults = folderName ? results.filter((r) => r.folderName === folderName) : results;

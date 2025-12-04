@@ -30,7 +30,7 @@ class ConfigManager {
                hnswM: 32,
                hnswEfConstruction: 200,
                hnswEfSearch: 64,
-               hnswScoreThreshold: 0.3,
+               hnswScoreThreshold: 0.5,
                textChunkMaxTokens: 1000,
                textChunkOverlapTokens: 100,
           },
