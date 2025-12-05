@@ -1,10 +1,12 @@
-export type EmbeddingPhase = "idle" | "parsing" | "embedding" | "completed" | "error";
+export type TaskPhase = "idle" | "parsing" | "summarizing" | "embedding" | "completed" | "error";
 
-export interface EmbeddingProgressState {
+export interface TaskProgressState {
      folderName: string;
-     phase: EmbeddingPhase;
+     phase: TaskPhase;
      totalFiles: number;
-     embeddedFiles: number;
+     processedFiles: number;
+     /** Total tokens output during summarization phase */
+     totalTokensOutput?: number;
      message?: string;
      error?: string;
      startedAt: string;

@@ -12,8 +12,8 @@ import { Toaster } from "sonner";
 import ThemeProvider from "@/components/theme/Provider";
 import { ChatProvider } from "@/lib/chat/Chat";
 import SetupWizard from "@/components/setup/SetupWizard";
-import { EmbeddingProgressProvider } from "@/components/embed/EmbeddingProgressProvider";
-import EmbeddingProgressToasts from "@/components/embed/EmbeddingProgressToasts";
+import { TaskProgressProvider } from "@/components/progress/TaskProgressProvider";
+import TaskProgressToasts from "@/components/progress/TaskProgressToasts";
 
 const montserrat = Montserrat({
      weight: ["300", "400", "500", "700"],
@@ -39,7 +39,7 @@ export default async function RootLayout({
           <html className={cn("h-full", montserrat.className)} lang="en" suppressHydrationWarning>
                <body className="h-full">
                     <ThemeProvider>
-                         <EmbeddingProgressProvider>
+                         <TaskProgressProvider>
                               {setupComplete ? (
                                    <ChatProvider>
                                         <Sidebar>{children}</Sidebar>
@@ -55,8 +55,8 @@ export default async function RootLayout({
                               ) : (
                                    <SetupWizard configSections={configSections} />
                               )}
-                              <EmbeddingProgressToasts />
-                         </EmbeddingProgressProvider>
+                              <TaskProgressToasts />
+                         </TaskProgressProvider>
                     </ThemeProvider>
                </body>
           </html>

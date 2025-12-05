@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { embeddingProgressEmitter, getEmbeddingProgress } from "@/lib/embed/progress";
-import type { EmbeddingProgressState } from "@/lib/embed/types";
+import { taskProgressEmitter, getTaskProgress } from "@/lib/embed/progress";
+import type { TaskProgressState } from "@/lib/embed/types";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ name: string }> }) {
      const { name } = await params;
@@ -15,15 +15,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ nam
      const stream = new ReadableStream({
           start(controller) {
                // Send initial state immediately
-               const initialProgress = getEmbeddingProgress(folderName);
+               const initialProgress = getTaskProgress(folderName);
                controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialProgress)}\n\n`));
 
                // Listen for updates
-               const onUpdate = (progress: EmbeddingProgressState) => {
+               const onUpdate = (progress: TaskProgressState) => {
                     if (progress.folderName === folderName) {
                          controller.enqueue(encoder.encode(`data: ${JSON.stringify(progress)}\n\n`));
 
-                         // Close stream when embedding is complete or errored
+                         // Close stream when task is complete or errored
                          if (progress.phase === "completed" || progress.phase === "error") {
                               controller.close();
                          }
@@ -36,13 +36,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ nam
                     }
                };
 
-               embeddingProgressEmitter.on("update", onUpdate);
-               embeddingProgressEmitter.on("clear", onClear);
+               taskProgressEmitter.on("update", onUpdate);
+               taskProgressEmitter.on("clear", onClear);
 
                // Cleanup when client disconnects
                _req.signal.addEventListener("abort", () => {
-                    embeddingProgressEmitter.off("update", onUpdate);
-                    embeddingProgressEmitter.off("clear", onClear);
+                    taskProgressEmitter.off("update", onUpdate);
+                    taskProgressEmitter.off("clear", onClear);
                });
           },
      });

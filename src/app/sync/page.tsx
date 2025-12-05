@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import GithubProjectCard from "@/components/GithubProjectCard";
 import { Loader2, Plus } from "lucide-react";
-import { useEmbeddingProgressActions } from "@/components/embed/EmbeddingProgressProvider";
+import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
 
 type FolderSyncData = {
      name: string;
@@ -84,7 +84,7 @@ export default function SyncPage() {
      const [isPromptingFolder, setIsPromptingFolder] = useState(false);
      const lastSelectionVersionRef = useRef(0);
      const cliPollingErrorLoggedRef = useRef(false);
-     const { trackFolderEmbedding } = useEmbeddingProgressActions();
+     const { trackFolderTask } = useTaskProgressActions();
 
      const requestCliSelection = useCallback(async () => {
           const useProxy = shouldProxyCliRequests();
@@ -202,7 +202,7 @@ export default function SyncPage() {
      const handleAddFolder = async () => {
           const createdFolderName = await saveFolder(newFolderName, newFolderPath);
           if (createdFolderName) {
-               trackFolderEmbedding(createdFolderName);
+               trackFolderTask(createdFolderName);
           }
      };
 

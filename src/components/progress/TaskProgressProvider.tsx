@@ -2,20 +2,20 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import type { EmbeddingProgressState } from "@/lib/embed/types";
+import type { TaskProgressState } from "@/lib/embed/types";
 
-interface EmbeddingProgressActions {
-     trackFolderEmbedding: (folderName: string) => void;
+interface TaskProgressActions {
+     trackFolderTask: (folderName: string) => void;
      dismissProgressEntry: (folderName: string) => void;
 }
 
-const EmbeddingProgressStateContext = createContext<Record<string, EmbeddingProgressState> | null>(null);
-const EmbeddingProgressActionsContext = createContext<EmbeddingProgressActions | null>(null);
+const TaskProgressStateContext = createContext<Record<string, TaskProgressState> | null>(null);
+const TaskProgressActionsContext = createContext<TaskProgressActions | null>(null);
 
 const INITIAL_PROGRESS_MESSAGE = "Analyzing project files...";
 
-export function EmbeddingProgressProvider({ children }: { children: React.ReactNode }) {
-     const [entries, setEntries] = useState<Record<string, EmbeddingProgressState>>({});
+export function TaskProgressProvider({ children }: { children: React.ReactNode }) {
+     const [entries, setEntries] = useState<Record<string, TaskProgressState>>({});
      const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
      const stopTrackingFolder = useCallback((folderName: string) => {
@@ -48,7 +48,7 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
           [stopTrackingFolder]
      );
 
-     const trackFolderEmbedding = useCallback(
+     const trackFolderTask = useCallback(
           (folderName: string) => {
                const trimmedName = folderName.trim();
                if (!trimmedName) {
@@ -65,7 +65,7 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
                          folderName: trimmedName,
                          phase: "parsing",
                          totalFiles: 0,
-                         embeddedFiles: 0,
+                         processedFiles: 0,
                          message: INITIAL_PROGRESS_MESSAGE,
                          startedAt: now,
                          updatedAt: now,
@@ -73,17 +73,17 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
                }));
 
                // Create SSE connection
-               const eventSource = new EventSource(`/api/folders/${encodeURIComponent(trimmedName)}/embedding-status`);
+               const eventSource = new EventSource(`/api/folders/${encodeURIComponent(trimmedName)}/task-status`);
 
                eventSource.onmessage = (event) => {
                     try {
-                         const progress = JSON.parse(event.data) as EmbeddingProgressState;
+                         const progress = JSON.parse(event.data) as TaskProgressState;
                          setEntries((prev) => ({
                               ...prev,
                               [trimmedName]: progress,
                          }));
 
-                         // Close connection when embedding is complete or errored
+                         // Close connection when task is complete or errored
                          if (progress.phase === "completed" || progress.phase === "error") {
                               stopTrackingFolder(trimmedName);
                          }
@@ -111,35 +111,33 @@ export function EmbeddingProgressProvider({ children }: { children: React.ReactN
           };
      }, [clearAllEventSources]);
 
-     const actions = useMemo<EmbeddingProgressActions>(
+     const actions = useMemo<TaskProgressActions>(
           () => ({
-               trackFolderEmbedding,
+               trackFolderTask,
                dismissProgressEntry,
           }),
-          [trackFolderEmbedding, dismissProgressEntry]
+          [trackFolderTask, dismissProgressEntry]
      );
 
      return (
-          <EmbeddingProgressActionsContext.Provider value={actions}>
-               <EmbeddingProgressStateContext.Provider value={entries}>
-                    {children}
-               </EmbeddingProgressStateContext.Provider>
-          </EmbeddingProgressActionsContext.Provider>
+          <TaskProgressActionsContext.Provider value={actions}>
+               <TaskProgressStateContext.Provider value={entries}>{children}</TaskProgressStateContext.Provider>
+          </TaskProgressActionsContext.Provider>
      );
 }
 
-export function useEmbeddingProgressActions(): EmbeddingProgressActions {
-     const context = useContext(EmbeddingProgressActionsContext);
+export function useTaskProgressActions(): TaskProgressActions {
+     const context = useContext(TaskProgressActionsContext);
      if (!context) {
-          throw new Error("useEmbeddingProgressActions must be used within EmbeddingProgressProvider");
+          throw new Error("useTaskProgressActions must be used within TaskProgressProvider");
      }
      return context;
 }
 
-export function useEmbeddingProgressEntries(): Record<string, EmbeddingProgressState> {
-     const context = useContext(EmbeddingProgressStateContext);
+export function useTaskProgressEntries(): Record<string, TaskProgressState> {
+     const context = useContext(TaskProgressStateContext);
      if (!context) {
-          throw new Error("useEmbeddingProgressEntries must be used within EmbeddingProgressProvider");
+          throw new Error("useTaskProgressEntries must be used within TaskProgressProvider");
      }
      return context;
 }

@@ -1,35 +1,32 @@
 import { EventEmitter } from "node:events";
 
-import type { EmbeddingProgressState } from "./types";
+import type { TaskProgressState } from "./types";
 import folderEvents from "@/server/folderEvents";
 
-const states = new Map<string, EmbeddingProgressState>();
+const states = new Map<string, TaskProgressState>();
 
-const createDefaultState = (folderName: string): EmbeddingProgressState => {
+const createDefaultState = (folderName: string): TaskProgressState => {
      const now = new Date().toISOString();
      return {
           folderName,
           phase: "idle",
           totalFiles: 0,
-          embeddedFiles: 0,
+          processedFiles: 0,
           startedAt: now,
           updatedAt: now,
      };
 };
 
-export const embeddingProgressEmitter = new EventEmitter();
+export const taskProgressEmitter = new EventEmitter();
 
-export function getEmbeddingProgress(folderName: string): EmbeddingProgressState {
+export function getTaskProgress(folderName: string): TaskProgressState {
      return states.get(folderName) ?? createDefaultState(folderName);
 }
 
-export function updateEmbeddingProgress(
-     folderName: string,
-     patch: Partial<EmbeddingProgressState>
-): EmbeddingProgressState {
+export function updateTaskProgress(folderName: string, patch: Partial<TaskProgressState>): TaskProgressState {
      const previous = states.get(folderName) ?? createDefaultState(folderName);
      const startedAt = patch.startedAt ?? previous.startedAt ?? new Date().toISOString();
-     const next: EmbeddingProgressState = {
+     const next: TaskProgressState = {
           ...previous,
           ...patch,
           folderName,
@@ -38,9 +35,9 @@ export function updateEmbeddingProgress(
      };
 
      states.set(folderName, next);
-     embeddingProgressEmitter.emit("update", next);
+     taskProgressEmitter.emit("update", next);
 
-     // Notify folder SSE clients when embedding phase changes (for count updates)
+     // Notify folder SSE clients when task phase changes (for count updates)
      if (patch.phase === "completed" || patch.phase === "error") {
           folderEvents.notifyChange();
      }
@@ -48,8 +45,8 @@ export function updateEmbeddingProgress(
      return next;
 }
 
-export function clearEmbeddingProgress(folderName: string): void {
+export function clearTaskProgress(folderName: string): void {
      if (states.delete(folderName)) {
-          embeddingProgressEmitter.emit("clear", { folderName });
+          taskProgressEmitter.emit("clear", { folderName });
      }
 }
