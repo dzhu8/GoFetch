@@ -24,6 +24,7 @@ class ConfigManager {
           setupComplete: false,
           preferences: {
                cliFolderWatcher: false,
+               embedSummaries: false,
                defaultChatModel: null,
                defaultEmbeddingModel: null,
                embeddingPointSize: "5",
@@ -66,6 +67,16 @@ class ConfigManager {
                     required: false,
                     description:
                          "Allow the GoFetch CLI helper to watch for folder selections so you can pick folders via the OS file explorer.",
+                    default: false,
+                    scope: "server",
+               },
+               {
+                    name: "Embed Summaries",
+                    key: "embedSummaries",
+                    type: "switch",
+                    required: false,
+                    description:
+                         "Use a chat model to summarize code snippets before embedding. Improves search quality but takes longer.",
                     default: false,
                     scope: "server",
                },

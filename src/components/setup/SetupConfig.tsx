@@ -27,6 +27,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
      const [folderPath, setFolderPath] = useState("");
      const [cliWatcherConsent, setCliWatcherConsent] = useState(false);
+     const [embedSummaries, setEmbedSummaries] = useState(false);
      const [isCliConsentLoading, setIsCliConsentLoading] = useState(true);
      const [isCliConsentSaving, setIsCliConsentSaving] = useState(false);
      const [defaultChatModel, setDefaultChatModel] = useState<ModelPreference | null>(null);
@@ -65,6 +66,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     if (!res.ok) throw new Error("Failed to load configuration");
                     const data = await res.json();
                     setCliWatcherConsent(Boolean(data.values?.preferences?.cliFolderWatcher));
+                    setEmbedSummaries(Boolean(data.values?.preferences?.embedSummaries));
 
                     const chatPreference = data.values?.preferences?.defaultChatModel;
                     if (chatPreference?.providerId && chatPreference?.modelKey) {
@@ -122,6 +124,22 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
           const success = await handleCliConsentChange(value);
           if (success) {
                setSetupState(3);
+          }
+     };
+
+     const handleEmbedSummariesChange = async (value: boolean) => {
+          try {
+               const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ key: "preferences.embedSummaries", value }),
+               });
+
+               if (!res.ok) throw new Error("Failed to update preference");
+               setEmbedSummaries(value);
+          } catch (error) {
+               console.error("Error saving embed summaries preference:", error);
+               toast.error("Failed to update embedding preference");
           }
      };
 
@@ -270,46 +288,113 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                          }}
                          className="w-full flex items-center justify-center"
                     >
-                         <div className="w-[90vw] max-w-md bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-xl p-5 sm:p-6 space-y-4 text-center">
-                              <div>
-                                   <p className="text-sm font-medium text-black dark:text-white">
-                                        Enable CLI Folder Watcher
-                                   </p>
-                                   <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
-                                        Let the GoFetch CLI capture folder selections directly from your computer's file
-                                        explorer.
-                                   </p>
-                              </div>
-                              <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
-                                   <p className="text-[11px] text-black/60 dark:text-white/60">
-                                        {isCliConsentLoading
-                                             ? "Checking CLI helper status..."
-                                             : cliWatcherConsent
-                                               ? "CLI helper is ready. Keep it enabled to streamline folder registration."
-                                               : "Enable this to avoid needing to type folder paths manually when adding folders."}
-                                   </p>
-                                   <div className="flex flex-col gap-2">
-                                        <button
-                                             type="button"
-                                             onClick={() => handleCliConsentSelection(true)}
-                                             disabled={isCliConsentLoading || isCliConsentSaving}
-                                             className="w-full px-3 py-1.5 text-xs rounded-lg bg-[#F8B692] text-black font-medium hover:bg-[#e6ad82] disabled:opacity-60 disabled:cursor-not-allowed"
-                                        >
-                                             Enable CLI
-                                        </button>
-                                        <button
-                                             type="button"
-                                             onClick={() => handleCliConsentSelection(false)}
-                                             disabled={isCliConsentLoading || isCliConsentSaving}
-                                             className="w-full px-3 py-1.5 text-xs rounded-lg border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-60"
-                                        >
-                                             {cliWatcherConsent ? "Disable" : "Skip for now"}
-                                        </button>
+                         <div className="w-[90vw] max-w-lg bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-xl p-5 sm:p-6 space-y-6 text-center">
+                              {/* CLI Folder Watcher Section */}
+                              <div className="space-y-3">
+                                   <div>
+                                        <p className="text-sm font-medium text-black dark:text-white">
+                                             Enable CLI Folder Watcher
+                                        </p>
+                                        <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
+                                             Let the GoFetch CLI capture folder selections directly from your computer's file
+                                             explorer.
+                                        </p>
                                    </div>
-                                   <p className="text-[10px] text-black/50 dark:text-white/50">
-                                        You can change this later in Settings.
-                                   </p>
+                                   <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
+                                        <p className="text-[11px] text-black/60 dark:text-white/60">
+                                             {isCliConsentLoading
+                                                  ? "Checking CLI helper status..."
+                                                  : cliWatcherConsent
+                                                    ? "CLI helper is ready. Keep it enabled to streamline folder registration."
+                                                    : "Enable this to avoid needing to type folder paths manually when adding folders."}
+                                        </p>
+                                        <div className="flex flex-row gap-2">
+                                             <button
+                                                  type="button"
+                                                  onClick={() => handleCliConsentChange(true)}
+                                                  disabled={isCliConsentLoading || isCliConsentSaving}
+                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
+                                                       cliWatcherConsent
+                                                            ? "bg-[#F8B692] text-black"
+                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                             >
+                                                  Enabled
+                                             </button>
+                                             <button
+                                                  type="button"
+                                                  onClick={() => handleCliConsentChange(false)}
+                                                  disabled={isCliConsentLoading || isCliConsentSaving}
+                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
+                                                       !cliWatcherConsent
+                                                            ? "bg-[#F8B692] text-black"
+                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                             >
+                                                  Disabled
+                                             </button>
+                                        </div>
+                                   </div>
                               </div>
+
+                              {/* Embedding Mode Section */}
+                              <div className="space-y-3">
+                                   <div>
+                                        <p className="text-sm font-medium text-black dark:text-white">
+                                             Embedding Mode
+                                        </p>
+                                        <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
+                                             Choose how code snippets are embedded for semantic search.
+                                        </p>
+                                   </div>
+                                   <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
+                                        <p className="text-[11px] text-black/60 dark:text-white/60">
+                                             {embedSummaries
+                                                  ? "Summaries mode: Uses a chat model to generate searchable summaries before embedding. Slower but may improve search quality."
+                                                  : "Direct mode: Embeds code snippets directly. Faster and works well for most use cases."}
+                                        </p>
+                                        <div className="flex flex-row gap-2">
+                                             <button
+                                                  type="button"
+                                                  onClick={() => handleEmbedSummariesChange(false)}
+                                                  disabled={isCliConsentLoading}
+                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
+                                                       !embedSummaries
+                                                            ? "bg-[#F8B692] text-black"
+                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                             >
+                                                  Directly Embed Code (Faster)
+                                             </button>
+                                             <button
+                                                  type="button"
+                                                  onClick={() => handleEmbedSummariesChange(true)}
+                                                  disabled={isCliConsentLoading}
+                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
+                                                       embedSummaries
+                                                            ? "bg-[#F8B692] text-black"
+                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                             >
+                                                  Embed Summaries (Focus on the Main Ideas)
+                                             </button>
+                                        </div>
+                                   </div>
+                              </div>
+
+                              {/* Continue Button */}
+                              <button
+                                   type="button"
+                                   onClick={() => setSetupState(3)}
+                                   disabled={isCliConsentLoading || isCliConsentSaving}
+                                   className="w-full px-4 py-2 text-sm rounded-lg bg-[#F8B692] text-black font-medium hover:bg-[#e6ad82] disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+                              >
+                                   Continue
+                              </button>
+
+                              <p className="text-[10px] text-black/50 dark:text-white/50">
+                                   You can change these settings later.
+                              </p>
                          </div>
                     </motion.div>
                )}

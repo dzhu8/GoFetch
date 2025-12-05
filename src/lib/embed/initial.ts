@@ -41,6 +41,7 @@ interface SettingsSnapshot {
      preferences?: {
           defaultEmbeddingModel?: ModelPreference | null;
           defaultChatModel?: ModelPreference | null;
+          embedSummaries?: boolean;
      };
 }
 
@@ -107,6 +108,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                          });
                     },
                     onEmbeddingStart: (total) => {
+                         totalDocuments = total;
                          if (job.cancelled) {
                               return;
                          }
@@ -114,7 +116,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               phase: "embedding",
                               totalFiles: total,
                               processedFiles: 0,
-                              message: total > 0 ? `Embedding 0/${total} summaries` : "Preparing embeddings...",
+                              message: total > 0 ? `Embedding 0/${total} documents` : "Preparing embeddings...",
                          });
                     },
                     onEmbeddingProgress: (processed, total) => {
@@ -126,7 +128,7 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
                               totalFiles: total,
                               processedFiles: processed,
                               message:
-                                   total > 0 ? `Embedding ${processed}/${total} summaries` : "Preparing embeddings...",
+                                   total > 0 ? `Embedding ${processed}/${total} documents` : "Preparing embeddings...",
                          });
                     },
                });
@@ -422,29 +424,68 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
           return;
      }
 
-     // Resolve models
+     // Check if we should use summaries or embed code directly
+     const shouldEmbedSummaries = getEmbedSummariesPreference();
+
+     // Resolve embedding model (always needed)
      const embeddingPreference = resolveEmbeddingPreferenceFromSettings();
      const embeddingProvider = modelRegistry.getProviderById(embeddingPreference.providerId);
      if (!embeddingProvider) {
           throw new Error(`Provider ${embeddingPreference.providerId} not found; cannot embed documents.`);
      }
 
+     const embeddingModel: EmbeddingModelClient = await embeddingProvider.provider.loadEmbeddingModel(
+          embeddingPreference.modelKey
+     );
+
+     deleteExistingInitialEmbeddings(folderName);
+
+     if (shouldEmbedSummaries) {
+          // Summarization mode: use chat model to generate summaries before embedding
+          await embedWithSummarization(
+               folderName,
+               nodeDocuments,
+               chunkDocuments,
+               embeddingModel,
+               options
+          );
+     } else {
+          // Direct embedding mode: embed code snippets directly (faster)
+          await embedDirectly(
+               folderName,
+               nodeDocuments,
+               chunkDocuments,
+               embeddingModel,
+               options
+          );
+     }
+}
+
+/**
+ * Embed documents with summarization using a chat model first.
+ * Slower but potentially higher quality search results.
+ */
+async function embedWithSummarization(
+     folderName: string,
+     nodeDocuments: NodeDocument[],
+     chunkDocuments: ChunkDocument[],
+     embeddingModel: EmbeddingModelClient,
+     options?: EmbedOptions
+): Promise<void> {
+     const totalDocuments = nodeDocuments.length + chunkDocuments.length;
+
+     // Resolve chat model for summarization
      const chatPreference = resolveChatPreferenceFromSettings();
      const chatProvider = modelRegistry.getProviderById(chatPreference.providerId);
      if (!chatProvider) {
           throw new Error(`Provider ${chatPreference.providerId} not found; cannot summarize documents.`);
      }
 
-     const embeddingModel: EmbeddingModelClient = await embeddingProvider.provider.loadEmbeddingModel(
-          embeddingPreference.modelKey
-     );
      const chatModel = (await chatProvider.provider.loadChatModel(chatPreference.modelKey)) as BaseChatModel;
 
      console.log(
           `[embed] Started summarizing folder "${folderName}" using chat model "${chatPreference.modelKey}" from provider "${chatPreference.providerId}"`
      );
-
-     deleteExistingInitialEmbeddings(folderName);
 
      // Phase 1: Summarize all documents
      options?.onSummarizationStart?.(totalDocuments);
@@ -557,6 +598,118 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
 
           embeddedCount += batch.length;
           options?.onEmbeddingProgress?.(embeddedCount, summarizedDocuments.length);
+
+          if (options?.isCancelled?.()) {
+               return;
+          }
+     }
+
+     if (rowsToInsert.length === 0) {
+          return;
+     }
+
+     if (options?.isCancelled?.()) {
+          return;
+     }
+
+     const chunkSize = 50;
+     db.transaction((tx) => {
+          for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
+               const chunk = rowsToInsert.slice(i, i + chunkSize);
+               tx.insert(embeddingsTable).values(chunk).run();
+          }
+          return undefined;
+     });
+
+     // Notify SSE clients that embedding counts have changed
+     folderEvents.notifyChange();
+}
+
+/**
+ * Embed documents directly without summarization.
+ * Faster but may have lower search quality for complex code.
+ */
+async function embedDirectly(
+     folderName: string,
+     nodeDocuments: NodeDocument[],
+     chunkDocuments: ChunkDocument[],
+     embeddingModel: EmbeddingModelClient,
+     options?: EmbedOptions
+): Promise<void> {
+     const totalDocuments = nodeDocuments.length + chunkDocuments.length;
+
+     console.log(
+          `[embed] Embedding folder "${folderName}" directly (${totalDocuments} documents)`
+     );
+
+     // Skip summarization phase, go straight to embedding
+     options?.onEmbeddingStart?.(totalDocuments);
+     const rowsToInsert: (typeof embeddingsTable.$inferInsert)[] = [];
+     let embeddedCount = 0;
+
+     // Embed AST node documents
+     for (let i = 0; i < nodeDocuments.length; i += EMBEDDING_BATCH_SIZE) {
+          const batch = nodeDocuments.slice(i, i + EMBEDDING_BATCH_SIZE);
+          const vectors = await embeddingModel.embedDocuments(batch.map((doc) => doc.content));
+
+          vectors.forEach((vector: number[], index: number) => {
+               const nodeDoc = batch[index];
+               rowsToInsert.push({
+                    folderName,
+                    filePath: nodeDoc.filePath,
+                    relativePath: nodeDoc.relativePath,
+                    fileSnapshotId: nodeDoc.snapshotId,
+                    content: nodeDoc.content,
+                    embedding: vectorToBuffer(vector),
+                    dim: vector.length,
+                    metadata: {
+                         stage: "initial",
+                         type: "ast-node",
+                         language: nodeDoc.language,
+                         nodePath: nodeDoc.nodePath,
+                         nodeType: nodeDoc.nodeType,
+                         ...(nodeDoc.symbolName ? { symbolName: nodeDoc.symbolName } : {}),
+                         originalSnippet: nodeDoc.originalSnippet,
+                    },
+               });
+          });
+
+          embeddedCount += batch.length;
+          options?.onEmbeddingProgress?.(embeddedCount, totalDocuments);
+
+          if (options?.isCancelled?.()) {
+               return;
+          }
+     }
+
+     // Embed text chunk documents
+     for (let i = 0; i < chunkDocuments.length; i += EMBEDDING_BATCH_SIZE) {
+          const batch = chunkDocuments.slice(i, i + EMBEDDING_BATCH_SIZE);
+          const vectors = await embeddingModel.embedDocuments(batch.map((doc) => doc.content));
+
+          vectors.forEach((vector: number[], index: number) => {
+               const chunkDoc = batch[index];
+               rowsToInsert.push({
+                    folderName,
+                    filePath: chunkDoc.filePath,
+                    relativePath: chunkDoc.relativePath,
+                    fileSnapshotId: null,
+                    content: chunkDoc.content,
+                    embedding: vectorToBuffer(vector),
+                    dim: vector.length,
+                    metadata: {
+                         stage: "initial",
+                         type: "text-chunk",
+                         format: chunkDoc.format,
+                         chunkIndex: chunkDoc.chunkIndex,
+                         label: chunkDoc.label,
+                         originalContent: chunkDoc.originalContent,
+                    },
+               });
+          });
+
+          embeddedCount += batch.length;
+          options?.onEmbeddingProgress?.(embeddedCount, totalDocuments);
 
           if (options?.isCancelled?.()) {
                return;
@@ -922,6 +1075,11 @@ function resolveChatPreferenceFromSettings(): ModelPreference {
      const snapshot = configManager.getAllConfig() as SettingsSnapshot;
      const providers = getMinimalProvidersFromRegistry();
      return resolveModelPreference("chat", providers, snapshot.preferences?.defaultChatModel ?? null);
+}
+
+function getEmbedSummariesPreference(): boolean {
+     const snapshot = configManager.getAllConfig() as SettingsSnapshot;
+     return Boolean(snapshot.preferences?.embedSummaries);
 }
 
 function getMinimalProvidersFromRegistry(): MinimalProvider[] {
