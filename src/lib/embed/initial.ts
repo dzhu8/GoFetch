@@ -442,22 +442,10 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
 
      if (shouldEmbedSummaries) {
           // Summarization mode: use chat model to generate summaries before embedding
-          await embedWithSummarization(
-               folderName,
-               nodeDocuments,
-               chunkDocuments,
-               embeddingModel,
-               options
-          );
+          await embedWithSummarization(folderName, nodeDocuments, chunkDocuments, embeddingModel, options);
      } else {
           // Direct embedding mode: embed code snippets directly (faster)
-          await embedDirectly(
-               folderName,
-               nodeDocuments,
-               chunkDocuments,
-               embeddingModel,
-               options
-          );
+          await embedDirectly(folderName, nodeDocuments, chunkDocuments, embeddingModel, options);
      }
 }
 
@@ -638,9 +626,7 @@ async function embedDirectly(
 ): Promise<void> {
      const totalDocuments = nodeDocuments.length + chunkDocuments.length;
 
-     console.log(
-          `[embed] Embedding folder "${folderName}" directly (${totalDocuments} documents)`
-     );
+     console.log(`[embed] Embedding folder "${folderName}" directly (${totalDocuments} documents)`);
 
      // Skip summarization phase, go straight to embedding
      options?.onEmbeddingStart?.(totalDocuments);

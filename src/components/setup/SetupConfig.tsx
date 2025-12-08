@@ -296,8 +296,8 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                                              Enable CLI Folder Watcher
                                         </p>
                                         <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
-                                             Let the GoFetch CLI capture folder selections directly from your computer's file
-                                             explorer.
+                                             Let the GoFetch CLI capture folder selections directly from your computer's
+                                             file explorer.
                                         </p>
                                    </div>
                                    <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
@@ -340,9 +340,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               {/* Embedding Mode Section */}
                               <div className="space-y-3">
                                    <div>
-                                        <p className="text-sm font-medium text-black dark:text-white">
-                                             Embedding Mode
-                                        </p>
+                                        <p className="text-sm font-medium text-black dark:text-white">Embedding Mode</p>
                                         <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
                                              Choose how code snippets are embedded for semantic search.
                                         </p>

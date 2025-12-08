@@ -22,6 +22,7 @@ type ThreeEmbeddingViewerProps = {
      points: PlotPoints;
      pointSize: number;
      queryPoint?: QueryPoint;
+     nearestIndices?: number[];
 };
 
 const clampPointSize = (value: number) => Math.min(Math.max(value, 2), 60);
@@ -67,7 +68,12 @@ const createAxisLabelSprite = (text: string, color: string) => {
      return sprite;
 };
 
-export default function ThreeEmbeddingViewer({ points, pointSize, queryPoint }: ThreeEmbeddingViewerProps) {
+export default function ThreeEmbeddingViewer({
+     points,
+     pointSize,
+     queryPoint,
+     nearestIndices,
+}: ThreeEmbeddingViewerProps) {
      const mountRef = useRef<HTMLDivElement>(null);
      const hoverLabelRef = useRef<HTMLDivElement>(null);
      const compassRef = useRef<HTMLDivElement>(null);
@@ -181,6 +187,39 @@ export default function ThreeEmbeddingViewer({ points, pointSize, queryPoint }: 
 
                const queryCloud = new THREE.Points(queryGeometry, queryMaterial);
                scene.add(queryCloud);
+
+               // Draw lines to nearest neighbors if provided
+               if (nearestIndices && nearestIndices.length > 0) {
+                    const linePositions: number[] = [];
+                    const qX = normalizeValue(queryPoint.x, centerX, spread);
+                    const qY = normalizeValue(queryPoint.y, centerY, spread);
+                    const qZ = normalizeValue(queryPoint.z, centerZ, spread);
+
+                    nearestIndices.forEach((idx) => {
+                         if (idx >= 0 && idx < count) {
+                              // Start at query point
+                              linePositions.push(qX, qY, qZ);
+                              // End at neighbor point
+                              linePositions.push(
+                                   normalizeValue(xValues[idx], centerX, spread),
+                                   normalizeValue(yValues[idx], centerY, spread),
+                                   normalizeValue(zValues[idx], centerZ, spread)
+                              );
+                         }
+                    });
+
+                    const lineGeometry = new THREE.BufferGeometry();
+                    lineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(linePositions, 3));
+
+                    const lineMaterial = new THREE.LineBasicMaterial({
+                         color: 0xffffff,
+                         transparent: true,
+                         opacity: 0.8,
+                    });
+
+                    const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+                    scene.add(lines);
+               }
           }
 
           const pointer = new THREE.Vector2();
@@ -382,7 +421,7 @@ export default function ThreeEmbeddingViewer({ points, pointSize, queryPoint }: 
                     compassRenderer.dispose();
                }
           };
-     }, [points, pointSize, queryPoint]);
+     }, [points, pointSize, queryPoint, nearestIndices]);
 
      return (
           <div className="relative h-full w-full">

@@ -11,6 +11,7 @@ import LineOutputParser from "../outputParsers/lineOutputParser";
 import { getDocumentsFromSnippets } from "../utils/snippetRetriever";
 // HNSWSearch is loaded lazily to avoid faiss-node being bundled
 import type { HNSWSearch as HNSWSearchType } from "./HNSWSearch";
+import { embedQuery } from "./embedding";
 
 // Lazy load server modules to avoid better-sqlite3 being bundled
 function getModelRegistry() {
@@ -37,34 +38,6 @@ function getHNSWSearch(): typeof HNSWSearchType {
 export interface CodeSearchAgentConfig extends BaseSearchAgentConfig {
      maxNDocuments: number;
      activeEngines: string[];
-}
-
-// Helper to get query embedding using the configured default model
-async function embedQuery(query: string): Promise<number[]> {
-     const configManager = getConfigManager();
-     const defaultEmbeddingModel = configManager.getConfig("preferences.defaultEmbeddingModel");
-
-     if (!defaultEmbeddingModel) {
-          throw new Error("No default embedding model configured");
-     }
-
-     const { providerId, modelKey } =
-          typeof defaultEmbeddingModel === "object" ? defaultEmbeddingModel : { providerId: null, modelKey: null };
-
-     if (!providerId || !modelKey) {
-          throw new Error("Invalid default embedding model configuration");
-     }
-
-     const modelRegistry = getModelRegistry();
-     const provider = modelRegistry.getProviderById(providerId);
-     if (!provider) {
-          throw new Error(`Provider ${providerId} not found`);
-     }
-
-     const embeddingClient = await provider.provider.loadEmbeddingModel(modelKey);
-     const [vector] = await embeddingClient.embedDocuments([query]);
-
-     return vector;
 }
 
 class CodeSearchAgent extends BaseSearchAgent {

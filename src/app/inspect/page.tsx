@@ -128,6 +128,8 @@ export default function InspectPage() {
      const [queryPoint, setQueryPoint] = useState<QueryPoint | null>(null);
      const [isQueryPlotOpen, setIsQueryPlotOpen] = useState(false);
      const [queryLoadProgress, setQueryLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
+     const [queryNearestIndices, setQueryNearestIndices] = useState<number[]>([]);
+     const [queryNearestScores, setQueryNearestScores] = useState<number[]>([]);
 
      const { trackFolderTask } = useTaskProgressActions();
 
@@ -571,6 +573,8 @@ export default function InspectPage() {
           setQueryPoint(null);
           setIsQueryVisualizing(false);
           setQueryLoadProgress(null);
+          setQueryNearestIndices([]);
+          setQueryNearestScores([]);
      }, []);
 
      const handleVisualizeQuery = async () => {
@@ -669,7 +673,51 @@ export default function InspectPage() {
                     handleCloseQueryPlot();
                     return;
                }
+               // Perform semantic search to find nearest neighbors
+               try {
+                    const searchRes = await fetch("/api/search", {
+                         method: "POST",
+                         headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({
+                              query: queryText.trim(),
+                              folderNames: Array.from(querySelectedFolders),
+                              k: 10,
+                         }),
+                    });
 
+                    if (searchRes.ok) {
+                         const searchData = await searchRes.json();
+                         const results = searchData.results || [];
+                         const resultIds = new Set(results.map((r: any) => r.id));
+                         const resultScores = new Map(results.map((r: any) => [r.id, r.score]));
+
+                         const indices: number[] = [];
+                         const scores: number[] = [];
+
+                         // We need to preserve the order of results from search (ranked by score)
+                         // But we need indices into allRows array
+                         // So let's map result IDs to their indices in allRows first
+                         const idToRowIndex = new Map<number, number>();
+                         allRows.forEach((row, idx) => {
+                              idToRowIndex.set(row.id, idx);
+                         });
+
+                         results.forEach((result: any) => {
+                              const idx = idToRowIndex.get(result.id);
+                              if (idx !== undefined) {
+                                   indices.push(idx);
+                                   scores.push(result.score);
+                              }
+                         });
+
+                         setQueryNearestIndices(indices);
+                         setQueryNearestScores(scores);
+                    }
+               } catch (err) {
+                    console.error("Failed to fetch nearest neighbors", err);
+               }
+
+               // Step 4:
                // Step 3: Run UMAP on all vectors including the query vector
                const allVectors = [...allRows.map((row) => row.vector), queryVector];
                const nNeighbors = Math.min(15, Math.max(2, allVectors.length - 1));
@@ -1268,6 +1316,7 @@ export default function InspectPage() {
                                                   <div className="w-full max-w-sm space-y-2">
                                                        <div className="flex items-center justify-between text-xs text-black/60 dark:text-white/60">
                                                             <span>Loading embeddings...</span>
+                                                            nearestIndices={queryNearestIndices}
                                                             <span>
                                                                  {queryLoadProgress.loaded} / {queryLoadProgress.total}
                                                             </span>
@@ -1293,11 +1342,48 @@ export default function InspectPage() {
                                              )}
                                         </div>
                                    ) : queryPlotPoints && queryPoint ? (
-                                        <ThreeEmbeddingViewer
-                                             points={queryPlotPoints}
-                                             pointSize={dotSize}
-                                             queryPoint={queryPoint}
-                                        />
+                                        <div className="relative h-full w-full">
+                                             <ThreeEmbeddingViewer
+                                                  points={queryPlotPoints}
+                                                  pointSize={dotSize}
+                                                  queryPoint={queryPoint}
+                                                  nearestIndices={queryNearestIndices}
+                                             />
+                                             {queryNearestIndices.length > 0 && (
+                                                  <div className="absolute top-4 right-4 w-64 bg-black/80 backdrop-blur-md rounded-xl border border-white/10 p-4 shadow-xl">
+                                                       <h3 className="text-xs font-semibold text-white/90 mb-3 uppercase tracking-wider">
+                                                            Top Matches
+                                                       </h3>
+                                                       <div className="space-y-2">
+                                                            {queryNearestIndices.slice(0, 5).map((idx, i) => {
+                                                                 const label = queryPlotPoints.text[idx] || "";
+                                                                 // Extract just the symbol name or file path for cleaner display
+                                                                 const cleanLabel = label.split("\n")[0] || "Unknown";
+                                                                 const score = queryNearestScores[i];
+
+                                                                 return (
+                                                                      <div
+                                                                           key={i}
+                                                                           className="flex items-center justify-between gap-2 text-xs"
+                                                                      >
+                                                                           <span
+                                                                                className="text-white/70 truncate flex-1"
+                                                                                title={label}
+                                                                           >
+                                                                                {cleanLabel}
+                                                                           </span>
+                                                                           {score !== undefined && (
+                                                                                <span className="text-[#F8B692] font-mono">
+                                                                                     {score.toFixed(3)}
+                                                                                </span>
+                                                                           )}
+                                                                      </div>
+                                                                 );
+                                                            })}
+                                                       </div>
+                                                  </div>
+                                             )}
+                                        </div>
                                    ) : (
                                         <div className="flex items-center justify-center h-full">
                                              <p className="text-sm text-black/60 dark:text-white/60">
