@@ -54,12 +54,14 @@ class CodeSearchAgent extends BaseSearchAgent {
       */
      protected async createSearchRetrieverChain(
           llm: BaseChatModel,
-          folderNames: string[] = []
+          folderNames: string[] = [],
+          originalQuery: string = ""
      ): Promise<RunnableSequence<BasicChainInput, SearchRetrieverResult>> {
           (llm as unknown as ChatOpenAI).temperature = 0;
 
           // Capture folderNames in closure for use in the lambda
           const capturedFolderNames = folderNames;
+          const capturedOriginalQuery = originalQuery;
 
           // Capture emitStatus for use in the lambda
           const emitStatus = this.emitStatus.bind(this);
@@ -272,20 +274,57 @@ class CodeSearchAgent extends BaseSearchAgent {
                               },
                          });
 
-                         // Search with threshold filtering
-                         // Embed the query using the configured default model
-                         const queryEmbedding = await embedQuery(question);
+                         let results: any[] = [];
 
-                         // Emit status: retrieving results
-                         emitStatus({
-                              stage: "retrieving",
-                              message: "Finding relevant code snippets...",
-                         });
+                         // 1. Try Raw Query First
+                         if (capturedOriginalQuery && capturedOriginalQuery.trim().length > 0) {
+                              const rawEmbedding = await embedQuery(capturedOriginalQuery);
+                              results = await hnswSearch.searchWithThreshold(
+                                   rawEmbedding,
+                                   this.config.maxNDocuments
+                              );
+                         }
 
-                         const results = await hnswSearch.searchWithThreshold(
-                              queryEmbedding,
-                              this.config.maxNDocuments
-                         );
+                         // 2. If no results, try Rephrased Query (if different)
+                         if (results.length === 0 && question !== capturedOriginalQuery) {
+                              if (capturedOriginalQuery) {
+                                   emitStatus({
+                                        stage: "retrieving",
+                                        message: "No results with raw query. Trying rephrased query...",
+                                   });
+                              }
+                              
+                              const rephrasedEmbedding = await embedQuery(question);
+                              results = await hnswSearch.searchWithThreshold(
+                                   rephrasedEmbedding,
+                                   this.config.maxNDocuments
+                              );
+                         }
+
+                         // If still no results, return a special document prompting to lower threshold
+                         if (results.length === 0) {
+                              emitStatus({
+                                   stage: "generating",
+                                   message: "No matching code found in embeddings",
+                                   details: {
+                                        resultCount: 0,
+                                   },
+                              });
+                              
+                              return { 
+                                   query: question, 
+                                   docs: [
+                                        new Document({
+                                             pageContent: "No relevant code found with the current similarity threshold. Please try lowering the threshold in settings or rephrasing your query.",
+                                             metadata: {
+                                                  type: "system_message",
+                                                  title: "No Results Found",
+                                                  score: 0
+                                             }
+                                        })
+                                   ] 
+                              };
+                         }
 
                          // Emit status: results found
                          emitStatus({

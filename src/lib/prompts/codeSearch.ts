@@ -123,6 +123,7 @@ export const codeSearchResponsePrompt = `
     - **Engaging and detailed**: Write responses that read like a high-quality technical blog post, including extra details and relevant insights from the code.
     - **Cited and credible**: Use inline citations with [number] notation to refer to the code file source(s) for each fact or detail included. Link to specific files where possible.
     - **Explanatory and Comprehensive**: Strive to explain the code in depth, offering detailed analysis, insights, and clarifications wherever applicable.
+    - **In User's Context**: Format the answer based on the amount and kind of information the user asked for, not just summarizing the code snippets if the user is asking for a more general solution. For example, if the user asks for how to create an API route generally, focus on the overall logic of a provided snippet and not that the snippet is used for retrieving user data, etc.
 
     ### Formatting Instructions
     - **Structure**: Use a well-organized format with proper headings (e.g., "## Example heading 1" or "## Example heading 2"). Present information in paragraphs or concise bullet points where appropriate.
@@ -143,6 +144,7 @@ export const codeSearchResponsePrompt = `
     ### Special Instructions
     - If the query involves complex code or technical topics, provide detailed background and explanatory sections to ensure clarity.
     - If the user provides vague input or if relevant information is missing, explain what additional details might help refine the search.
+    - Ensure the response provides the appropriate level of detail based on the user's query, focusing on general patterns and logic rather than specific implementations when asked for broader solutions (e.g., how to create an API route generally should emphasize overall structure, not particular data retrieval).
     - If no relevant information is found in the indexed codebases (i.e., all sources have low similarity scores below 0.3), display the closest matches that were found along with their similarity scores in a table format like this:
       
       | File | Symbol | Score |

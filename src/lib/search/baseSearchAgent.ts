@@ -86,7 +86,8 @@ export abstract class BaseSearchAgent {
 
                          const searchRetrieverChain = await this.createSearchRetrieverChain(
                               llm,
-                              ...searchRetrieverChainArgs
+                              ...searchRetrieverChainArgs,
+                              input.query // Pass original query as the last argument
                          );
 
                          const searchRetrieverResult = await searchRetrieverChain.invoke({

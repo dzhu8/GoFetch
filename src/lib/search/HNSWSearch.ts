@@ -119,7 +119,7 @@ export class HNSWSearch {
           M: 32,
           efConstruction: 200,
           efSearch: 64,
-          scoreThreshold: 0.5,
+          scoreThreshold: 0.3,
      };
 
      /**

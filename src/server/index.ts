@@ -31,7 +31,7 @@ class ConfigManager {
                hnswM: 32,
                hnswEfConstruction: 200,
                hnswEfSearch: 64,
-               hnswScoreThreshold: 0.5,
+               hnswScoreThreshold: 0.3,
                textChunkMaxTokens: 1000,
                textChunkOverlapTokens: 100,
           },
@@ -140,11 +140,11 @@ class ConfigManager {
                     required: false,
                     description:
                          "Minimum similarity score (0-1) for search results. Only results with scores at or above this threshold are returned when using threshold-based search.",
-                    default: 0.5,
+                    default: 0.3,
                     min: 0,
                     max: 1,
                     step: 0.05,
-                    placeholder: "0.5",
+                    placeholder: "0.3",
                     scope: "server",
                },
                {
