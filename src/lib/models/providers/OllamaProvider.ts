@@ -124,6 +124,10 @@ export class OllamaProvider extends BaseModelProvider<ChatOllama, OllamaEmbeddin
           return this.definition.embeddingModels ?? [];
      }
 
+     getAvailableOCRModels(): Model[] {
+          return this.definition.ocrModels ?? [];
+     }
+
      async loadChatModel(modelKey: string): Promise<ChatOllama> {
           this.assertModelConfigured(modelKey, this.getAvailableChatModels());
 
@@ -142,6 +146,18 @@ export class OllamaProvider extends BaseModelProvider<ChatOllama, OllamaEmbeddin
           const { baseUrl } = (this.config ?? {}) as OllamaConfig;
 
           return new OllamaEmbeddings({
+               model: modelKey,
+               baseUrl: baseUrl ?? DEFAULT_OLLAMA_URL,
+          });
+     }
+
+     async loadOCRModel(modelKey: string): Promise<any> {
+          this.assertModelConfigured(modelKey, this.getAvailableOCRModels());
+
+          const { baseUrl } = (this.config ?? {}) as OllamaConfig;
+
+          // For OCR via Ollama, it's typically just a vision model.
+          return new ChatOllama({
                model: modelKey,
                baseUrl: baseUrl ?? DEFAULT_OLLAMA_URL,
           });

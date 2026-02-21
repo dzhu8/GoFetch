@@ -175,6 +175,7 @@ const AVAILABLE_MODELS = [
           family: "Deepseek",
           recommended: false,
      },
+
 ];
 
 // Fetch model info to get context window size
@@ -207,6 +208,7 @@ function getContextLength(modelInfo: OllamaShowResponse | null): number | undefi
 }
 
 const EMBEDDING_HINTS = ["embedding", "embed", "vector", "text-embed"];
+const OCR_HINTS = ["ocr", "vision", "paddle"];
 
 const includesEmbeddingHint = (value?: string) => {
      if (!value) {
@@ -216,10 +218,19 @@ const includesEmbeddingHint = (value?: string) => {
      return EMBEDDING_HINTS.some((hint) => lower.includes(hint));
 };
 
+const includesOCRHint = (value?: string) => {
+     if (!value) {
+          return false;
+     }
+     const lower = value.toLowerCase();
+     return OCR_HINTS.some((hint) => lower.includes(hint));
+};
+
 type CapabilityOptions = {
      tag?: OllamaTag;
      chatConfigured?: boolean;
      embeddingConfigured?: boolean;
+     ocrConfigured?: boolean;
 };
 
 const deriveCapabilities = (modelName: string, options: CapabilityOptions) => {
@@ -240,10 +251,15 @@ const deriveCapabilities = (modelName: string, options: CapabilityOptions) => {
      const nameIndicatesEmbedding = includesEmbeddingHint(modelName);
      const isEmbeddingSpecialized = familyIndicatesEmbedding || nameIndicatesEmbedding;
 
-     const supportsEmbedding = Boolean(options.embeddingConfigured) || isEmbeddingSpecialized;
-     const supportsChat = Boolean(options.chatConfigured) || !isEmbeddingSpecialized;
+     const familyIndicatesOCR = Array.from(families).some((family) => includesOCRHint(family));
+     const nameIndicatesOCR = includesOCRHint(modelName);
+     const isOCRSpecialized = familyIndicatesOCR || nameIndicatesOCR;
 
-     return { supportsChat, supportsEmbedding };
+     const supportsEmbedding = Boolean(options.embeddingConfigured) || isEmbeddingSpecialized;
+     const supportsOCR = Boolean(options.ocrConfigured) || isOCRSpecialized;
+     const supportsChat = Boolean(options.chatConfigured) || (!isEmbeddingSpecialized && !isOCRSpecialized);
+
+     return { supportsChat, supportsEmbedding, supportsOCR };
 };
 
 export async function GET(req: NextRequest) {
@@ -289,12 +305,14 @@ export async function GET(req: NextRequest) {
           // Get provider info if providerId is provided
           let currentChatModels = new Set<string>();
           let currentEmbeddingModels = new Set<string>();
+          let currentOCRModels = new Set<string>();
 
           if (providerId) {
                const provider = modelRegistry.getProviderById(providerId);
                if (provider) {
                     currentChatModels = new Set(provider.chatModels?.map((m) => m.key) || []);
                     currentEmbeddingModels = new Set(provider.embeddingModels?.map((m) => m.key) || []);
+                    currentOCRModels = new Set(provider.ocrModels?.map((m) => m.key) || []);
                }
           }
 
@@ -304,10 +322,11 @@ export async function GET(req: NextRequest) {
           const allModels = AVAILABLE_MODELS.map((model) => {
                const tag = installedModels.get(model.name);
                const modelInfo = modelInfoMap.get(model.name);
-               const { supportsChat, supportsEmbedding } = deriveCapabilities(model.name, {
+               const { supportsChat, supportsEmbedding, supportsOCR } = deriveCapabilities(model.name, {
                     tag,
                     chatConfigured: currentChatModels.has(model.name),
                     embeddingConfigured: currentEmbeddingModels.has(model.name),
+                    ocrConfigured: currentOCRModels.has(model.name),
                });
 
                // Use actual size from Ollama if installed, otherwise use curated size
@@ -326,8 +345,10 @@ export async function GET(req: NextRequest) {
                     family: model.family || inferOllamaFamilyFromName(model.name),
                     supportsChat,
                     supportsEmbedding,
+                    supportsOCR,
                     isChatModel: currentChatModels.has(model.name),
                     isEmbeddingModel: currentEmbeddingModels.has(model.name),
+                    isOCRModel: currentOCRModels.has(model.name),
                };
           });
 
@@ -338,10 +359,11 @@ export async function GET(req: NextRequest) {
                }
 
                const modelInfo = modelInfoMap.get(modelName) ?? null;
-               const { supportsChat, supportsEmbedding } = deriveCapabilities(modelName, {
+               const { supportsChat, supportsEmbedding, supportsOCR } = deriveCapabilities(modelName, {
                     tag: modelData,
                     chatConfigured: currentChatModels.has(modelName),
                     embeddingConfigured: currentEmbeddingModels.has(modelName),
+                    ocrConfigured: currentOCRModels.has(modelName),
                });
 
                const contextLength = getContextLength(modelInfo);
@@ -356,8 +378,10 @@ export async function GET(req: NextRequest) {
                     family: inferOllamaFamilyFromName(modelName),
                     supportsChat,
                     supportsEmbedding,
+                    supportsOCR,
                     isChatModel: currentChatModels.has(modelName),
                     isEmbeddingModel: currentEmbeddingModels.has(modelName),
+                    isOCRModel: currentOCRModels.has(modelName),
                });
           });
 

@@ -29,8 +29,10 @@ export abstract class BaseModelProvider<
 
      abstract getAvailableChatModels(): Model[];
      abstract getAvailableEmbeddingModels(): Model[];
+     abstract getAvailableOCRModels(): Model[];
      abstract loadChatModel(modelKey: string): Promise<ChatModel>;
      abstract loadEmbeddingModel(modelKey: string): Promise<EmbeddingModel>;
+     abstract loadOCRModel(modelKey: string): Promise<any>;
 
      getModelMetadata(_modelKey: string): ProviderModelMetadata | undefined {
           return undefined;
@@ -40,6 +42,7 @@ export abstract class BaseModelProvider<
           return {
                chat: this.getAvailableChatModels(),
                embedding: this.getAvailableEmbeddingModels(),
+               ocr: this.getAvailableOCRModels(),
           };
      }
 

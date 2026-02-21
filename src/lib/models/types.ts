@@ -14,6 +14,7 @@ export type ConfigModelProvider = {
      type: string;
      chatModels: Model[];
      embeddingModels: Model[];
+     ocrModels: Model[];
      config: { [key: string]: any };
      hash: string;
 };
@@ -24,6 +25,7 @@ export type MinimalProvider = {
      type: string;
      chatModels: Model[];
      embeddingModels: Model[];
+     ocrModels: Model[];
 };
 
 export type ModelWithProvider = {
@@ -35,6 +37,7 @@ export type ModelWithProvider = {
 export type ModelList = {
      embedding: Model[];
      chat: Model[];
+     ocr: Model[];
 };
 
 // All metadata fields for a model provider

@@ -23,6 +23,7 @@ export const PATCH = async (req: NextRequest, { params }: { params: { id: string
                ...provider,
                chatModels: body.chatModels !== undefined ? body.chatModels : provider.chatModels,
                embeddingModels: body.embeddingModels !== undefined ? body.embeddingModels : provider.embeddingModels,
+               ocrModels: body.ocrModels !== undefined ? body.ocrModels : provider.ocrModels,
                config: body.config !== undefined ? body.config : provider.config,
           };
 

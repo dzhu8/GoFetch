@@ -1,7 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download, Loader2, RefreshCcw, X } from "lucide-react";
+import {
+     Check,
+     Download,
+     Loader2,
+     RefreshCcw,
+     X,
+     ScanText,
+     Cpu,
+     Sparkles,
+     Layers,
+     Settings,
+     Trash2,
+     Info,
+} from "lucide-react";
 import { toast } from "sonner";
 import Image from "next/image";
 import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
@@ -17,6 +30,7 @@ interface NormalizedModelRow {
      parameterLabel: string;
      supportsChat: boolean;
      supportsEmbedding: boolean;
+     supportsOCR: boolean;
      action: "download" | "remote";
      recommended?: boolean;
      installed?: boolean;
@@ -88,6 +102,8 @@ const ModelsPage = () => {
      const [errorMessage, setErrorMessage] = useState<string | null>(null);
      const [downloadingMap, setDownloadingMap] = useState<Record<string, boolean>>({});
      const [downloadProgressMap, setDownloadProgressMap] = useState<Record<string, DownloadProgressState>>({});
+     const [installLogMap, setInstallLogMap] = useState<Record<string, string>>({});
+     const [cudaError, setCudaError] = useState<string | null>(null);
      const [activeTestConfig, setActiveTestConfig] = useState<TestModalConfig | null>(null);
 
      const providerLookup = useMemo(() => {
@@ -112,6 +128,7 @@ const ModelsPage = () => {
 
           const chatModels = Array.isArray(provider.chatModels) ? [...provider.chatModels] : [];
           const embeddingModels = Array.isArray(provider.embeddingModels) ? [...provider.embeddingModels] : [];
+          const ocrModels = Array.isArray(provider.ocrModels) ? [...provider.ocrModels] : [];
           let updated = false;
           const displayName = model.displayName || model.key;
 
@@ -125,6 +142,11 @@ const ModelsPage = () => {
                updated = true;
           }
 
+          if (model.supportsOCR && !ocrModels.some((item) => item.key === model.key)) {
+               ocrModels.push({ key: model.key, name: displayName });
+               updated = true;
+          }
+
           if (!updated) {
                return;
           }
@@ -132,7 +154,7 @@ const ModelsPage = () => {
           const patchRes = await fetch(`/api/providers/${providerId}`, {
                method: "PATCH",
                headers: { "Content-Type": "application/json" },
-               body: JSON.stringify({ chatModels, embeddingModels }),
+               body: JSON.stringify({ chatModels, embeddingModels, ocrModels }),
           });
 
           if (!patchRes.ok) {
@@ -142,7 +164,7 @@ const ModelsPage = () => {
 
           setProviders((prev) =>
                prev.map((existing) =>
-                    existing.id === providerId ? { ...existing, chatModels, embeddingModels } : existing
+                    existing.id === providerId ? { ...existing, chatModels, embeddingModels, ocrModels } : existing
                )
           );
      }, []);
@@ -154,6 +176,28 @@ const ModelsPage = () => {
 
                if (!options?.suppressSpinner) {
                     setProviderLoadingState((prev) => ({ ...prev, [provider.id]: true }));
+               }
+
+               if (providerType === "paddleocr") {
+                    const res = await fetch(`/api/paddleocr/models?providerId=${provider.id}`, { cache: "no-store" });
+                    if (!res.ok) throw new Error("Failed to load PaddleOCR models");
+                    const data = await res.json();
+                    const rows: NormalizedModelRow[] = (data.models ?? []).map((model: any) => ({
+                         key: model.name,
+                         displayName: model.name,
+                         description: model.description ?? "GPU-accelerated OCR model installed via pip",
+                         sizeLabel: "~1 GB",
+                         contextWindowLabel: "—",
+                         parameterLabel: "—",
+                         supportsChat: false,
+                         supportsEmbedding: false,
+                         supportsOCR: true,
+                         action: "download",
+                         recommended: true,
+                         installed: Boolean(model.installed),
+                    }));
+                    setProviderModels((prev) => ({ ...prev, [provider.id]: rows }));
+                    return;
                }
 
                try {
@@ -170,11 +214,47 @@ const ModelsPage = () => {
                               parameterLabel: deriveParameterLabelFromName(model.name),
                               supportsChat: Boolean(model.supportsChat),
                               supportsEmbedding: Boolean(model.supportsEmbedding),
+                              supportsOCR: Boolean(model.supportsOCR),
                               action: "download",
                               recommended: Boolean(model.recommended),
                               installed: Boolean(model.installed),
                          }));
                          setProviderModels((prev) => ({ ...prev, [provider.id]: rows }));
+
+                         // Prune any registered models that are no longer present in the Ollama model list
+                         const knownKeys = new Set(rows.map((r) => r.key));
+                         const freshChatModels = provider.chatModels.filter((m) => knownKeys.has(m.key));
+                         const freshEmbeddingModels = provider.embeddingModels.filter((m) => knownKeys.has(m.key));
+                         const freshOcrModels = (provider.ocrModels ?? []).filter((m) => knownKeys.has(m.key));
+                         const needsPrune =
+                              freshChatModels.length !== provider.chatModels.length ||
+                              freshEmbeddingModels.length !== provider.embeddingModels.length ||
+                              freshOcrModels.length !== (provider.ocrModels ?? []).length;
+
+                         if (needsPrune) {
+                              await fetch(`/api/providers/${provider.id}`, {
+                                   method: "PATCH",
+                                   headers: { "Content-Type": "application/json" },
+                                   body: JSON.stringify({
+                                        chatModels: freshChatModels,
+                                        embeddingModels: freshEmbeddingModels,
+                                        ocrModels: freshOcrModels,
+                                   }),
+                              });
+                              setProviders((prev) =>
+                                   prev.map((existing) =>
+                                        existing.id === provider.id
+                                             ? {
+                                                    ...existing,
+                                                    chatModels: freshChatModels,
+                                                    embeddingModels: freshEmbeddingModels,
+                                                    ocrModels: freshOcrModels,
+                                               }
+                                             : existing
+                                   )
+                              );
+                         }
+
                          return;
                     }
 
@@ -192,6 +272,7 @@ const ModelsPage = () => {
                               deriveParameterLabelFromName(model.displayName ?? model.name ?? model.key),
                          supportsChat: Boolean(model.supportsChat),
                          supportsEmbedding: Boolean(model.supportsEmbedding),
+                         supportsOCR: Boolean(model.supportsOCR),
                          action: "remote",
                     }));
                     setProviderModels((prev) => ({ ...prev, [provider.id]: rows }));
@@ -215,7 +296,41 @@ const ModelsPage = () => {
                const res = await fetch("/api/providers", { cache: "no-store" });
                if (!res.ok) throw new Error("Failed to fetch providers");
                const data = await res.json();
-               const list = (data.providers ?? []) as MinimalProvider[];
+               let list = (data.providers ?? []) as MinimalProvider[];
+
+               // Ensure the PaddleOCR provider exists (created on first visit)
+               const paddleOcrProviders = list.filter((p) => p.type === "paddleocr");
+               if (paddleOcrProviders.length === 0) {
+                    try {
+                         await fetch("/api/providers", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                   name: "PaddleOCR",
+                                   type: "paddleocr",
+                                   chatModels: [],
+                                   embeddingModels: [],
+                                   ocrModels: [],
+                              }),
+                         });
+                         const refreshedRes = await fetch("/api/providers", { cache: "no-store" });
+                         if (refreshedRes.ok) {
+                              const refreshedData = await refreshedRes.json();
+                              list = (refreshedData.providers ?? []) as MinimalProvider[];
+                         }
+                    } catch {
+                         // Non-fatal — OCR section will populate on next visit
+                    }
+               } else if (paddleOcrProviders.length > 1) {
+                    // Duplicates can be created by React StrictMode's double-invocation — keep only the first
+                    for (const extra of paddleOcrProviders.slice(1)) {
+                         await fetch(`/api/providers/${extra.id}`, { method: "DELETE" }).catch(() => {});
+                    }
+                    list = list.filter(
+                         (p) => p.type !== "paddleocr" || p.id === paddleOcrProviders[0].id
+                    );
+               }
+
                list.sort((a, b) => a.name.localeCompare(b.name));
                setProviders(list);
                setProviderModels({});
@@ -237,6 +352,21 @@ const ModelsPage = () => {
           return Object.values(providerModels).reduce((total, models) => total + (models?.length ?? 0), 0);
      }, [providerModels]);
 
+     const ocrModels = useMemo(() => {
+          const all: { provider: MinimalProvider; model: NormalizedModelRow }[] = [];
+          const seen = new Set<string>();
+          providers.forEach((p) => {
+               const models = providerModels[p.id] || [];
+               models.forEach((m) => {
+                    if (m.supportsOCR && !seen.has(m.key)) {
+                         seen.add(m.key);
+                         all.push({ provider: p, model: m });
+                    }
+               });
+          });
+          return all;
+     }, [providers, providerModels]);
+
      const handleDownload = useCallback(
           async (providerId: string, model: NormalizedModelRow) => {
                const provider = providerLookup.get(providerId);
@@ -246,6 +376,78 @@ const ModelsPage = () => {
                }
 
                const key = `${providerId}:${model.key}`;
+
+               // ── PaddleOCR: CUDA check + pip install ──────────────────────────
+               if (provider.type === "paddleocr") {
+                    setDownloadingMap((prev) => ({ ...prev, [key]: true }));
+                    setInstallLogMap((prev) => ({ ...prev, [key]: "Checking for CUDA..." }));
+
+                    try {
+                         const res = await fetch("/api/paddleocr/install", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                         });
+
+                         if (!res.ok) {
+                              const errorData = await res.json().catch(() => ({}));
+                              setCudaError(errorData.error || "CUDA detection failed.");
+                              return;
+                         }
+
+                         const reader = res.body?.getReader();
+                         if (!reader) throw new Error("Unable to read install stream");
+
+                         const decoder = new TextDecoder();
+                         let buffer = "";
+                         let installFailed = false;
+
+                         while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) break;
+                              buffer += decoder.decode(value, { stream: true });
+                              const lines = buffer.split("\n");
+                              buffer = lines.pop() ?? "";
+
+                              for (const line of lines) {
+                                   const trimmed = line.trim();
+                                   if (!trimmed) continue;
+                                   try {
+                                        const payload = JSON.parse(trimmed);
+                                        if (payload.type === "cuda") {
+                                             const msg = payload.detectedVersion && payload.detectedVersion !== payload.version
+                                                  ? `CUDA ${payload.detectedVersion} detected (using ${payload.version} build), starting install...`
+                                                  : `CUDA ${payload.version} detected, starting install...`;
+                                             setInstallLogMap((prev) => ({ ...prev, [key]: msg }));
+                                        } else if (payload.type === "command") {
+                                             setInstallLogMap((prev) => ({ ...prev, [key]: `Running: ${payload.line}` }));
+                                        } else if (payload.type === "output") {
+                                             setInstallLogMap((prev) => ({ ...prev, [key]: payload.line }));
+                                        } else if (payload.type === "error") {
+                                             installFailed = true;
+                                             toast.error(`Install failed: ${payload.message}`);
+                                        }
+                                   } catch {
+                                        // Ignore partial JSON
+                                   }
+                              }
+                         }
+
+                         if (!installFailed) {
+                              toast.success(`${model.displayName} installed successfully`);
+                              await registerModelWithProvider(providerId, model);
+                              await loadModelsForProvider(provider, { suppressSpinner: true });
+                         }
+                    } catch (error) {
+                         console.error("PaddleOCR install failed", error);
+                         toast.error(error instanceof Error ? error.message : "Installation failed");
+                    } finally {
+                         setDownloadingMap((prev) => { const next = { ...prev }; delete next[key]; return next; });
+                         setInstallLogMap((prev) => { const next = { ...prev }; delete next[key]; return next; });
+                    }
+                    return;
+               }
+
+               // ── Ollama: streaming binary download ────────────────────────────
                setDownloadingMap((prev) => ({ ...prev, [key]: true }));
                setDownloadProgressMap((prev) => ({
                     ...prev,
@@ -344,6 +546,9 @@ const ModelsPage = () => {
      }, []);
 
      const renderProviderTable = (provider: MinimalProvider) => {
+          // PaddleOCR models are shown exclusively in the OCR section above
+          if (provider.type === "paddleocr") return null;
+
           const rows = providerModels[provider.id] ?? [];
           const isLoading = providerLoadingState[provider.id];
           const providerType = provider.type?.charAt(0)?.toUpperCase() + provider.type?.slice(1);
@@ -397,6 +602,7 @@ const ModelsPage = () => {
                                              <th className="py-2 pr-4 font-medium">Parameters</th>
                                              <th className="py-2 pr-4 font-medium">Chat</th>
                                              <th className="py-2 pr-4 font-medium">Embeddings</th>
+                                             <th className="py-2 pr-4 font-medium">OCR</th>
                                              <th className="py-2 font-medium text-right">Action</th>
                                         </tr>
                                    </thead>
@@ -462,6 +668,20 @@ const ModelsPage = () => {
                                                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${capabilityBadgeClasses(model.supportsEmbedding)}`}
                                                             >
                                                                  {model.supportsEmbedding ? (
+                                                                      <>
+                                                                           <Check className="w-3 h-3" />
+                                                                           Yes
+                                                                      </>
+                                                                 ) : (
+                                                                      <>No</>
+                                                                 )}
+                                                            </span>
+                                                       </td>
+                                                       <td className="py-3 pr-4">
+                                                            <span
+                                                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${capabilityBadgeClasses(model.supportsOCR)}`}
+                                                            >
+                                                                 {model.supportsOCR ? (
                                                                       <>
                                                                            <Check className="w-3 h-3" />
                                                                            Yes
@@ -618,6 +838,131 @@ const ModelsPage = () => {
                                         height={80}
                                         className="absolute top-0 -left z pointer-events-none"
                                    />
+
+                                   {ocrModels.length > 0 && (
+                                        <div className="bg-[#F8B692]/10 border-2 border-[#F8B692]/20 rounded-2xl p-4 md:p-6 space-y-4">
+                                             <div className="flex items-center gap-2">
+                                                  <div className="p-2 rounded-lg bg-[#F8B692]/20">
+                                                       <Download className="w-5 h-5 text-[#F8B692]" />
+                                                  </div>
+                                                  <div>
+                                                       <p className="text-lg font-bold text-[#F8B692]">OCR Models</p>
+                                                       <p className="text-xs text-black/60 dark:text-white/60">
+                                                            Specialized models for text recognition and image analysis.
+                                                       </p>
+                                                  </div>
+                                             </div>
+                                             <div className="overflow-x-auto">
+                                                  <table className="min-w-full text-left text-xs sm:text-sm">
+                                                       <thead>
+                                                            <tr className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 uppercase">
+                                                                 <th className="py-2 pr-4 font-medium">Model</th>
+                                                                 <th className="py-2 pr-4 font-medium">Provider</th>
+                                                                 <th className="py-2 pr-4 font-medium">Size</th>
+                                                                 <th className="py-2 font-medium text-right">Action</th>
+                                                            </tr>
+                                                       </thead>
+                                                       <tbody>
+                                                            {ocrModels.map(({ provider, model }) => {
+                                                                 const downloadKey = `${provider.id}:${model.key}`;
+                                                                 const isDownloading = Boolean(
+                                                                      downloadingMap[downloadKey]
+                                                                 );
+                                                                 const progress = downloadProgressMap[downloadKey];
+                                                                 return (
+                                                                      <tr
+                                                                           key={downloadKey}
+                                                                           className="border-t border-light-200/60 dark:border-dark-200/60"
+                                                                      >
+                                                                           <td className="py-3 pr-4">
+                                                                                <div className="flex flex-col gap-0.5">
+                                                                                     <div className="flex items-center gap-2">
+                                                                                          <p className="text-sm font-medium text-black dark:text-white">
+                                                                                               {model.displayName}
+                                                                                          </p>
+                                                                                          {model.recommended && (
+                                                                                               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#F8B692]/20 text-[#F8B692]">
+                                                                                                    Recommended
+                                                                                               </span>
+                                                                                          )}
+                                                                                          {model.installed && (
+                                                                                               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
+                                                                                                    Installed
+                                                                                               </span>
+                                                                                          )}
+                                                                                     </div>
+                                                                                     {model.description && (
+                                                                                          <p className="text-[11px] text-black/60 dark:text-white/60 line-clamp-1">
+                                                                                               {model.description}
+                                                                                          </p>
+                                                                                     )}
+                                                                                </div>
+                                                                           </td>
+                                                                           <td className="py-3 pr-4 text-black/70 dark:text-white/70">
+                                                                                {provider.name}
+                                                                           </td>
+                                                                           <td className="py-3 pr-4 text-black/70 dark:text-white/70">
+                                                                                {model.sizeLabel}
+                                                                           </td>
+                                                                           <td className="py-3 text-right">
+                                                                                {model.installed ? (
+                                                                                     <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-light-200 dark:bg-dark-200 text-xs text-black/60 dark:text-white/60">
+                                                                                          Up to date
+                                                                                     </span>
+                                                                                ) : isDownloading ? (
+                                                                                     provider.type === "paddleocr" ? (
+                                                                                          <div className="flex items-center justify-end gap-2 text-[11px] text-black/70 dark:text-white/70 sm:w-48">
+                                                                                               <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                                                                                               <span className="truncate text-right">
+                                                                                                    {installLogMap[downloadKey] ?? "Installing..."}
+                                                                                               </span>
+                                                                                          </div>
+                                                                                     ) : (
+                                                                                          <div className="w-full sm:w-48">
+                                                                                               <div className="h-2 w-full rounded-full bg-light-200 dark:bg-dark-200 overflow-hidden">
+                                                                                                    <div
+                                                                                                         className="h-full rounded-full bg-[#F8B692] transition-all duration-300"
+                                                                                                         style={{
+                                                                                                              width: `${progress?.total && progress.total > 0 ? Math.min(progress.progress, 100) : 15}%`,
+                                                                                                         }}
+                                                                                                    />
+                                                                                               </div>
+                                                                                               <div className="mt-1 flex items-center justify-end gap-2 text-[11px] text-black/70 dark:text-white/70">
+                                                                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                                                                    <span>
+                                                                                                         {progress && progress.total > 0
+                                                                                                              ? `${Math.round(progress.progress)}% (${formatMegabytes(progress.downloaded)} MB / ${formatMegabytes(progress.total)} MB)`
+                                                                                                              : "Preparing download..."}
+                                                                                                    </span>
+                                                                                               </div>
+                                                                                          </div>
+                                                                                     )
+                                                                                ) : (
+                                                                                     <button
+                                                                                          type="button"
+                                                                                          onClick={() =>
+                                                                                               handleDownload(
+                                                                                                    provider.id,
+                                                                                                    model
+                                                                                               )
+                                                                                          }
+                                                                                          disabled={isDownloading}
+                                                                                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F8B692] text-black text-xs font-medium hover:bg-[#e6ad82] active:scale-95 transition disabled:opacity-60"
+                                                                                     >
+                                                                                          <Download className="w-4 h-4" />
+                                                                                          {provider.type === "paddleocr" ? "Install" : "Download"}
+                                                                                     </button>
+                                                                                )}
+                                                                           </td>
+                                                                      </tr>
+                                                                 );
+                                                            })}
+                                                       </tbody>
+                                                  </table>
+                                             </div>
+                                        </div>
+                                   )}
+
                                    {providers.map((provider) => renderProviderTable(provider))}
                               </div>
                          )}
@@ -625,6 +970,7 @@ const ModelsPage = () => {
                </div>
 
                <TestEmbeddingModal config={activeTestConfig} onClose={() => setActiveTestConfig(null)} />
+               <CudaErrorModal errorMessage={cudaError} onClose={() => setCudaError(null)} />
           </>
      );
 };
@@ -790,6 +1136,59 @@ const TestEmbeddingModal = ({ config, onClose }: TestEmbeddingModalProps) => {
                               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-black text-sm font-medium hover:bg-[#e6ad82] active:scale-95 transition disabled:opacity-60"
                          >
                               {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send"}
+                         </button>
+                    </div>
+               </div>
+          </div>
+     );
+};
+
+const CudaErrorModal = ({
+     errorMessage,
+     onClose,
+}: {
+     errorMessage: string | null;
+     onClose: () => void;
+}) => {
+     if (!errorMessage) return null;
+
+     return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+               <div className="w-full max-w-lg bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-xl p-6 space-y-4">
+                    <div className="flex items-start justify-between gap-4">
+                         <div className="flex items-center gap-3">
+                              <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/40">
+                                   <X className="w-5 h-5 text-red-600 dark:text-red-400" />
+                              </div>
+                              <h2 className="text-base font-semibold text-black dark:text-white">
+                                   CUDA Not Detected
+                              </h2>
+                         </div>
+                         <button
+                              type="button"
+                              onClick={onClose}
+                              className="p-1 rounded-full text-black/60 dark:text-white/60 hover:bg-light-200/80 dark:hover:bg-dark-200/80"
+                         >
+                              <X className="w-4 h-4" />
+                         </button>
+                    </div>
+
+                    <p className="text-sm text-black/70 dark:text-white/70">{errorMessage}</p>
+
+                    <p className="text-xs text-black/50 dark:text-white/50">
+                         PaddleOCR-VL requires an NVIDIA GPU with the CUDA Toolkit installed and{" "}
+                         <span className="font-mono">nvcc</span> available on your PATH. Visit{" "}
+                         <span className="font-mono text-sky-500">developer.nvidia.com/cuda-downloads</span> to get
+                         started.
+                    </p>
+
+                    <div className="flex justify-end pt-2">
+                         <button
+                              type="button"
+                              onClick={onClose}
+                              className="px-4 py-2 rounded-lg border border-light-200 dark:border-dark-200 text-sm text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
+                         >
+                              Close
                          </button>
                     </div>
                </div>

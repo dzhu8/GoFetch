@@ -3,6 +3,7 @@ import { AnthropicProvider } from "@/lib/models/providers/AnthropicProvider";
 import { BaseModelProvider } from "@/lib/models/providers/BaseModelProvider";
 import { OllamaProvider } from "@/lib/models/providers/OllamaProvider";
 import { OpenAIProvider } from "@/lib/models/providers/OpenAIProvider";
+import { PaddleOCRProvider } from "@/lib/models/providers/PaddleOCRProvider";
 import { getConfiguredModelProviders, setConfiguredModelProviders } from "./serverRegistry";
 
 type ProviderFactory = new (config: ConfigModelProvider) => BaseModelProvider;
@@ -11,6 +12,7 @@ const providerFactories: Record<string, ProviderFactory> = {
      openai: OpenAIProvider,
      anthropic: AnthropicProvider,
      ollama: OllamaProvider,
+     paddleocr: PaddleOCRProvider,
 };
 
 export type RegisteredProvider<
@@ -77,7 +79,7 @@ export class ModelRegistry {
 
           await Promise.all(
                this.activeProviders.map(async (registered) => {
-                    let modelList: ModelList = { chat: [], embedding: [] };
+                    let modelList: ModelList = { chat: [], embedding: [], ocr: [] };
 
                     try {
                          modelList = await registered.provider.getModelList();
@@ -94,6 +96,7 @@ export class ModelRegistry {
                                    },
                               ],
                               embedding: [],
+                              ocr: [],
                          };
                     }
 
@@ -103,6 +106,7 @@ export class ModelRegistry {
                          type: registered.type,
                          chatModels: modelList.chat,
                          embeddingModels: modelList.embedding,
+                         ocrModels: modelList.ocr,
                     });
                })
           );

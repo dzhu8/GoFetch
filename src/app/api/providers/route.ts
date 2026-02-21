@@ -40,6 +40,7 @@ export const POST = async (req: NextRequest) => {
                type: body.type.toLowerCase(),
                chatModels: body.chatModels || [],
                embeddingModels: body.embeddingModels || [],
+               ocrModels: body.ocrModels || [],
                config: body.config || {},
                hash,
           };

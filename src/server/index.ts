@@ -285,6 +285,13 @@ class ConfigManager {
      private ensureConfigShape(): void {
           if (!Array.isArray(this.currentConfig.modelProviders)) {
                this.currentConfig.modelProviders = [];
+          } else {
+               // Ensure each provider has an ocrModels array
+               this.currentConfig.modelProviders.forEach((p: any) => {
+                    if (!Array.isArray(p.ocrModels)) {
+                         p.ocrModels = [];
+                    }
+               });
           }
           if (!this.currentConfig.preferences || typeof this.currentConfig.preferences !== "object") {
                this.currentConfig.preferences = {};

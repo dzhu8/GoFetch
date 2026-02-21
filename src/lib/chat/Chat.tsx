@@ -14,7 +14,7 @@ import crypto from "crypto";
 import { useParams, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { getSuggestions } from "../output/suggestions/actions";
-import { resolveModelPreference } from "../models/preferenceResolver";
+import { resolveModelPreference, resolveOcrModelPreference } from "../models/preferenceResolver";
 import { MinimalProvider } from "../models/types";
 
 export type Section = {
@@ -43,6 +43,7 @@ type ChatContext = {
      hasError: boolean;
      chatModelProvider: ChatModelProvider;
      embeddingModelProvider: EmbeddingModelProvider;
+     ocrModelProvider: OcrModelProvider | null;
      systemInstructions: string;
      /** Current search status for loading indicators */
      searchStatus: SearchStatus | null;
@@ -52,6 +53,7 @@ type ChatContext = {
      rewrite: (messageId: string) => void;
      setChatModelProvider: (provider: ChatModelProvider) => void;
      setEmbeddingModelProvider: (provider: EmbeddingModelProvider) => void;
+     setOcrModelProvider: (provider: OcrModelProvider | null) => void;
 };
 
 export interface File {
@@ -70,9 +72,15 @@ interface EmbeddingModelProvider {
      providerId: string;
 }
 
+interface OcrModelProvider {
+     key: string;
+     providerId: string;
+}
+
 const checkConfig = async (
      setChatModelProvider: (provider: ChatModelProvider) => void,
      setEmbeddingModelProvider: (provider: EmbeddingModelProvider) => void,
+     setOcrModelProvider: (provider: OcrModelProvider | null) => void,
      setIsConfigReady: (ready: boolean) => void,
      setHasError: (hasError: boolean) => void,
      setSystemInstructions: (value: string) => void
@@ -122,6 +130,16 @@ const checkConfig = async (
                key: resolvedEmbeddingPreference.modelKey,
                providerId: resolvedEmbeddingPreference.providerId,
           });
+
+          const resolvedOcrPreference = resolveOcrModelPreference(
+               providers,
+               preferences.defaultOCRModel ?? null
+          );
+          setOcrModelProvider(
+               resolvedOcrPreference
+                    ? { key: resolvedOcrPreference.modelKey, providerId: resolvedOcrPreference.providerId }
+                    : null
+          );
 
           setIsConfigReady(true);
      } catch (err: any) {
@@ -203,6 +221,7 @@ export const chatContext = createContext<ChatContext>({
      notFound: false,
      chatModelProvider: { key: "", providerId: "" },
      embeddingModelProvider: { key: "", providerId: "" },
+     ocrModelProvider: null,
      systemInstructions: "",
      searchStatus: null,
      rewrite: () => {},
@@ -211,6 +230,7 @@ export const chatContext = createContext<ChatContext>({
      setFiles: () => {},
      setChatModelProvider: () => {},
      setEmbeddingModelProvider: () => {},
+     setOcrModelProvider: () => {},
 });
 
 export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
@@ -243,6 +263,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           key: "",
           providerId: "",
      });
+
+     const [ocrModelProvider, setOcrModelProvider] = useState<OcrModelProvider | null>(null);
 
      const [systemInstructions, setSystemInstructions] = useState<string>("");
 
@@ -368,6 +390,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           checkConfig(
                setChatModelProvider,
                setEmbeddingModelProvider,
+               setOcrModelProvider,
                setIsConfigReady,
                setHasError,
                setSystemInstructions
@@ -660,6 +683,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     chatModelProvider,
                     embeddingModelProvider,
                     setEmbeddingModelProvider,
+                    ocrModelProvider,
+                    setOcrModelProvider,
                     systemInstructions,
                     searchStatus,
                }}

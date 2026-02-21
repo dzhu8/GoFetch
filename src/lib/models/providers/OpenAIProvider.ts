@@ -103,6 +103,10 @@ export class OpenAIProvider extends BaseModelProvider<ChatOpenAI, OpenAIEmbeddin
           return this.definition.embeddingModels ?? [];
      }
 
+     getAvailableOCRModels(): Model[] {
+          return this.definition.ocrModels ?? [];
+     }
+
      async loadChatModel(modelKey: string): Promise<ChatOpenAI> {
           this.assertModelConfigured(modelKey, this.getAvailableChatModels());
 
@@ -151,6 +155,10 @@ export class OpenAIProvider extends BaseModelProvider<ChatOpenAI, OpenAIEmbeddin
           }
 
           return new OpenAIEmbeddings(options);
+     }
+
+     async loadOCRModel(_modelKey: string): Promise<any> {
+          throw new Error("OpenAI provider does not currently support local OCR models.");
      }
 
      getModelMetadata(modelKey: string): ProviderModelMetadata | undefined {

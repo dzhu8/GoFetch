@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, Loader2, Search } from "lucide-react";
+import { Cpu, Loader2, Search, ScanText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/react";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -14,7 +14,7 @@ const ModelSelector = () => {
      const [isLoading, setIsLoading] = useState(true);
      const [searchQuery, setSearchQuery] = useState("");
 
-     const { setChatModelProvider, chatModelProvider } = useChat();
+     const { setChatModelProvider, chatModelProvider, ocrModelProvider, setOcrModelProvider } = useChat();
 
      useEffect(() => {
           const loadProviders = async () => {
@@ -64,16 +64,46 @@ const ModelSelector = () => {
           }
      };
 
-     const filteredProviders = orderedProviders
-          .map((provider) => ({
-               ...provider,
-               chatModels: provider.chatModels.filter(
-                    (model) =>
-                         model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         provider.name.toLowerCase().includes(searchQuery.toLowerCase())
+     const handleOcrModelSelect = async (providerId: string, modelKey: string) => {
+          setOcrModelProvider({ providerId, key: modelKey });
+
+          try {
+               await persistModelPreference("ocr", { providerId, modelKey });
+          } catch (error) {
+               console.error("Failed to persist OCR model preference:", error);
+               toast.error("Unable to save OCR model preference");
+          }
+     };
+
+     const { filteredChatProviders, filteredOCRModels } = useMemo(() => {
+          const chatProviders = orderedProviders
+               .map((provider) => ({
+                    ...provider,
+                    chatModels: provider.chatModels.filter(
+                         (model) =>
+                              model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              provider.name.toLowerCase().includes(searchQuery.toLowerCase())
                ),
           }))
           .filter((provider) => provider.chatModels.length > 0);
+
+          const ocrModels = orderedProviders.flatMap((provider) => 
+               (provider.ocrModels || [])
+               .filter((model) => 
+                    model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    provider.name.toLowerCase().includes(searchQuery.toLowerCase())
+               )
+               .map((model) => ({
+                    ...model,
+                    providerId: provider.id,
+                    providerName: provider.name
+               }))
+          );
+
+          return { filteredChatProviders: chatProviders, filteredOCRModels: ocrModels };
+     }, [orderedProviders, searchQuery]);
+
+     const hasAnyModels = filteredChatProviders.length > 0 || filteredOCRModels.length > 0;
 
      return (
           <Popover className="relative w-full max-w-[15rem] md:max-w-md lg:max-w-lg">
@@ -81,7 +111,12 @@ const ModelSelector = () => {
                     type="button"
                     className="active:border-none hover:bg-light-200  hover:dark:bg-dark-200 p-2 rounded-lg focus:outline-none headless-open:text-black dark:headless-open:text-white text-black/50 dark:text-white/50 active:scale-95 transition duration-200 hover:text-black dark:hover:text-white"
                >
-                    <Cpu size={16} className="text-sky-500" />
+                    <div className="flex items-center gap-1">
+                         <Cpu size={16} className="text-sky-500" />
+                         {ocrModelProvider && (
+                              <ScanText size={14} className="text-[#F8B692]" />
+                         )}
+                    </div>
                </PopoverButton>
                <Transition
                     as={Fragment}
@@ -118,13 +153,13 @@ const ModelSelector = () => {
                                                   size={24}
                                              />
                                         </div>
-                                   ) : filteredProviders.length === 0 ? (
+                                   ) : !hasAnyModels ? (
                                         <div className="text-center py-16 px-4 text-black/60 dark:text-white/60 text-sm">
                                              {searchQuery ? "No models found" : "No chat models configured"}
                                         </div>
                                    ) : (
                                         <div className="flex flex-col">
-                                             {filteredProviders.map((provider, providerIndex) => (
+                                             {filteredChatProviders.map((provider, providerIndex) => (
                                                   <div key={provider.id}>
                                                        <div className="px-4 py-2.5 sticky top-0 bg-light-primary dark:bg-dark-primary border-b border-light-200/50 dark:border-dark-200/50">
                                                             <p className="text-xs text-black/50 dark:text-white/50 uppercase tracking-wider">
@@ -180,11 +215,65 @@ const ModelSelector = () => {
                                                             ))}
                                                        </div>
 
-                                                       {providerIndex < filteredProviders.length - 1 && (
+                                                       {(providerIndex < filteredChatProviders.length - 1 || filteredOCRModels.length > 0) && (
                                                             <div className="h-px bg-light-200 dark:bg-dark-200" />
                                                        )}
                                                   </div>
                                              ))}
+
+                                             {filteredOCRModels.length > 0 && (
+                                                  <div key="ocr-models-section">
+                                                       <div className="px-4 py-2.5 sticky top-0 bg-light-primary dark:bg-dark-primary border-b border-light-200/50 dark:border-dark-200/50 flex items-center gap-2">
+                                                            <div className="w-1.5 h-1.5 rounded-full bg-[#F8B692]" />
+                                                            <p className="text-xs text-[#F8B692] font-semibold uppercase tracking-wider">
+                                                                 OCR Models
+                                                            </p>
+                                                       </div>
+                                                       <div className="flex flex-col px-2 py-2 space-y-0.5">
+                                                            {filteredOCRModels.map((model) => (
+                                                                 <button
+                                                                      key={`${model.providerId}:${model.key}`}
+                                                                      onClick={() => handleOcrModelSelect(model.providerId, model.key)}
+                                                                      type="button"
+                                                                      className={cn(
+                                                                           "px-3 py-2 flex items-center justify-between text-start duration-200 cursor-pointer transition rounded-lg group",
+                                                                           ocrModelProvider?.providerId === model.providerId && 
+                                                                           ocrModelProvider?.key === model.key
+                                                                                ? "bg-light-secondary dark:bg-dark-secondary"
+                                                                                : "hover:bg-light-secondary dark:hover:bg-dark-secondary"
+                                                                      )}
+                                                                 >
+                                                                      <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+                                                                           <Cpu
+                                                                                size={15}
+                                                                                className={cn(
+                                                                                     "shrink-0",
+                                                                                     ocrModelProvider?.providerId === model.providerId && 
+                                                                                     ocrModelProvider?.key === model.key
+                                                                                          ? "text-[#F8B692]"
+                                                                                          : "text-black/50 dark:text-white/50 group-hover:text-black/70 group-hover:dark:text-white/70"
+                                                                                )}
+                                                                           />
+                                                                           <div className="flex flex-col min-w-0 truncate">
+                                                                                <p className={cn(
+                                                                                     "text-sm truncate",
+                                                                                     ocrModelProvider?.providerId === model.providerId && 
+                                                                                     ocrModelProvider?.key === model.key
+                                                                                          ? "text-[#F8B692] font-medium"
+                                                                                          : "text-black/70 dark:text-white/70 group-hover:text-black dark:group-hover:text-white"
+                                                                                )}>
+                                                                                     {model.name}
+                                                                                </p>
+                                                                                <p className="text-[10px] text-black/40 dark:text-white/40 truncate">
+                                                                                     {model.providerName}
+                                                                                </p>
+                                                                           </div>
+                                                                      </div>
+                                                                 </button>
+                                                            ))}
+                                                       </div>
+                                                  </div>
+                                             )}
                                         </div>
                                    )}
                               </div>

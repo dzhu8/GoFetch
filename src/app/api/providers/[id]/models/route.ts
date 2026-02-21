@@ -51,6 +51,7 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
           modelList = {
                chat: registered.chatModels ?? [],
                embedding: registered.embeddingModels ?? [],
+               ocr: registered.ocrModels ?? [],
           };
      }
 
@@ -78,7 +79,7 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
 
      const index = new Map<string, any>();
 
-     const upsertModel = async (model: Model, capability: "chat" | "embedding") => {
+     const upsertModel = async (model: Model, capability: "chat" | "embedding" | "ocr") => {
           if (!model?.key) {
                return;
           }
@@ -94,14 +95,17 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
                     contextWindow: undefined as number | undefined,
                     supportsChat: false,
                     supportsEmbedding: false,
+                    supportsOCR: false,
                });
           }
 
           const current = index.get(model.key);
           if (capability === "chat") {
                current.supportsChat = true;
-          } else {
+          } else if (capability === "embedding") {
                current.supportsEmbedding = true;
+          } else if (capability === "ocr") {
+               current.supportsOCR = true;
           }
 
           const metadata = await fetchMetadata(model.key);
@@ -124,6 +128,10 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
           tasks.push(upsertModel(model, "chat"));
      }
 
+
+     for (const model of modelList.ocr ?? []) {
+          tasks.push(upsertModel(model, "ocr"));
+     }
      for (const model of modelList.embedding ?? []) {
           tasks.push(upsertModel(model, "embedding"));
      }

@@ -5,11 +5,12 @@ export type ModelPreference = {
      modelKey: string;
 };
 
-type ModelPreferenceKind = "chat" | "embedding";
+type ModelPreferenceKind = "chat" | "embedding" | "ocr";
 
 const CONFIG_KEYS: Record<ModelPreferenceKind, string> = {
      chat: "preferences.defaultChatModel",
      embedding: "preferences.defaultEmbeddingModel",
+     ocr: "preferences.defaultOCRModel",
 };
 
 export const persistModelPreference = async (kind: ModelPreferenceKind, preference: ModelPreference) => {

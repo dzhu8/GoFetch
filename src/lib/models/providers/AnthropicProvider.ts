@@ -104,6 +104,10 @@ export class AnthropicProvider extends BaseModelProvider<ChatAnthropic, never> {
           return this.definition.embeddingModels ?? [];
      }
 
+     getAvailableOCRModels(): Model[] {
+          return this.definition.ocrModels ?? [];
+     }
+
      async loadChatModel(modelKey: string): Promise<ChatAnthropic> {
           this.assertModelConfigured(modelKey, this.getAvailableChatModels());
 
@@ -135,6 +139,10 @@ export class AnthropicProvider extends BaseModelProvider<ChatAnthropic, never> {
 
      async loadEmbeddingModel(): Promise<never> {
           throw new Error("Anthropic does not currently expose embeddings through LangChain.");
+     }
+
+     async loadOCRModel(_modelKey: string): Promise<any> {
+          throw new Error("Anthropic provider does not currently support local OCR models.");
      }
 
      getModelMetadata(modelKey: string): ProviderModelMetadata | undefined {
