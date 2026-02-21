@@ -13,7 +13,10 @@ const PADDLEOCR_CURATED_MODELS = [
 
 async function isPaddleOCRInstalled(): Promise<boolean> {
      try {
-          await execAsync('python -c "import paddleocr"', { timeout: 10000 });
+          // Use `pip show` rather than `import paddleocr` to avoid GPU/CUDA
+          // library initialisation, which can fail or time out even when the
+          // package is correctly installed (e.g. torch CUDA libs conflict).
+          await execAsync("pip show paddleocr", { timeout: 10000 });
           return true;
      } catch {
           return false;

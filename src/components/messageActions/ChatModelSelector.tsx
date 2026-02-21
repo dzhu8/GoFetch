@@ -20,13 +20,13 @@ const ModelSelector = () => {
           const loadProviders = async () => {
                try {
                     setIsLoading(true);
-                    const res = await fetch("/api/providers");
+                    const providersRes = await fetch("/api/providers");
 
-                    if (!res.ok) {
+                    if (!providersRes.ok) {
                          throw new Error("Failed to fetch providers");
                     }
 
-                    const data: { providers: MinimalProvider[] } = await res.json();
+                    const data: { providers: MinimalProvider[] } = await providersRes.json();
                     setProviders(data.providers);
                } catch (error) {
                     console.error("Error loading providers:", error);
@@ -87,17 +87,19 @@ const ModelSelector = () => {
           }))
           .filter((provider) => provider.chatModels.length > 0);
 
-          const ocrModels = orderedProviders.flatMap((provider) => 
+          const ocrModels = orderedProviders.flatMap((provider) =>
                (provider.ocrModels || [])
-               .filter((model) => 
-                    model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    provider.name.toLowerCase().includes(searchQuery.toLowerCase())
-               )
-               .map((model) => ({
-                    ...model,
-                    providerId: provider.id,
-                    providerName: provider.name
-               }))
+                    .filter((model) => {
+                         return (
+                              model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              provider.name.toLowerCase().includes(searchQuery.toLowerCase())
+                         );
+                    })
+                    .map((model) => ({
+                         ...model,
+                         providerId: provider.id,
+                         providerName: provider.name,
+                    }))
           );
 
           return { filteredChatProviders: chatProviders, filteredOCRModels: ocrModels };

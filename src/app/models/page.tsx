@@ -197,6 +197,33 @@ const ModelsPage = () => {
                          installed: Boolean(model.installed),
                     }));
                     setProviderModels((prev) => ({ ...prev, [provider.id]: rows }));
+
+                    // Sync registered OCR models with actual pip installation state.
+                    // Prunes models that are no longer installed AND repairs models that
+                    // are installed but were previously pruned from the backend config.
+                    const installedKeys = new Set(rows.filter((r) => r.installed).map((r) => r.key));
+                    const currentOcrModels = provider.ocrModels ?? [];
+                    const currentKeys = new Set(currentOcrModels.map((m) => m.key));
+                    const syncedOcrModels = rows
+                         .filter((r) => r.installed)
+                         .map((r) => ({ key: r.key, name: r.displayName || r.key }));
+                    const needsSync =
+                         syncedOcrModels.some((m) => !currentKeys.has(m.key)) ||
+                         currentOcrModels.some((m) => !installedKeys.has(m.key));
+                    if (needsSync) {
+                         await fetch(`/api/providers/${provider.id}`, {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ ocrModels: syncedOcrModels }),
+                         });
+                         setProviders((prev) =>
+                              prev.map((existing) =>
+                                   existing.id === provider.id
+                                        ? { ...existing, ocrModels: syncedOcrModels }
+                                        : existing
+                              )
+                         );
+                    }
                     return;
                }
 
