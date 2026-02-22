@@ -7,6 +7,7 @@ import NextError from "next/error";
 import { useChat } from "@/lib/chat/Chat";
 import Loader from "./Loader";
 import SettingsButtonMobile from "./settings/SettingsButton";
+import type { RelatedPapersResponse } from "@/app/api/paddleocr/related-papers/route";
 
 export interface BaseMessage {
      chatId: string;
@@ -50,6 +51,8 @@ export interface SearchStatus {
 export type Message = AssistantMessage | UserMessage | SourceMessage | SuggestionMessage;
 export type ChatTurn = UserMessage | AssistantMessage;
 
+export type { RelatedPapersResponse };
+
 export interface File {
      fileName: string;
      fileExtension: string;
@@ -57,7 +60,7 @@ export interface File {
 }
 
 const ChatWindow = () => {
-     const { hasError, isReady, notFound, messages } = useChat();
+     const { hasError, isReady, notFound, messages, relatedPapers } = useChat();
      if (hasError) {
           return (
                <div className="relative">
@@ -78,7 +81,7 @@ const ChatWindow = () => {
                <NextError statusCode={404} />
           ) : (
                <div>
-                    {messages.length > 0 ? (
+                    {messages.length > 0 || relatedPapers.length > 0 ? (
                          <>
                               {/* <Navbar /> */}
                               <Chat />

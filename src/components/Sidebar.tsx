@@ -38,12 +38,12 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
                active: segments.includes("library"),
                label: "Library",
           },
-          {
+          /* {
                icon: FolderSync,
                href: "/sync",
                active: segments.includes("sync"),
                label: "Sync",
-          },
+          }, */
           {
                icon: Search,
                href: "/inspect",

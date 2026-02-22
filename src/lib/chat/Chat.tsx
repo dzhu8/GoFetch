@@ -4,6 +4,7 @@ import {
      AssistantMessage,
      ChatTurn,
      Message,
+     RelatedPapersResponse,
      SearchStatus,
      SourceMessage,
      SuggestionMessage,
@@ -47,6 +48,10 @@ type ChatContext = {
      systemInstructions: string;
      /** Current search status for loading indicators */
      searchStatus: SearchStatus | null;
+     /** Related papers results from PDF citation extraction */
+     relatedPapers: RelatedPapersResponse[];
+     addRelatedPapers: (data: RelatedPapersResponse) => void;
+     removeRelatedPapers: (pdfTitle: string) => void;
      setFiles: (files: File[]) => void;
      setFileIds: (fileIds: string[]) => void;
      sendMessage: (message: string, messageId?: string, rewrite?: boolean) => Promise<void>;
@@ -224,6 +229,9 @@ export const chatContext = createContext<ChatContext>({
      ocrModelProvider: null,
      systemInstructions: "",
      searchStatus: null,
+     relatedPapers: [],
+     addRelatedPapers: () => {},
+     removeRelatedPapers: () => {},
      rewrite: () => {},
      sendMessage: async () => {},
      setFileIds: () => {},
@@ -274,6 +282,17 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
      /** Current search status for loading indicators */
      const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null);
+
+     /** Related papers results from PDF citation extraction */
+     const [relatedPapers, setRelatedPapers] = useState<RelatedPapersResponse[]>([]);
+
+     const addRelatedPapers = (data: RelatedPapersResponse) => {
+          setRelatedPapers((prev) => [...prev, data]);
+     };
+
+     const removeRelatedPapers = (pdfTitle: string) => {
+          setRelatedPapers((prev) => prev.filter((rp) => rp.pdfTitle !== pdfTitle));
+     };
 
      const messagesRef = useRef<Message[]>([]);
 
@@ -687,6 +706,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     setOcrModelProvider,
                     systemInstructions,
                     searchStatus,
+                    relatedPapers,
+                    addRelatedPapers,
+                    removeRelatedPapers,
                }}
           >
                {children}
