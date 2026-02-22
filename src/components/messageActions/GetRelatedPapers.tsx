@@ -32,7 +32,7 @@ const GetRelatedPapers = () => {
                const formData = new FormData();
                formData.append("pdf", file);
 
-               const res = await fetch("/api/paddleocr/extract", {
+               const res = await fetch("/api/related-papers/paddleocr/extract", {
                     method: "POST",
                     body: formData,
                });
@@ -99,7 +99,7 @@ const GetRelatedPapers = () => {
                // ── Search for related papers ──
                setStatusMessage(`Searching ${terms.length} citation terms…`);
 
-               const searchRes = await fetch("/api/paddleocr/related-papers", {
+               const searchRes = await fetch("/api/related-papers", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ terms, isDoiFlags, pdfTitle }),

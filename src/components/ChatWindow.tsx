@@ -7,7 +7,7 @@ import NextError from "next/error";
 import { useChat } from "@/lib/chat/Chat";
 import Loader from "./Loader";
 import SettingsButtonMobile from "./settings/SettingsButton";
-import type { RelatedPapersResponse } from "@/app/api/paddleocr/related-papers/route";
+import type { RelatedPapersResponse } from "@/app/api/related-papers/route";
 
 export interface BaseMessage {
      chatId: string;

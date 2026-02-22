@@ -5,7 +5,7 @@ import type {
      RelatedPapersResponse,
      PaperSearchResults,
      SearchResult,
-} from "@/app/api/paddleocr/related-papers/route";
+} from "@/app/api/related-papers/route";
 
 export type { RelatedPapersResponse, PaperSearchResults, SearchResult };
 

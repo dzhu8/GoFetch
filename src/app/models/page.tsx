@@ -179,7 +179,7 @@ const ModelsPage = () => {
                }
 
                if (providerType === "paddleocr") {
-                    const res = await fetch(`/api/paddleocr/models?providerId=${provider.id}`, { cache: "no-store" });
+                    const res = await fetch(`/api/related-papers/paddleocr/models?providerId=${provider.id}`, { cache: "no-store" });
                     if (!res.ok) throw new Error("Failed to load PaddleOCR models");
                     const data = await res.json();
                     const rows: NormalizedModelRow[] = (data.models ?? []).map((model: any) => ({
@@ -410,7 +410,7 @@ const ModelsPage = () => {
                     setInstallLogMap((prev) => ({ ...prev, [key]: "Checking for CUDA..." }));
 
                     try {
-                         const res = await fetch("/api/paddleocr/install", {
+                         const res = await fetch("/api/related-papers/paddleocr/install", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
                          });
