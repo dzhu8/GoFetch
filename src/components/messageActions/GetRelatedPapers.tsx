@@ -3,19 +3,11 @@
 import { useRef, useState } from "react";
 import { FileText, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogPanel, DialogTitle, Description } from "@headlessui/react";
-import { AnimatePresence, motion } from "framer-motion";
 
 const GetRelatedPapers = () => {
      const fileInputRef = useRef<HTMLInputElement | null>(null);
      const [loading, setLoading] = useState(false);
      const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-     // Progress tracking states
-     const [progressPage, setProgressPage] = useState(0);
-     const [totalPages, setTotalPages] = useState(0);
-     const [isModalOpen, setIsModalOpen] = useState(false);
-     const [status, setStatus] = useState<"processing" | "complete" | "error">("processing");
 
      const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
           const file = e.target.files?.[0];
@@ -30,10 +22,6 @@ const GetRelatedPapers = () => {
           }
 
           setLoading(true);
-          setProgressPage(0);
-          setTotalPages(0);
-          setStatus("processing");
-          setIsModalOpen(true);
 
           try {
                const formData = new FormData();
@@ -67,11 +55,7 @@ const GetRelatedPapers = () => {
                          if (!line.trim()) continue;
                          try {
                               const msg = JSON.parse(line);
-                              if (msg.type === "total") {
-                                   setTotalPages(msg.value);
-                              } else if (msg.type === "page") {
-                                   setProgressPage(msg.value);
-                              } else if (msg.type === "complete") {
+                              if (msg.type === "complete") {
                                    const data = msg.data;
                                    const blob = new Blob([JSON.stringify(data, null, 2)], {
                                         type: "application/json",
@@ -85,9 +69,7 @@ const GetRelatedPapers = () => {
                                    document.body.removeChild(anchor);
                                    URL.revokeObjectURL(url);
 
-                                   setStatus("complete");
                                    toast.success("OCR extraction complete — JSON downloaded");
-                                   setTimeout(() => setIsModalOpen(false), 2000);
                               } else if (msg.type === "error") {
                                    throw new Error(msg.message);
                               }
@@ -98,7 +80,6 @@ const GetRelatedPapers = () => {
                }
           } catch (err) {
                const msg = err instanceof Error ? err.message : "OCR extraction failed";
-               setStatus("error");
                toast.error(msg);
           } finally {
                setLoading(false);
@@ -107,108 +88,21 @@ const GetRelatedPapers = () => {
 
      return (
           <>
-               <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Get related papers (OCR PDF → JSON)"
-                    className="active:border-none hover:bg-light-200 hover:dark:bg-dark-200 p-2 rounded-lg focus:outline-none text-black/50 dark:text-white/50 active:scale-95 transition duration-200 hover:text-black dark:hover:text-white"
-               >
-                    <input type="file" accept=".pdf" onChange={handleChange} ref={fileInputRef} hidden />
-                    <FileText size={16} className="text-[#F8B692]" />
-               </button>
-
-               <AnimatePresence>
-                    {isModalOpen && (
-                         <Dialog
-                              open={isModalOpen}
-                              onClose={() => status !== "processing" && setIsModalOpen(false)}
-                              className="relative z-50"
-                         >
-                              <motion.div
-                                   initial={{ opacity: 0 }}
-                                   animate={{ opacity: 1 }}
-                                   exit={{ opacity: 0 }}
-                                   className="fixed inset-0 bg-black/40 backdrop-blur-sm"
-                                   aria-hidden="true"
-                              />
-
-                              <div className="fixed inset-0 flex items-center justify-center p-4">
-                                   <DialogPanel
-                                        as={motion.div}
-                                        initial={{ opacity: 0, scale: 0.95 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        className="mx-auto max-w-sm w-full rounded-2xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 shadow-2xl p-6"
-                                   >
-                                        <div className="flex items-center justify-between mb-4">
-                                             <DialogTitle className="text-lg font-semibold text-black dark:text-white">
-                                                  {status === "processing"
-                                                       ? "Extracting Text..."
-                                                       : status === "complete"
-                                                         ? "Success!"
-                                                         : "Error"}
-                                             </DialogTitle>
-                                             {status !== "processing" && (
-                                                  <button
-                                                       onClick={() => setIsModalOpen(false)}
-                                                       className="text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white transition-colors"
-                                                  >
-                                                       <X size={20} />
-                                                  </button>
-                                             )}
-                                        </div>
-
-                                        <div className="space-y-4">
-                                             <Description className="text-sm text-black/60 dark:text-white/60">
-                                                  {status === "processing"
-                                                       ? "PaddleOCR-VL is processing your PDF file. This may take a minute."
-                                                       : status === "complete"
-                                                         ? "OCR extraction is finished and your file is downloading."
-                                                         : "There was an error processing the OCR task."}
-                                             </Description>
-
-                                             {status === "processing" && (
-                                                  <div className="space-y-2">
-                                                       <div className="flex justify-between text-xs font-medium text-black/70 dark:text-white/70">
-                                                            <span>
-                                                                 {progressPage > 0
-                                                                      ? `Page ${progressPage}${totalPages ? ` of ${totalPages}` : ""}`
-                                                                      : "Starting models..."}
-                                                            </span>
-                                                            {totalPages > 0 && (
-                                                                 <span>
-                                                                      {Math.round((progressPage / totalPages) * 100)}%
-                                                                 </span>
-                                                            )}
-                                                       </div>
-                                                       <div className="h-2 w-full bg-light-200 dark:bg-dark-200 rounded-full overflow-hidden">
-                                                            <motion.div
-                                                                 className="h-full bg-[#F8B692]"
-                                                                 initial={{ width: 0 }}
-                                                                 animate={{
-                                                                      width: totalPages
-                                                                           ? `${(progressPage / totalPages) * 100}%`
-                                                                           : progressPage > 0
-                                                                             ? "5%"
-                                                                             : "0%",
-                                                                 }}
-                                                                 transition={{ duration: 0.5 }}
-                                                            />
-                                                       </div>
-                                                  </div>
-                                             )}
-
-                                             {status === "processing" && (
-                                                  <div className="flex justify-center pt-2">
-                                                       <Loader2 className="w-6 h-6 animate-spin text-[#F8B692]" />
-                                                  </div>
-                                             )}
-                                        </div>
-                                   </DialogPanel>
-                              </div>
-                         </Dialog>
-                    )}
-               </AnimatePresence>
+               {loading ? (
+                    <div className="p-2">
+                         <Loader2 size={16} className="animate-spin text-[#F8B692]" />
+                    </div>
+               ) : (
+                    <button
+                         type="button"
+                         onClick={() => fileInputRef.current?.click()}
+                         title="Get related papers (OCR PDF → JSON)"
+                         className="active:border-none hover:bg-light-200 hover:dark:bg-dark-200 p-2 rounded-lg focus:outline-none text-black/50 dark:text-white/50 active:scale-95 transition duration-200 hover:text-black dark:hover:text-white"
+                    >
+                         <input type="file" accept=".pdf" onChange={handleChange} ref={fileInputRef} hidden />
+                         <FileText size={16} className="text-[#F8B692]" />
+                    </button>
+               )}
 
                {errorMessage && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">

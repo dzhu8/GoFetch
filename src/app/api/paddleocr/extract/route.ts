@@ -92,7 +92,8 @@ export async function POST(req: NextRequest) {
                                    env,
                               });
 
-                              let stderr = "";
+                              let stderrAccum = "";
+                              let stderrBuf = "";
 
                               proc.stdout?.on("data", (d: Buffer) => {
                                    const lines = d.toString().split("\n");
@@ -120,13 +121,25 @@ export async function POST(req: NextRequest) {
                               });
 
                               proc.stderr?.on("data", (d: Buffer) => {
-                                   stderr += d.toString();
-                                   console.error("[PaddleOCR extract]", d.toString().trim());
+                                   const chunk = d.toString();
+                                   stderrAccum += chunk;
+                                   stderrBuf += chunk;
+                                   const lines = stderrBuf.split(/[\r\n]+/);
+                                   stderrBuf = lines.pop() ?? "";
+                                   for (const line of lines) {
+                                        const trimmed = line.trim();
+                                        if (!trimmed) continue;
+                                        console.error("[PaddleOCR extract]", trimmed);
+                                        const msg = trimmed.length > 120 ? trimmed.slice(0, 120) + "\u2026" : trimmed;
+                                        controller.enqueue(
+                                             encoder.encode(JSON.stringify({ type: "status", message: msg }) + "\n")
+                                        );
+                                   }
                               });
 
                               proc.on("close", (code) => {
                                    if (code !== 0) {
-                                        reject(new Error(`PaddleOCR exited with code ${code}: ${stderr.slice(0, 500)}`));
+                                        reject(new Error(`PaddleOCR exited with code ${code}: ${stderrAccum.slice(0, 500)}`));
                                    } else {
                                         resolve();
                                    }
