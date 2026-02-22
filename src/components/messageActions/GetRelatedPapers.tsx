@@ -92,16 +92,17 @@ const GetRelatedPapers = () => {
                     return;
                }
 
-               const titles = references.map((r) => r.title);
+               const terms = references.map((r) => r.searchTerm);
+               const isDoiFlags = references.map((r) => r.isDoi);
                const pdfTitle = file.name.replace(/\.pdf$/i, "");
 
                // ── Search for related papers ──
-               setStatusMessage(`Searching ${titles.length} citation titles…`);
+               setStatusMessage(`Searching ${terms.length} citation terms…`);
 
                const searchRes = await fetch("/api/paddleocr/related-papers", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ titles, pdfTitle }),
+                    body: JSON.stringify({ terms, isDoiFlags, pdfTitle }),
                });
 
                if (!searchRes.ok) {
