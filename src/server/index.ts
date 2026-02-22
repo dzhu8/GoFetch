@@ -35,7 +35,9 @@ class ConfigManager {
                textChunkMaxTokens: 1000,
                textChunkOverlapTokens: 100,
           },
-          personalization: {},
+          personalization: {
+               graphConstructionMethod: "snowball",
+          },
           modelProviders: [],
           ollama: {
                baseURL: "http://localhost:11434",
@@ -175,6 +177,17 @@ class ConfigManager {
           ],
           personalization: [
                {
+                    name: "Related Papers Discovery Method",
+                    key: "graphConstructionMethod",
+                    type: "select",
+                    options: [{ name: "Snowball (Default)", value: "snowball" }],
+                    required: false,
+                    description:
+                         "Select the algorithm used to discover and rank related papers based on citations. Snowball uses depth-1 references and citations to build a candidate pool and ranks by bibliographic coupling and co-citation.",
+                    default: "snowball",
+                    scope: "server",
+               },
+               {
                     name: "System Instructions",
                     key: "systemInstructions",
                     type: "textarea",
@@ -295,6 +308,12 @@ class ConfigManager {
           }
           if (!this.currentConfig.preferences || typeof this.currentConfig.preferences !== "object") {
                this.currentConfig.preferences = {};
+          }
+          if (!this.currentConfig.personalization || typeof this.currentConfig.personalization !== "object") {
+               this.currentConfig.personalization = {};
+          }
+          if (this.currentConfig.personalization.graphConstructionMethod === undefined) {
+               this.currentConfig.personalization.graphConstructionMethod = "snowball";
           }
           if (this.currentConfig.preferences.cliFolderWatcher === undefined) {
                this.currentConfig.preferences.cliFolderWatcher = false;

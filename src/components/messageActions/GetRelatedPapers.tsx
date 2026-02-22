@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { FileText, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import { parseReferences } from "@/lib/citations/parseReferences";
+import { parseReferences, extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import { useChat } from "@/lib/chat/Chat";
 
 const GetRelatedPapers = () => {
@@ -83,6 +83,11 @@ const GetRelatedPapers = () => {
                     throw new Error("OCR produced no result");
                }
 
+               // ── Extract document metadata (Title & DOI) ──
+               const docMetadata = extractDocumentMetadata(ocrResult);
+               let pdfTitle = docMetadata.title || file.name.replace(/\.pdf$/i, "");
+               let pdfDoi = docMetadata.doi;
+
                // ── Parse references from the OCR output ──
                setStatusMessage("Parsing citations…");
                const references = parseReferences(ocrResult);
@@ -94,7 +99,6 @@ const GetRelatedPapers = () => {
 
                const terms = references.map((r) => r.searchTerm);
                const isDoiFlags = references.map((r) => r.isDoi);
-               const pdfTitle = file.name.replace(/\.pdf$/i, "");
 
                // ── Search for related papers ──
                setStatusMessage(`Searching ${terms.length} citation terms…`);
@@ -102,7 +106,7 @@ const GetRelatedPapers = () => {
                const searchRes = await fetch("/api/related-papers", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ terms, isDoiFlags, pdfTitle }),
+                    body: JSON.stringify({ terms, isDoiFlags, pdfTitle, pdfDoi }),
                });
 
                if (!searchRes.ok) {

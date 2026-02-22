@@ -26,6 +26,11 @@ export interface ParsedReference {
      sourceBlocks: SourceBlock[];
 }
 
+export interface DocumentMetadata {
+     title: string | null;
+     doi: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Step 1 – Collect & sort raw blocks from the OCR JSON
 // ---------------------------------------------------------------------------
@@ -467,4 +472,48 @@ export function parseReferences(ocrResult: any): ParsedReference[] {
                } satisfies ParsedReference;
           })
           .filter((ref) => ref.searchTerm.length > 3);
+}
+
+/**
+ * Extract the DOI and title of the document itself from the OCR output.
+ */
+export function extractDocumentMetadata(ocrResult: any): DocumentMetadata {
+     let title: string | null = null;
+     let doi: string | null = null;
+
+     if (!ocrResult?.pages) return { title, doi };
+
+     // Check first 3 pages for title and DOI
+     const pagesToCheck = ocrResult.pages.slice(0, 3);
+
+     // 1. Look for explicit doc_title label
+     for (const page of pagesToCheck) {
+          const list = extractParsingResList(page.data);
+          const titleBlocks = list.filter((b) => (b.block_label ?? b.label ?? "") === "doc_title");
+          if (titleBlocks.length > 0) {
+               title = titleBlocks
+                    .map((b) =>
+                         normalizeText(b.block_content ?? b.text ?? b.content ?? b.rec_text ?? "")
+                    )
+                    .join(" ");
+               if (title.length > 10) break;
+          }
+     }
+
+     // 2. Look for DOI
+     for (const page of pagesToCheck) {
+          const list = extractParsingResList(page.data);
+          for (const block of list) {
+               const blockContent =
+                    block.block_content ?? block.text ?? block.content ?? block.rec_text ?? "";
+               const foundDoi = extractDoi(blockContent);
+               if (foundDoi) {
+                    doi = foundDoi;
+                    break;
+               }
+          }
+          if (doi) break;
+     }
+
+     return { title, doi };
 }
