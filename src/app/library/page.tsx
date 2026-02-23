@@ -13,7 +13,7 @@ import {
      Trash2,
      Upload,
 } from "lucide-react";
-import GoFetchDogSweater from "@/assets/GoFetch-dog-sweater.svg";
+import GoFetchDogBox from "@/assets/GoFetch-dog-box.svg";
 
 interface FolderData {
      id: number;
@@ -231,14 +231,14 @@ export default function LibraryPage() {
      return (
           <div className="h-full flex flex-col">
                {/* Header Section */}
-               <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-4">
-                    <div className="flex items-center gap-4">
+               <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-6">
+                    <div className="flex items-center gap-6">
                          <Image
-                              src={GoFetchDogSweater}
-                              alt="GoFetch dog with sweater"
-                              width={80}
-                              height={80}
-                              className="w-16 h-16 md:w-20 md:h-20"
+                              src={GoFetchDogBox}
+                              alt="GoFetch dog in box"
+                              width={100}
+                              height={100}
+                              className="w-20 h-20 md:w-24 md:h-24 lg:w-28 lg:h-28"
                          />
                          <div className="text-center">
                               <h1 className="text-3xl md:text-4xl xl:text-5xl font-['Big_Softie'] text-[#F8B692] mb-2">

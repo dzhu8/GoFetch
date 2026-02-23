@@ -23,8 +23,8 @@ const montserrat = Montserrat({
 });
 
 export const metadata: Metadata = {
-     title: "GoFetch - Live index of your codebase",
-     description: "GoFetch performs codebase indexing using local language models.",
+     title: "GoFetch - Live index of your research papers",
+     description: "GoFetch performs research paper indexing using local language models.",
 };
 
 export default async function RootLayout({

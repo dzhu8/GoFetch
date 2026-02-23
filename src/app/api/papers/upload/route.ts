@@ -353,9 +353,177 @@ function formatCitation(paper: any): string {
      return parts.filter(Boolean).join(". ") + ".";
 }
 
+// ── Figure extraction helpers ─────────────────────────────────────────────────
+
+interface BBox { x0: number; y0: number; x1: number; y1: number }
+interface LocatedFigure { page: number; bbox: BBox; pageWidth: number; pageHeight: number }
+
+/** True when `content` is a genuine "Figure N" / "Fig. N" caption. */
+function isRealFigureCaption(content: string): boolean {
+     return /^(Figure|Fig\.)\s*\d+\b/i.test(content.trim());
+}
+
+/** True when `content` is specifically a "Figure 1" / "Fig. 1" caption. */
+function isFigureOne(content: string): boolean {
+     return /^(Figure|Fig\.)\s*1\b/i.test(content.trim());
+}
+
+/** Axis-aligned union of a set of bboxes. */
+function unionBboxes(boxes: BBox[]): BBox {
+     return {
+          x0: Math.min(...boxes.map((b) => b.x0)),
+          y0: Math.min(...boxes.map((b) => b.y0)),
+          x1: Math.max(...boxes.map((b) => b.x1)),
+          y1: Math.max(...boxes.map((b) => b.y1)),
+     };
+}
+
+/** Total pixel area of a set of bboxes. */
+function totalArea(boxes: BBox[]): number {
+     return boxes.reduce((s, b) => s + (b.x1 - b.x0) * (b.y1 - b.y0), 0);
+}
+
 /**
- * Try to extract the first figure from the PDF using PyMuPDF (fitz).
- * Saves as a .png next to the PDF and returns the filename.
+ * Union-Find clustering: two boxes are connected when their dilated rects
+ * overlap OR when vertical gap < vertGap and horizontal overlap > 10 % of
+ * the narrower box's width.
+ */
+function clusterBboxes(boxes: BBox[], margin: number, vertGap: number): BBox[][] {
+     const n = boxes.length;
+     const parent = Array.from({ length: n }, (_, i) => i);
+     const find = (x: number): number => {
+          while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+          return x;
+     };
+     const union = (a: number, b: number) => { parent[find(a)] = find(b); };
+
+     for (let i = 0; i < n; i++) {
+          for (let j = i + 1; j < n; j++) {
+               const a = boxes[i], b = boxes[j];
+               // Dilated overlap
+               const ox = Math.min(a.x1 + margin, b.x1 + margin) - Math.max(a.x0 - margin, b.x0 - margin);
+               const oy = Math.min(a.y1 + margin, b.y1 + margin) - Math.max(a.y0 - margin, b.y0 - margin);
+               if (ox > 0 && oy > 0) { union(i, j); continue; }
+               // Vertical proximity + horizontal overlap
+               const hOverlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+               const hMin = Math.min(a.x1 - a.x0, b.x1 - b.x0);
+               const vGap = Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1);
+               if (vGap >= 0 && vGap < vertGap && hOverlap > 0.1 * hMin) union(i, j);
+          }
+     }
+
+     const groups = new Map<number, BBox[]>();
+     for (let i = 0; i < n; i++) {
+          const root = find(i);
+          if (!groups.has(root)) groups.set(root, []);
+          groups.get(root)!.push(boxes[i]);
+     }
+     return Array.from(groups.values());
+}
+
+/**
+ * Analyse the OCR result and return the bounding box of the first major figure.
+ *
+ * Algorithm:
+ *  1. Find all "Figure N / Fig. N" captions (excludes single-letter panel labels).
+ *     Among these, prefer the one explicitly labelled "Figure 1" / "Fig. 1";
+ *     fall back to the first caption in document order if Figure 1 is not found.
+ *  2. For the target caption, collect image/chart blocks on the same page (and
+ *     the page immediately before it).
+ *  3. Apply a capture window: prefer blocks *above* the caption (typical
+ *     "caption below" layout); fall back to blocks below or the previous page.
+ *     The window is bounded above by the previous caption's bottom edge so that
+ *     earlier figures are not swallowed.
+ *  4. Cluster remaining candidates by proximity and return the union of the
+ *     largest cluster (by total area).
+ */
+function locateFigureBbox(ocrResult: any): LocatedFigure | null {
+     if (!ocrResult?.pages) return null;
+
+     // Build page-dimension lookup from OCR metadata
+     const pageDims = new Map<number, { width: number; height: number }>();
+     for (const page of ocrResult.pages) {
+          const pi: number = page.data?.page_index ?? page.page ?? 0;
+          pageDims.set(pi, { width: page.data?.width ?? 1, height: page.data?.height ?? 1 });
+     }
+
+     // Step 1 – collect major figure captions
+     interface Caption { page: number; bbox: BBox; content: string }
+     const captions: Caption[] = [];
+     for (const page of ocrResult.pages) {
+          const pi: number = page.data?.page_index ?? page.page ?? 0;
+          for (const block of page.data?.parsing_res_list ?? []) {
+               if (block.block_label !== "figure_title") continue;
+               const content: string = (block.block_content ?? "").trim();
+               if (!isRealFigureCaption(content)) continue;
+               const b: number[] = block.block_bbox;
+               if (!b || b.length < 4) continue;
+               captions.push({ page: pi, bbox: { x0: b[0], y0: b[1], x1: b[2], y1: b[3] }, content });
+          }
+     }
+     if (captions.length === 0) return null;
+
+     // Prefer the caption explicitly labelled "Figure 1"; fall back to the
+     // first caption in document order (pages are iterated sequentially).
+     const cap = captions.find((c) => isFigureOne(c.content)) ?? captions[0];
+     const dims = pageDims.get(cap.page) ?? { width: 1, height: 1 };
+
+     // Step 2 – collect visual candidate blocks on cap.page and cap.page - 1
+     interface VisualBlock { page: number; bbox: BBox }
+     const visualBlocks: VisualBlock[] = [];
+     for (const page of ocrResult.pages) {
+          const pi: number = page.data?.page_index ?? page.page ?? 0;
+          if (pi !== cap.page && pi !== cap.page - 1) continue;
+          for (const block of page.data?.parsing_res_list ?? []) {
+               if (!["image", "chart"].includes(block.block_label)) continue;
+               const b: number[] = block.block_bbox;
+               if (!b || b.length < 4) continue;
+               visualBlocks.push({ page: pi, bbox: { x0: b[0], y0: b[1], x1: b[2], y1: b[3] } });
+          }
+     }
+     if (visualBlocks.length === 0) return null;
+
+     // Step 3 – apply capture window
+     const capY0 = cap.bbox.y0;
+     const bandH = 0.8 * dims.height;
+     // Bottom edge of the nearest preceding caption on the same page
+     const prevCapY1 = Math.max(
+          0,
+          ...captions
+               .filter((c) => c.page === cap.page && c.bbox.y1 < capY0)
+               .map((c) => c.bbox.y1),
+     );
+
+     // Primary: blocks above the caption (caption-below layout)
+     let candidates = visualBlocks.filter(
+          (v) =>
+               v.page === cap.page &&
+               v.bbox.y1 <= capY0 &&
+               v.bbox.y0 >= capY0 - bandH &&
+               v.bbox.y0 >= prevCapY1,
+     );
+     // Fallback 1: blocks below caption (caption-above layout)
+     if (candidates.length === 0)
+          candidates = visualBlocks.filter((v) => v.page === cap.page && v.bbox.y0 >= capY0);
+     // Fallback 2: previous page
+     if (candidates.length === 0)
+          candidates = visualBlocks.filter((v) => v.page === cap.page - 1);
+
+     if (candidates.length === 0) return null;
+
+     // Step 4 – cluster by proximity, pick the largest cluster, return its union
+     const margin = Math.min(30, 0.015 * dims.height);
+     const clusters = clusterBboxes(candidates.map((c) => c.bbox), margin, 40);
+     const best = clusters.reduce((a, b) => (totalArea(a) >= totalArea(b) ? a : b));
+
+     return { page: cap.page, bbox: unionBboxes(best), pageWidth: dims.width, pageHeight: dims.height };
+}
+
+/**
+ * Extract the first figure from a PDF by:
+ *  1. Using `locateFigureBbox` to identify the figure region from OCR data.
+ *  2. Rendering that region with PyMuPDF (fitz) at 2× zoom for quality.
+ * Saves the crop as a .png next to the PDF and returns the filename.
  */
 async function extractFirstFigure(
      ocrResult: any,
@@ -363,54 +531,70 @@ async function extractFirstFigure(
      folderRoot: string,
      pdfName: string,
 ): Promise<string | null> {
-     // Use a small Python script to extract the first image from the PDF
-     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-fig-"));
+     const located = locateFigureBbox(ocrResult);
+     if (!located) return null;
+
+     const { page: pageIndex, bbox, pageWidth, pageHeight } = located;
+     // Normalise to [0, 1] so the Python script is resolution-independent
+     const nx0 = bbox.x0 / pageWidth;
+     const ny0 = bbox.y0 / pageHeight;
+     const nx1 = bbox.x1 / pageWidth;
+     const ny1 = bbox.y1 / pageHeight;
+
      const figName = pdfName.replace(/\.pdf$/i, "") + "_fig1.png";
      const figDestPath = path.join(folderRoot, figName);
+     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-fig-"));
 
+     // Small Python script: normalised coords → fitz clip → PNG
      const figScript = `
-import fitz
-import sys
+import fitz, sys
 
-pdf_path = sys.argv[1]
-out_path = sys.argv[2]
+pdf_path   = sys.argv[1]
+page_index = int(sys.argv[2])
+nx0, ny0, nx1, ny1 = float(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5]), float(sys.argv[6])
+out_path   = sys.argv[7]
 
-doc = fitz.open(pdf_path)
-for page_num in range(min(len(doc), 10)):
-    page = doc[page_num]
-    images = page.get_images(full=True)
-    for img_index, img in enumerate(images):
-        xref = img[0]
-        base_image = doc.extract_image(xref)
-        if base_image and base_image.get("image"):
-            img_bytes = base_image["image"]
-            if len(img_bytes) > 5000:
-                with open(out_path, "wb") as f:
-                    f.write(img_bytes)
-                print("EXTRACTED")
-                sys.exit(0)
-doc.close()
-print("NONE")
-`;
+doc  = fitz.open(pdf_path)
+page = doc[page_index]
+pw, ph = page.rect.width, page.rect.height
 
-     const scriptPath = path.join(tempDir, "extract_fig.py");
+pad_x = 0.01 * pw
+pad_y = 0.01 * ph
+clip = fitz.Rect(
+    max(0,  nx0 * pw - pad_x),
+    max(0,  ny0 * ph - pad_y),
+    min(pw, nx1 * pw + pad_x),
+    min(ph, ny1 * ph + pad_y),
+)
+pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), clip=clip)
+pix.save(out_path)
+print("EXTRACTED")
+`.trimStart();
+
+     const scriptPath = path.join(tempDir, "crop_fig.py");
      fs.writeFileSync(scriptPath, figScript);
 
      try {
           const result = await new Promise<string>((resolve, reject) => {
-               const proc = spawn("python", [scriptPath, pdfPath, figDestPath], { cwd: tempDir });
+               const proc = spawn(
+                    "python",
+                    [scriptPath, pdfPath, String(pageIndex),
+                     String(nx0), String(ny0), String(nx1), String(ny1),
+                     figDestPath],
+                    { cwd: tempDir },
+               );
                let stdout = "";
+               let stderr = "";
                proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+               proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
                proc.on("close", (code) => {
-                    if (code !== 0) reject(new Error("Figure extraction failed"));
+                    if (code !== 0) reject(new Error(`Figure crop failed (exit ${code}): ${stderr.slice(0, 800)}`));
                     else resolve(stdout.trim());
                });
                proc.on("error", reject);
           });
 
-          if (result.includes("EXTRACTED") && fs.existsSync(figDestPath)) {
-               return figName;
-          }
+          if (result.includes("EXTRACTED") && fs.existsSync(figDestPath)) return figName;
           return null;
      } finally {
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}

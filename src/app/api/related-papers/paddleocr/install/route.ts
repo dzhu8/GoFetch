@@ -314,7 +314,13 @@ export async function POST() {
                     const ok2 = await runCommand("pip", ["install", "paddleocr[doc-parser]"]);
                     if (!ok2) { controller.close(); return; }
 
-                    // Step 6: Remove pip-installed nvidia-cudnn packages.
+                    // Step 6: Install pymupdf (provides `fitz`) — required for figure
+                    // extraction from PDFs.  Installed here so it is always present in
+                    // the same Python environment as paddleocr.
+                    const ok3 = await runCommand("pip", ["install", "pymupdf"]);
+                    if (!ok3) { controller.close(); return; }
+
+                    // Step 7: Remove pip-installed nvidia-cudnn packages.
                     // torch brings in nvidia-cudnn-cu* whose cuDNN DLLs can be
                     // incompatible with paddlepaddle-gpu, causing WinError 127
                     // ("The specified procedure could not be found") at import time.
