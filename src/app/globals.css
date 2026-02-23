@@ -88,6 +88,23 @@
           line-clamp: 2;
           overflow: hidden;
      }
+
+     .line-clamp-3 {
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 3;
+          line-clamp: 3;
+          overflow: hidden;
+     }
+}
+
+@keyframes shimmer {
+     0% {
+          transform: translateX(-100%);
+     }
+     100% {
+          transform: translateX(100%);
+     }
 }
 
 @media screen and (-webkit-min-device-pixel-ratio: 0) {

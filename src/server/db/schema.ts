@@ -206,6 +206,55 @@ export const monitorEvents = sqliteTable("monitor_events", {
           .default(sql`CURRENT_TIMESTAMP`),
 });
 
+// ── Library folders (separate from codebase analytics folders) ────────────────
+
+export const libraryFolders = sqliteTable(
+     "library_folders",
+     {
+          id: integer("id").primaryKey(),
+          name: text("name").notNull(),
+          rootPath: text("root_path").notNull(),
+          createdAt: text("created_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+          updatedAt: text("updated_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+     },
+     (table) => ({
+          nameUniqueIdx: uniqueIndex("library_folders_name_idx").on(table.name),
+     })
+);
+
+// ── Library papers ───────────────────────────────────────────────────────────
+
+const PAPER_STATUS_ENUM = ["uploading", "processing", "ready", "error"] as const;
+
+export const papers = sqliteTable("papers", {
+     id: integer("id").primaryKey(),
+     folderId: integer("folder_id")
+          .notNull()
+          .references(() => libraryFolders.id, { onDelete: "cascade" }),
+     fileName: text("file_name").notNull(),
+     filePath: text("file_path").notNull(),
+     title: text("title"),
+     doi: text("doi"),
+     abstract: text("abstract"),
+     semanticScholarId: text("semantic_scholar_id"),
+     semanticScholarCitation: text("semantic_scholar_citation"),
+     firstFigurePath: text("first_figure_path"),
+     status: text("status", { enum: PAPER_STATUS_ENUM })
+          .$type<(typeof PAPER_STATUS_ENUM)[number]>()
+          .notNull()
+          .default("uploading"),
+     createdAt: text("created_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+     updatedAt: text("updated_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});
+
 const TEXT_FORMAT_ENUM = ["markdown", "text", "json", "yaml", "toml", "xml", "csv", "ini", "log", "env"] as const;
 
 type TextChunkMetadata = Record<string, unknown>;
