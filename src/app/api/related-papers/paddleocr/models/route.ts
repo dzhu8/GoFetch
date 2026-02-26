@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
+import configManager from "@/server";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const PADDLEOCR_CURATED_MODELS = [
      {
@@ -16,7 +17,8 @@ async function isPaddleOCRInstalled(): Promise<boolean> {
           // Use `pip show` rather than `import paddleocr` to avoid GPU/CUDA
           // library initialisation, which can fail or time out even when the
           // package is correctly installed (e.g. torch CUDA libs conflict).
-          await execAsync("pip show paddleocr", { timeout: 10000 });
+          const pythonExe: string = configManager.getConfig("preferences.pythonPath", "python") || "python";
+          await execFileAsync(pythonExe, ["-m", "pip", "show", "paddleocr"], { timeout: 10000 });
           return true;
      } catch {
           return false;

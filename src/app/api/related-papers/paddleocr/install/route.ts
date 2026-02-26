@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
+import configManager from "@/server";
 
 function parseCudaVersion(output: string): string | null {
      const match = output.match(/release\s+(\d+)\.(\d+)/i);
@@ -53,10 +54,10 @@ async function detectNvcc(): Promise<{ cudaTag: string } | { error: string }> {
      });
 }
 
-// Returns true if `import torch` succeeds in the current Python environment.
-function checkTorchInstalled(): Promise<boolean> {
+// Returns true if `import torch` succeeds in the given Python environment.
+function checkTorchInstalled(pythonExe: string): Promise<boolean> {
      return new Promise((resolve) => {
-          const proc = spawn("python", ["-c", "import torch"]);
+          const proc = spawn(pythonExe, ["-c", "import torch"]);
           const timeout = setTimeout(() => { proc.kill(); resolve(false); }, 10000);
           proc.on("close", (code) => { clearTimeout(timeout); resolve(code === 0); });
           proc.on("error", () => { clearTimeout(timeout); resolve(false); });
@@ -66,9 +67,9 @@ function checkTorchInstalled(): Promise<boolean> {
 // Detect cuDNN version via torch.backends.cudnn.version().
 // Returns "major.minor" (e.g. "9.5") or null if unavailable.
 // Encoding: cuDNN < 9 uses MAJOR*1000 + MINOR*100 (e.g. 8902); cuDNN >= 9 uses MAJOR*10000 + MINOR*100 (e.g. 90500).
-function detectCudnnViaTorch(): Promise<string | null> {
+function detectCudnnViaTorch(pythonExe: string): Promise<string | null> {
      return new Promise((resolve) => {
-          const proc = spawn("python", [
+          const proc = spawn(pythonExe, [
                "-c",
                "import torch; print('cuDNN:', torch.backends.cudnn.version())",
           ]);
@@ -167,7 +168,19 @@ function selectCompatibleCudaTag(preferredTag: string, cudnnVersion: string | nu
      return sorted[sorted.length - 1]; // Absolute fallback
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+     // Read the configured Python executable (saved during setup).
+     let pythonExe: string = configManager.getConfig("preferences.pythonPath", "python");
+     if (!pythonExe || typeof pythonExe !== "string") pythonExe = "python";
+
+     // Allow the caller to override / supply the Python path directly.
+     try {
+          const body = await req.json() as { pythonPath?: string };
+          if (body?.pythonPath && typeof body.pythonPath === "string") {
+               pythonExe = body.pythonPath;
+          }
+     } catch { /* no body is fine */ }
+
      // Detect CUDA synchronously before starting the stream.
      // cuDNN detection happens inside the stream after torch is confirmed available.
      const cudaResult = await detectNvcc();
@@ -260,18 +273,18 @@ export async function POST() {
 
                const runPipeline = async () => {
                     // Step 1: Ensure torch is installed (required for cuDNN detection)
-                    const torchInstalled = await checkTorchInstalled();
+                    const torchInstalled = await checkTorchInstalled(pythonExe);
                     if (!torchInstalled) {
                          const torchIndexUrl = `https://download.pytorch.org/whl/${cudaClamped}`;
-                         const ok = await runCommand("pip3", [
-                              "install", "torch", "torchvision",
+                         const ok = await runCommand(pythonExe, [
+                              "-m", "pip", "install", "torch", "torchvision",
                               "--index-url", torchIndexUrl,
                          ]);
                          if (!ok) { controller.close(); return; }
                     }
 
                     // Step 2: Detect cuDNN version via torch
-                    const cudnnVersion = await detectCudnnViaTorch();
+                    const cudnnVersion = await detectCudnnViaTorch(pythonExe);
 
                     // Step 3: Select the best paddlepaddle CUDA tag based on cuDNN
                     const cudaTag = selectCompatibleCudaTag(cudaClamped, cudnnVersion);
@@ -297,6 +310,7 @@ export async function POST() {
                          : "paddlepaddle-gpu";
 
                     const paddleArgs = [
+                         "-m", "pip",
                          "install",
                          paddleSpec,
                          "--extra-index-url",
@@ -307,17 +321,17 @@ export async function POST() {
                          ...(PADDLE_PRE_TAGS.has(cudaTag) ? ["--pre"] : []),
                     ];
 
-                    const ok1 = await runCommand("pip", paddleArgs);
+                    const ok1 = await runCommand(pythonExe, paddleArgs);
                     if (!ok1) { controller.close(); return; }
 
                     // Step 5: Install paddleocr
-                    const ok2 = await runCommand("pip", ["install", "paddleocr[doc-parser]"]);
+                    const ok2 = await runCommand(pythonExe, ["-m", "pip", "install", "paddleocr[doc-parser]"]);
                     if (!ok2) { controller.close(); return; }
 
                     // Step 6: Install pymupdf (provides `fitz`) — required for figure
                     // extraction from PDFs.  Installed here so it is always present in
                     // the same Python environment as paddleocr.
-                    const ok3 = await runCommand("pip", ["install", "pymupdf"]);
+                    const ok3 = await runCommand(pythonExe, ["-m", "pip", "install", "pymupdf"]);
                     if (!ok3) { controller.close(); return; }
 
                     // Step 7: Remove pip-installed nvidia-cudnn packages.
@@ -326,7 +340,8 @@ export async function POST() {
                     // ("The specified procedure could not be found") at import time.
                     // Both torch and paddle will fall back to the system cuDNN
                     // (already verified compatible via torch.backends.cudnn).
-                    await runCommand("pip", [
+                    await runCommand(pythonExe, [
+                         "-m", "pip",
                          "uninstall", "-y",
                          "nvidia-cudnn-cu11", "nvidia-cudnn-cu12",
                     ]);

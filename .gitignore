@@ -10,4 +10,7 @@ yarn.lock
 
 .next/
 .vscode/
+.yarn/
 tsconfig.tsbuildinfo
+.pnp*
+

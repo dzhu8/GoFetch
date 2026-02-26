@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Plus, PlugZap, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Plus, PlugZap, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConfigModelProvider, type MinimalProvider } from "@/lib/models/types";
 import { UIConfigSections } from "@/lib/config/types";
@@ -11,6 +11,7 @@ import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import OllamaModels from "./modelsView/OllamaModels";
 import ModelSelect from "./modelsView/ModelSelect";
 import AddProvider from "../models/AddProvider";
+import type { PythonEnvironment } from "@/app/api/related-papers/paddleocr/environments/route";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -32,6 +33,20 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [isCliConsentSaving, setIsCliConsentSaving] = useState(false);
      const [defaultChatModel, setDefaultChatModel] = useState<ModelPreference | null>(null);
      const [defaultEmbeddingModel, setDefaultEmbeddingModel] = useState<ModelPreference | null>(null);
+
+     // Python environment state (step 6)
+     const [pythonEnvs, setPythonEnvs] = useState<PythonEnvironment[]>([]);
+     const [pythonEnvsLoading, setPythonEnvsLoading] = useState(false);
+     const [selectedPythonPath, setSelectedPythonPath] = useState<string>("");
+     const [newVenvPath, setNewVenvPath] = useState("");
+     const [isCreatingVenv, setIsCreatingVenv] = useState(false);
+
+     // Install progress modal state
+     const [showInstallModal, setShowInstallModal] = useState(false);
+     const [installLines, setInstallLines] = useState<string[]>([]);
+     const [installStatus, setInstallStatus] = useState<"running" | "done" | "error">("running");
+     const [installError, setInstallError] = useState<string | null>(null);
+     const installScrollRef = useRef<HTMLDivElement>(null);
 
      const fetchProviders = useCallback(async (options?: { suppressSpinner?: boolean }) => {
           const showSpinner = !options?.suppressSpinner;
@@ -58,6 +73,25 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
           if (setupState < 3) return;
           fetchProviders();
      }, [setupState, fetchProviders]);
+
+     // Load available Python environments when the user reaches step 6
+     useEffect(() => {
+          if (setupState !== 6) return;
+          setPythonEnvsLoading(true);
+          fetch("/api/related-papers/paddleocr/environments")
+               .then((res) => res.json())
+               .then((data: { environments?: PythonEnvironment[] }) => {
+                    const envs = data.environments ?? [];
+                    setPythonEnvs(envs);
+                    // Pre-select the first detected environment if nothing is chosen yet
+                    if (!selectedPythonPath && envs.length > 0) {
+                         setSelectedPythonPath(envs[0].pythonPath);
+                    }
+               })
+               .catch(() => toast.error("Failed to list Python environments"))
+               .finally(() => setPythonEnvsLoading(false));
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+     }, [setupState]);
 
      useEffect(() => {
           const fetchCliConsent = async () => {
@@ -146,19 +180,137 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const handleFinish = useCallback(async () => {
           try {
                setIsFinishing(true);
+
+               // Save the selected Python path to config before completing setup
+               if (selectedPythonPath) {
+                    await fetch("/api/config", {
+                         method: "POST",
+                         headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({ key: "preferences.pythonPath", value: selectedPythonPath }),
+                    });
+               }
+
                const res = await fetch("/api/config/setup-complete", {
                     method: "POST",
                });
 
                if (!res.ok) throw new Error("Failed to complete setup");
-               await delay(600);
-               window.location.reload();
+
+               // If a Python env was selected, kick off the PaddleOCR install in background
+               // and show the progress modal. Otherwise just reload.
+               if (selectedPythonPath) {
+                    setInstallLines([]);
+                    setInstallStatus("running");
+                    setInstallError(null);
+                    setShowInstallModal(true);
+                    setIsFinishing(false);
+
+                    // Stream the install output
+                    try {
+                         const installRes = await fetch("/api/related-papers/paddleocr/install", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ pythonPath: selectedPythonPath }),
+                         });
+
+                         if (!installRes.ok) {
+                              const err = await installRes.json().catch(() => ({ error: "Installation failed" }));
+                              setInstallError((err as { error?: string }).error ?? "Installation failed");
+                              setInstallStatus("error");
+                              return;
+                         }
+
+                         const reader = installRes.body?.getReader();
+                         const decoder = new TextDecoder();
+                         if (!reader) {
+                              setInstallStatus("error");
+                              setInstallError("No response stream");
+                              return;
+                         }
+
+                         let buf = "";
+                         while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) break;
+                              buf += decoder.decode(value, { stream: true });
+                              const parts = buf.split("\n");
+                              buf = parts.pop() ?? "";
+                              for (const part of parts) {
+                                   const trimmed = part.trim();
+                                   if (!trimmed) continue;
+                                   try {
+                                        const msg = JSON.parse(trimmed) as { type: string; line?: string; message?: string };
+                                        if (msg.type === "output" || msg.type === "command") {
+                                             setInstallLines((prev) => [...prev, msg.line ?? ""]);
+                                        } else if (msg.type === "error") {
+                                             setInstallError(msg.message ?? "Unknown error");
+                                             setInstallStatus("error");
+                                        } else if (msg.type === "done") {
+                                             setInstallStatus("done");
+                                        }
+                                   } catch { /* ignore malformed lines */ }
+                              }
+                         }
+
+                         if (installStatus !== "error") {
+                              setInstallStatus("done");
+                         }
+                    } catch (streamErr) {
+                         console.error("Install stream error:", streamErr);
+                         setInstallError(streamErr instanceof Error ? streamErr.message : "Installation failed");
+                         setInstallStatus("error");
+                    }
+               } else {
+                    await delay(600);
+                    window.location.reload();
+               }
           } catch (error) {
                console.error("Error completing setup:", error);
                toast.error("Failed to complete setup");
                setIsFinishing(false);
           }
-     }, []);
+     }, [selectedPythonPath, installStatus]);
+
+     const handleCreateVenv = async () => {
+          if (!newVenvPath.trim()) {
+               toast.error("Please enter a path for the new virtual environment");
+               return;
+          }
+          setIsCreatingVenv(true);
+          try {
+               const res = await fetch("/api/related-papers/paddleocr/environments", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ venvPath: newVenvPath.trim() }),
+               });
+               if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: "Failed to create virtual environment" }));
+                    toast.error((err as { error?: string }).error ?? "Failed to create virtual environment");
+                    return;
+               }
+               const data = (await res.json()) as { environment: PythonEnvironment };
+               setPythonEnvs((prev) => [...prev, data.environment]);
+               setSelectedPythonPath(data.environment.pythonPath);
+               setNewVenvPath("");
+               toast.success(`Created virtual environment: ${data.environment.name}`);
+          } catch {
+               toast.error("Failed to create virtual environment");
+          } finally {
+               setIsCreatingVenv(false);
+          }
+     };
+
+     // Auto-scroll the install log to the bottom as new lines arrive
+     useEffect(() => {
+          if (installScrollRef.current) {
+               installScrollRef.current.scrollTop = installScrollRef.current.scrollHeight;
+          }
+     }, [installLines]);
+
+     const handleDismissInstallModal = () => {
+          setShowInstallModal(false);
+          window.location.reload();
+     };
 
      const visibleProviders = useMemo(
           () => providers.filter((provider) => provider.name?.toLowerCase() !== "transformers"),
@@ -277,6 +429,71 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     providerSections={configSections.modelProviders ?? []}
                     onProviderAdded={() => fetchProviders()}
                />
+
+               {/* PaddleOCR Install Progress Modal */}
+               {showInstallModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                         <div className="w-[90vw] max-w-2xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-2xl p-5 sm:p-6 flex flex-col gap-4">
+                              <div className="flex items-center justify-between">
+                                   <div className="flex items-center gap-2">
+                                        {installStatus === "running" && (
+                                             <Loader2 className="w-4 h-4 animate-spin text-[#F8B692]" />
+                                        )}
+                                        {installStatus === "done" && (
+                                             <Check className="w-4 h-4 text-green-500" />
+                                        )}
+                                        {installStatus === "error" && (
+                                             <X className="w-4 h-4 text-red-500" />
+                                        )}
+                                        <p className="text-sm font-medium text-black dark:text-white">
+                                             {installStatus === "running" && "Installing PaddleOCR..."}
+                                             {installStatus === "done" && "PaddleOCR installed successfully"}
+                                             {installStatus === "error" && "Installation failed"}
+                                        </p>
+                                   </div>
+                                   <button
+                                        type="button"
+                                        onClick={handleDismissInstallModal}
+                                        disabled={installStatus === "running"}
+                                        className="text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                        title="Close"
+                                   >
+                                        <X className="w-4 h-4" />
+                                   </button>
+                              </div>
+
+                              {installError && (
+                                   <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-700 dark:text-red-400">
+                                        {installError}
+                                   </div>
+                              )}
+
+                              <div
+                                   ref={installScrollRef}
+                                   className="h-64 overflow-y-auto rounded-lg bg-black/90 p-3 font-mono text-[11px] text-green-400 space-y-0.5"
+                              >
+                                   {installLines.length === 0 ? (
+                                        <p className="text-white/40">Waiting for output...</p>
+                                   ) : (
+                                        installLines.map((line, i) => (
+                                             <p key={i} className="leading-relaxed whitespace-pre-wrap break-all">{line}</p>
+                                        ))
+                                   )}
+                              </div>
+
+                              <div className="flex justify-end">
+                                   <button
+                                        type="button"
+                                        onClick={handleDismissInstallModal}
+                                        disabled={installStatus === "running"}
+                                        className="px-4 py-2 text-sm rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] transition-all disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                                   >
+                                        {installStatus === "running" ? "Installing..." : "Get Started"}
+                                   </button>
+                              </div>
+                         </div>
+                    </div>
+               )}
 
                {setupState === 2 && (
                     <motion.div
@@ -585,6 +802,111 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     </motion.div>
                )}
 
+               {setupState === 6 && (
+                    <motion.div
+                         initial={{ opacity: 0, y: 20 }}
+                         animate={{
+                              opacity: 1,
+                              y: 0,
+                              transition: { duration: 0.5, delay: 0.1 },
+                         }}
+                         className="w-full h-[calc(95vh-80px)] bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-xl shadow-sm flex flex-col overflow-hidden"
+                    >
+                         <div className="flex-1 overflow-y-auto px-3 sm:px-4 md:px-6 py-4 md:py-6">
+                              <div className="flex flex-col mb-4 md:mb-6 pb-3 md:pb-4 border-b border-light-200 dark:border-dark-200">
+                                   <div>
+                                        <p className="text-xs sm:text-sm font-medium text-black dark:text-white">
+                                             Python Environment for PaddleOCR
+                                        </p>
+                                        <p className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 mt-0.5">
+                                             Choose the Python environment where PaddleOCR will be installed.
+                                        </p>
+                                   </div>
+                              </div>
+
+                              <div className="space-y-5">
+                                   {/* Warning banner */}
+                                   <div className="flex items-start gap-2.5 p-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30">
+                                        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                                        <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                                             Changing the Python environment after installation requires you to
+                                             manually reinstall PaddleOCR in the new environment. Choose carefully.
+                                        </p>
+                                   </div>
+
+                                   {/* Environment picker */}
+                                   <div className="space-y-2">
+                                        <label className="text-xs font-medium text-black dark:text-white">
+                                             Select Environment
+                                        </label>
+                                        {pythonEnvsLoading ? (
+                                             <div className="flex items-center gap-2 py-3">
+                                                  <Loader2 className="w-4 h-4 animate-spin text-black/50 dark:text-white/50" />
+                                                  <p className="text-xs text-black/60 dark:text-white/60">
+                                                       Detecting Python environments...
+                                                  </p>
+                                             </div>
+                                        ) : pythonEnvs.length === 0 ? (
+                                             <p className="text-xs text-black/50 dark:text-white/50 py-2">
+                                                  No Python environments detected. Create one below.
+                                             </p>
+                                        ) : (
+                                             <select
+                                                  value={selectedPythonPath}
+                                                  onChange={(e) => setSelectedPythonPath(e.target.value)}
+                                                  className="w-full px-3 py-2 text-xs sm:text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692] focus:border-transparent"
+                                             >
+                                                  <option value="">— Skip PaddleOCR installation —</option>
+                                                  {pythonEnvs.map((env) => (
+                                                       <option key={env.pythonPath} value={env.pythonPath}>
+                                                            {env.name}
+                                                       </option>
+                                                  ))}
+                                             </select>
+                                        )}
+                                        {selectedPythonPath && (
+                                             <p className="text-[10px] text-black/50 dark:text-white/50 font-mono break-all pl-1">
+                                                  {selectedPythonPath}
+                                             </p>
+                                        )}
+                                   </div>
+
+                                   {/* Create new venv */}
+                                   <div className="space-y-2 pt-2 border-t border-light-200 dark:border-dark-200">
+                                        <label className="text-xs font-medium text-black dark:text-white">
+                                             Or Create a New Virtual Environment
+                                        </label>
+                                        <p className="text-[10px] text-black/50 dark:text-white/50">
+                                             Enter the path where the new virtual environment should be created.
+                                        </p>
+                                        <div className="flex flex-row gap-2">
+                                             <input
+                                                  type="text"
+                                                  value={newVenvPath}
+                                                  onChange={(e) => setNewVenvPath(e.target.value)}
+                                                  placeholder="e.g. C:\Users\you\envs\gofetch-ocr"
+                                                  className="flex-1 px-3 py-2 text-xs sm:text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white placeholder:text-black/40 dark:placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#F8B692] focus:border-transparent"
+                                             />
+                                             <button
+                                                  type="button"
+                                                  onClick={handleCreateVenv}
+                                                  disabled={isCreatingVenv || !newVenvPath.trim()}
+                                                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                                             >
+                                                  {isCreatingVenv ? (
+                                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                  ) : (
+                                                       <Plus className="w-3.5 h-3.5" />
+                                                  )}
+                                                  Create
+                                             </button>
+                                        </div>
+                                   </div>
+                              </div>
+                         </div>
+                    </motion.div>
+               )}
+
                <div className="flex flex-row items-center justify-between pt-2">
                     {setupState > 2 ? (
                          <motion.button
@@ -643,6 +965,24 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     )}
 
                     {setupState === 5 && (
+                         <motion.button
+                              initial={{ opacity: 0, x: 10 }}
+                              animate={{
+                                   opacity: 1,
+                                   x: 0,
+                                   transition: { duration: 0.5 },
+                              }}
+                              type="button"
+                              onClick={() => setSetupState(6)}
+                              disabled={!hasConfiguredProviders || isLoading}
+                              className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 font-medium text-xs sm:text-sm disabled:bg-light-200 dark:disabled:bg-dark-200 disabled:text-black/40 dark:disabled:text-white/40 disabled:cursor-not-allowed disabled:active:scale-100"
+                         >
+                              <span>Next</span>
+                              <ArrowRight className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                         </motion.button>
+                    )}
+
+                    {setupState === 6 && (
                          <motion.button
                               initial={{ opacity: 0, x: 10 }}
                               animate={{

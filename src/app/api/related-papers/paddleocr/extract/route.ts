@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import configManager from "@/server";
 
 // Long-running OCR jobs can take several minutes for large documents
 export const maxDuration = 300;
@@ -86,8 +87,9 @@ export async function POST(req: NextRequest) {
                               env[pathKey] = `${cudaBin}${path.delimiter}${env[pathKey] ?? ""}`;
                          }
 
+                         const pythonExe: string = configManager.getConfig("preferences.pythonPath", "python") || "python";
                          await new Promise<void>((resolve, reject) => {
-                              const proc = spawn("python", [scriptPath, pdfPath], {
+                              const proc = spawn(pythonExe, [scriptPath, pdfPath], {
                                    cwd: tempDir!,
                                    env,
                               });
