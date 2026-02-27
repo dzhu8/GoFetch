@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -20,6 +20,7 @@ import Image from "next/image";
 import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 import type { MinimalProvider } from "@/lib/models/types";
 import { cn } from "@/lib/utils";
+import ModelFamilyGroup, { inferFamilyFromName } from "@/components/setup/modelsView/ModelFamilyGroup";
 
 interface NormalizedModelRow {
      key: string;
@@ -54,7 +55,7 @@ const TEST_TABS = [
 type TestTabId = (typeof TEST_TABS)[number]["id"];
 
 const deriveParameterLabelFromName = (value?: string) => {
-     if (!value) return "—";
+     if (!value) return "â€”";
 
      // First try to match after the colon
      const afterColon = value.split(":").pop() ?? "";
@@ -66,13 +67,13 @@ const deriveParameterLabelFromName = (value?: string) => {
 
      // Fallback: match anywhere in the string
      const match = value.match(/(?<amount>\d+(?:\.\d+)?)\s*(?<unit>[bm])/i);
-     if (!match || !match.groups) return "—";
+     if (!match || !match.groups) return "â€”";
      const unit = match.groups.unit?.toUpperCase();
      return `${match.groups.amount}${unit}`;
 };
 
 const formatSizeLabel = (value?: string) => {
-     if (!value || !value.trim()) return "—";
+     if (!value || !value.trim()) return "â€”";
      return value;
 };
 
@@ -187,8 +188,8 @@ const ModelsPage = () => {
                          displayName: model.name,
                          description: model.description ?? "GPU-accelerated OCR model installed via pip",
                          sizeLabel: "~1 GB",
-                         contextWindowLabel: "—",
-                         parameterLabel: "—",
+                         contextWindowLabel: "â€”",
+                         parameterLabel: "â€”",
                          supportsChat: false,
                          supportsEmbedding: false,
                          supportsOCR: true,
@@ -237,7 +238,7 @@ const ModelsPage = () => {
                               displayName: model.name,
                               description: model.description,
                               sizeLabel: formatSizeLabel(model.size),
-                              contextWindowLabel: model.contextWindow ?? "—",
+                              contextWindowLabel: model.contextWindow ?? "â€”",
                               parameterLabel: deriveParameterLabelFromName(model.name),
                               supportsChat: Boolean(model.supportsChat),
                               supportsEmbedding: Boolean(model.supportsEmbedding),
@@ -292,8 +293,8 @@ const ModelsPage = () => {
                          key: model.key,
                          displayName: model.displayName ?? model.name ?? model.key,
                          description: model.description,
-                         sizeLabel: model.sizeLabel ?? "—",
-                         contextWindowLabel: model.contextWindow ?? "—",
+                         sizeLabel: model.sizeLabel ?? "â€”",
+                         contextWindowLabel: model.contextWindow ?? "â€”",
                          parameterLabel:
                               model.parameterLabel ??
                               deriveParameterLabelFromName(model.displayName ?? model.name ?? model.key),
@@ -346,10 +347,10 @@ const ModelsPage = () => {
                               list = (refreshedData.providers ?? []) as MinimalProvider[];
                          }
                     } catch {
-                         // Non-fatal — OCR section will populate on next visit
+                         // Non-fatal â€” OCR section will populate on next visit
                     }
                } else if (paddleOcrProviders.length > 1) {
-                    // Duplicates can be created by React StrictMode's double-invocation — keep only the first
+                    // Duplicates can be created by React StrictMode's double-invocation â€” keep only the first
                     for (const extra of paddleOcrProviders.slice(1)) {
                          await fetch(`/api/providers/${extra.id}`, { method: "DELETE" }).catch(() => {});
                     }
@@ -404,7 +405,7 @@ const ModelsPage = () => {
 
                const key = `${providerId}:${model.key}`;
 
-               // ── PaddleOCR: CUDA check + pip install ──────────────────────────
+               // â”€â”€ PaddleOCR: CUDA check + pip install â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                if (provider.type === "paddleocr") {
                     setDownloadingMap((prev) => ({ ...prev, [key]: true }));
                     setInstallLogMap((prev) => ({ ...prev, [key]: "Checking for CUDA..." }));
@@ -474,7 +475,7 @@ const ModelsPage = () => {
                     return;
                }
 
-               // ── Ollama: streaming binary download ────────────────────────────
+               // â”€â”€ Ollama: streaming binary download â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                setDownloadingMap((prev) => ({ ...prev, [key]: true }));
                setDownloadProgressMap((prev) => ({
                     ...prev,
@@ -589,7 +590,7 @@ const ModelsPage = () => {
                          <div>
                               <p className="text-lg font-semibold text-black dark:text-white">{provider.name}</p>
                               <p className="text-xs text-black/60 dark:text-white/60">
-                                   {providerType} Provider • {rows.length} {rows.length === 1 ? "model" : "models"}
+                                   {providerType} Provider â€¢ {rows.length} {rows.length === 1 ? "model" : "models"}
                               </p>
                          </div>
                          <div className="flex flex-wrap gap-2">
@@ -619,189 +620,39 @@ const ModelsPage = () => {
                               </p>
                          </div>
                     ) : (
-                         <div className="overflow-x-auto">
-                              <table className="min-w-full text-left text-xs sm:text-sm">
-                                   <thead>
-                                        <tr className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 uppercase">
-                                             <th className="py-2 pr-4 font-medium">Model</th>
-                                             <th className="py-2 pr-4 font-medium">Size</th>
-                                             <th className="py-2 pr-4 font-medium">Context</th>
-                                             <th className="py-2 pr-4 font-medium">Parameters</th>
-                                             <th className="py-2 pr-4 font-medium">Chat</th>
-                                             <th className="py-2 pr-4 font-medium">Embeddings</th>
-                                             <th className="py-2 pr-4 font-medium">OCR</th>
-                                             <th className="py-2 font-medium text-right">Action</th>
-                                        </tr>
-                                   </thead>
-                                   <tbody>
-                                        {rows.map((model) => {
-                                             const downloadKey = `${provider.id}:${model.key}`;
-                                             const isDownloading = Boolean(downloadingMap[downloadKey]);
-                                             const progress = downloadProgressMap[downloadKey];
-                                             return (
-                                                  <tr
-                                                       key={model.key}
-                                                       className="border-t border-light-200/60 dark:border-dark-200/60"
-                                                  >
-                                                       <td className="py-3 pr-4">
-                                                            <div className="flex flex-col gap-0.5">
-                                                                 <div className="flex items-center gap-2">
-                                                                      <p className="text-sm font-medium text-black dark:text-white">
-                                                                           {model.displayName}
-                                                                      </p>
-                                                                      {model.recommended && (
-                                                                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#F8B692]/20 text-[#F8B692]">
-                                                                                Recommended
-                                                                           </span>
-                                                                      )}
-                                                                      {model.installed && (
-                                                                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
-                                                                                Installed
-                                                                           </span>
-                                                                      )}
-                                                                 </div>
-                                                                 {model.description && (
-                                                                      <p className="text-[11px] text-black/60 dark:text-white/60 line-clamp-2">
-                                                                           {model.description}
-                                                                      </p>
-                                                                 )}
-                                                            </div>
-                                                       </td>
-                                                       <td className="py-3 pr-4 text-black/70 dark:text-white/70">
-                                                            {model.sizeLabel}
-                                                       </td>
-                                                       <td className="py-3 pr-4 text-black/70 dark:text-white/70">
-                                                            {model.contextWindowLabel}
-                                                       </td>
-                                                       <td className="py-3 pr-4 text-black/70 dark:text-white/70">
-                                                            {model.parameterLabel}
-                                                       </td>
-                                                       <td className="py-3 pr-4">
-                                                            <span
-                                                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${capabilityBadgeClasses(model.supportsChat)}`}
-                                                            >
-                                                                 {model.supportsChat ? (
-                                                                      <>
-                                                                           <Check className="w-3 h-3" />
-                                                                           Yes
-                                                                      </>
-                                                                 ) : (
-                                                                      <>No</>
-                                                                 )}
-                                                            </span>
-                                                       </td>
-                                                       <td className="py-3 pr-4">
-                                                            <span
-                                                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${capabilityBadgeClasses(model.supportsEmbedding)}`}
-                                                            >
-                                                                 {model.supportsEmbedding ? (
-                                                                      <>
-                                                                           <Check className="w-3 h-3" />
-                                                                           Yes
-                                                                      </>
-                                                                 ) : (
-                                                                      <>No</>
-                                                                 )}
-                                                            </span>
-                                                       </td>
-                                                       <td className="py-3 pr-4">
-                                                            <span
-                                                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${capabilityBadgeClasses(model.supportsOCR)}`}
-                                                            >
-                                                                 {model.supportsOCR ? (
-                                                                      <>
-                                                                           <Check className="w-3 h-3" />
-                                                                           Yes
-                                                                      </>
-                                                                 ) : (
-                                                                      <>No</>
-                                                                 )}
-                                                            </span>
-                                                       </td>
-                                                       <td className="py-3 text-right">
-                                                            {model.action === "download" ? (
-                                                                 <div className="flex flex-wrap justify-end gap-2">
-                                                                      {model.installed ? (
-                                                                           <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-light-200 dark:bg-dark-200 text-xs text-black/60 dark:text-white/60">
-                                                                                Up to date
-                                                                           </span>
-                                                                      ) : isDownloading ? (
-                                                                           <div className="w-full sm:w-48">
-                                                                                <div className="h-2 w-full rounded-full bg-light-200 dark:bg-dark-200 overflow-hidden">
-                                                                                     <div
-                                                                                          className="h-full rounded-full bg-[#F8B692] transition-all duration-300"
-                                                                                          style={{
-                                                                                               width: `${progress?.total && progress.total > 0 ? Math.min(progress.progress, 100) : 15}%`,
-                                                                                          }}
-                                                                                     />
-                                                                                </div>
-                                                                                <div className="mt-1 flex items-center justify-end gap-2 text-[11px] text-black/70 dark:text-white/70">
-                                                                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                                                     <span>
-                                                                                          {progress &&
-                                                                                          progress.total > 0
-                                                                                               ? `${Math.round(progress.progress)}% (${formatMegabytes(progress.downloaded)} MB / ${formatMegabytes(progress.total)} MB)`
-                                                                                               : "Preparing download..."}
-                                                                                     </span>
-                                                                                </div>
-                                                                           </div>
-                                                                      ) : (
-                                                                           <button
-                                                                                type="button"
-                                                                                onClick={() =>
-                                                                                     handleDownload(provider.id, model)
-                                                                                }
-                                                                                disabled={isDownloading}
-                                                                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F8B692] text-black text-xs font-medium hover:bg-[#e6ad82] active:scale-95 transition disabled:opacity-60"
-                                                                           >
-                                                                                {isDownloading ? (
-                                                                                     <>
-                                                                                          <Loader2 className="w-4 h-4 animate-spin" />
-                                                                                          Downloading
-                                                                                     </>
-                                                                                ) : (
-                                                                                     <>
-                                                                                          <Download className="w-4 h-4" />
-                                                                                          Download
-                                                                                     </>
-                                                                                )}
-                                                                           </button>
-                                                                      )}
-
-                                                                      {model.supportsEmbedding && (
-                                                                           <button
-                                                                                type="button"
-                                                                                onClick={() =>
-                                                                                     openTestModal(provider, model)
-                                                                                }
-                                                                                disabled={!model.installed}
-                                                                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F8B692] text-black text-xs font-medium hover:bg-[#e6ad82] active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                           >
-                                                                                Test Embedding
-                                                                           </button>
-                                                                      )}
-                                                                 </div>
-                                                            ) : (
-                                                                 <button
-                                                                      type="button"
-                                                                      disabled
-                                                                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-light-200 dark:border-dark-200 text-xs text-black/60 dark:text-white/60"
-                                                                 >
-                                                                      Remote Access
-                                                                 </button>
-                                                            )}
-                                                       </td>
-                                                  </tr>
-                                             );
-                                        })}
-                                   </tbody>
-                              </table>
+                         <div className="space-y-3">
+                              {Object.entries(
+                                   rows.reduce<Record<string, typeof rows>>((groups, model) => {
+                                        const family = inferFamilyFromName(model.displayName || model.key);
+                                        if (!groups[family]) groups[family] = [];
+                                        groups[family].push(model);
+                                        return groups;
+                                   }, {})
+                              )
+                              .sort(([familyA, modelsA], [familyB, modelsB]) => {
+                                   const aHasRec = modelsA.some((m) => m.recommended);
+                                   const bHasRec = modelsB.some((m) => m.recommended);
+                                   if (aHasRec && !bHasRec) return -1;
+                                   if (!aHasRec && bHasRec) return 1;
+                                   return familyA.localeCompare(familyB);
+                              })
+                              .map(([family, familyModels]) => (
+                                   <ModelFamilyGroup
+                                        key={family}
+                                        family={family}
+                                        models={familyModels}
+                                        providerId={provider.id}
+                                        onDownload={(m) => handleDownload(provider.id, m)}
+                                        downloadingMap={downloadingMap}
+                                        downloadProgressMap={downloadProgressMap}
+                                        onTest={(m) => openTestModal(provider, m)}
+                                   />
+                              ))}
                          </div>
                     )}
                </div>
           );
      };
-
      return (
           <>
                <div className="h-full flex flex-col">
@@ -1081,7 +932,7 @@ const TestEmbeddingModal = ({ config, onClose }: TestEmbeddingModalProps) => {
                          <div>
                               <p className="text-lg font-semibold text-black dark:text-white">Test Embedding</p>
                               <p className="text-xs text-black/60 dark:text-white/60">
-                                   {config.providerName} • {config.modelName}
+                                   {config.providerName} â€¢ {config.modelName}
                               </p>
                          </div>
                          <button

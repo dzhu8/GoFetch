@@ -131,9 +131,9 @@ const AVAILABLE_MODELS = [
           name: "mistral:7b",
           size: "4.1 GB",
           contextWindow: 32768, // 32K
-          description: "Mistral 7B - excellent for code and reasoning",
+          description: "Mistral 7B - small model for code and reasoning",
           family: "Mistral",
-          recommended: true,
+          recommended: false,
      },
      {
           name: "phi3:3.8b",
@@ -168,12 +168,36 @@ const AVAILABLE_MODELS = [
           recommended: false,
      },
      {
+          name: "granite-embedding:278m",
+          size: "63 MB",
+          contextWindow: 512,
+          description: "IBM's Granite Embedding 278M - compact but effective embedding model comparable to Qwen 3 4B",
+          family: "Granite",
+          recommended: true,
+     },
+     {
           name: "r1-1776:70b",
           size: "43 GB",
           contextWindow: 131072, // 128K
           description: "Deepseek R1 1776 70B - high capacity model",
           family: "Deepseek",
           recommended: false,
+     },
+     {
+          name: "gpt-oss:20b",
+          size: "14 GB",
+          contextWindow: 131072, // 128K
+          description: "Open-source GPT 20B - versatile general-purpose model",
+          family: "GPT-OSS",
+          recommended: true,
+     },
+     {
+          name: "gpt-oss:120b",
+          size: "65 GB",
+          contextWindow: 131072, // 128K
+          description: "Open-source GPT 120B - top-tier performance, requires significant resources",
+          family: "GPT-OSS",
+          recommended: false
      },
 
 ];
