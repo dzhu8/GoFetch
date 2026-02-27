@@ -23,7 +23,6 @@ class ConfigManager {
           version: this.configVersion,
           setupComplete: false,
           preferences: {
-               cliFolderWatcher: false,
                embedSummaries: false,
                defaultChatModel: null,
                defaultEmbeddingModel: null,
@@ -61,16 +60,6 @@ class ConfigManager {
                     description: "Choose between light and dark layouts for the app.",
                     default: "dark",
                     scope: "client",
-               },
-               {
-                    name: "CLI Folder Watcher",
-                    key: "cliFolderWatcher",
-                    type: "switch",
-                    required: false,
-                    description:
-                         "Allow the GoFetch CLI helper to watch for folder selections so you can pick folders via the OS file explorer.",
-                    default: false,
-                    scope: "server",
                },
                {
                     name: "Embed Summaries",

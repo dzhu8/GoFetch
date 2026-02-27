@@ -764,10 +764,10 @@ export default function InspectPage() {
                <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-4">
                     <div>
                          <h1 className="text-3xl md:text-4xl xl:text-5xl font-['Big_Softie'] text-[#F8B692] mb-2">
-                              Codebase Analytics
+                              Library Analytics
                          </h1>
                          <p className="text-sm md:text-base text-black/60 dark:text-white/60">
-                              Inspect codebase embeddings.
+                              Inspect paper embeddings.
                          </p>
                     </div>
                     <div className="flex flex-col items-center gap-3">
@@ -1185,7 +1185,7 @@ export default function InspectPage() {
                                                        <p className="text-center text-xs text-black/50 dark:text-white/50">
                                                             {loadProgress.loaded >= loadProgress.total
                                                                  ? "Running UMAP dimensionality reduction..."
-                                                                 : `Fetching ${loadProgress.total} AST node embeddings`}
+                                                                 : `Fetching ${loadProgress.total} embeddings`}
                                                        </p>
                                                   </div>
                                              ) : (

@@ -31,25 +31,27 @@ const IGNORED_DIRECTORIES = [
 ];
 
 /**
- * File extensions that are supported for AST parsing.
+ * File extensions that are supported for monitoring.
  * Only changes to files with these extensions will trigger events.
- * This list should match the extensions in src/lib/ast/languages.ts
  */
 const SUPPORTED_EXTENSIONS = new Set([
-     ".js",
-     ".cjs",
-     ".mjs",
-     ".jsx",
-     ".ts",
-     ".tsx",
-     ".py",
-     ".rs",
-     ".css",
-     ".scss",
-     ".sass",
-     ".less",
-     ".html",
-     ".htm",
+     ".md",
+     ".mdx",
+     ".markdown",
+     ".txt",
+     ".text",
+     ".json",
+     ".jsonc",
+     ".json5",
+     ".yaml",
+     ".yml",
+     ".toml",
+     ".xml",
+     ".xhtml",
+     ".svg",
+     ".csv",
+     ".tsv",
+     ".pdf",
 ]);
 
 /**

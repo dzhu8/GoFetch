@@ -5,9 +5,6 @@ import { eq } from "drizzle-orm";
 import db from "@/server/db";
 import { folders as foldersTable, embeddings } from "@/server/db/schema";
 import { IGNORED_DIRECTORY_NAMES, IGNORED_FILE_NAMES } from "./folderIgnore";
-import { indexFolder, removeFolderIndex } from "./merkle/service";
-import merkleMonitor from "./merkle/monitor";
-import monitorService from "./monitoring/monitorService";
 import { cancelInitialEmbedding, ensureFolderPrimed, scheduleInitialEmbedding } from "@/lib/embed/initial";
 import folderEvents from "./folderEvents";
 
@@ -51,9 +48,6 @@ export class FolderRegistry {
           const metadata = this.persistFolderRecord(name, absoluteRoot);
           const registration = this.buildRegistration(name, absoluteRoot, metadata);
           this.folders.set(name, registration);
-          this.safeIndexFolder(registration);
-          merkleMonitor.registerFolder(registration);
-          monitorService.enable(name, registration.rootPath);
           scheduleInitialEmbedding(registration);
           folderEvents.notifyChange();
           return registration;
@@ -80,10 +74,6 @@ export class FolderRegistry {
           const metadata = this.persistFolderRecord(name, absoluteRoot);
           const registration = this.buildRegistration(name, absoluteRoot, metadata);
           this.folders.set(name, registration);
-          this.safeIndexFolder(registration);
-          merkleMonitor.updateFolder(registration);
-          monitorService.disable(name);
-          monitorService.enable(name, registration.rootPath);
           folderEvents.notifyChange();
           return registration;
      }
@@ -92,12 +82,7 @@ export class FolderRegistry {
           const registration = this.folders.get(name);
 
           // Stop background work before touching persistence to avoid FK violations from late callbacks.
-          monitorService.disable(name);
-          merkleMonitor.unregisterFolder(name);
           cancelInitialEmbedding(name);
-
-          // Remove any cached Merkle artifacts regardless of in-memory registration state.
-          removeFolderIndex(name);
 
           if (registration) {
                this.folders.delete(name);
@@ -159,9 +144,6 @@ export class FolderRegistry {
                               updatedAt: record.updatedAt,
                          });
                          this.folders.set(record.name, registration);
-                         this.safeIndexFolder(registration);
-                         merkleMonitor.registerFolder(registration);
-                         monitorService.enable(record.name, registration.rootPath);
                          ensureFolderPrimed(registration).catch((error) => {
                               console.error(`[folderRegistry] Failed prime for ${record.name}:`, error);
                          });
@@ -292,14 +274,6 @@ export class FolderRegistry {
           }
 
           return url.includes("github.com") ? url : null;
-     }
-
-     private safeIndexFolder(registration: FolderRegistration): void {
-          try {
-               indexFolder(registration);
-          } catch (error) {
-               console.error(`[folderRegistry] Failed to build Merkle DAG for ${registration.name}:`, error);
-          }
      }
 
      private assertDirectoryExists(dirPath: string): void {

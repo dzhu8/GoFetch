@@ -4,7 +4,6 @@ import { chunkFiles } from "./chunker";
 
 /**
  * Chunk all supported text files in a folder registration.
- * Similar to `parseFolderRegistration` in the AST module, but for text files.
  */
 export function chunkFolderRegistration(registration: FolderRegistrationLike, options?: ChunkerOptions): ChunkedFile[] {
      const files = listSupportedTextFiles(registration);
