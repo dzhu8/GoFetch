@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { sendSystemNotification } from "@/lib/utils";
 
 const STORAGE_KEY = "paddleocr_install_pending";
 
@@ -110,7 +111,7 @@ export default function PaddleInstallMonitor() {
                          <div className="w-full bg-light-primary/95 dark:bg-dark-primary/95 border border-light-200 dark:border-dark-200 rounded-xl p-4 shadow-lg backdrop-blur">
                               <div className="flex items-start justify-between gap-3">
                                    <div>
-                                        <p className="text-xs text-black/50 dark:text-white/50">Background install</p>
+                                        <p className="text-xs text-black/50 dark:text-white/50">Background install (may take a long time)</p>
                                         <h3 className="text-sm font-semibold text-black dark:text-white">Paddle Model</h3>
                                    </div>
                               </div>
@@ -142,7 +143,12 @@ export default function PaddleInstallMonitor() {
                               <div className="flex justify-end">
                                    <button
                                         type="button"
-                                        onClick={() => setStatus(null)}
+                                        onClick={() => {
+                                             setStatus(null);
+                                             sendSystemNotification("Paddle Model installed", {
+                                                  body: "GoFetch is now ready to process PDF documents with PaddleOCR.",
+                                             });
+                                        }}
                                         className="px-4 py-2 text-sm rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all font-medium"
                                    >
                                         Got it

@@ -19,6 +19,23 @@ export const formatTimeDifference = (date1: Date | string, date2: Date | string)
      else return `${Math.floor(diffInSeconds / 31536000)} year${Math.floor(diffInSeconds / 31536000) !== 1 ? "s" : ""}`;
 };
 
+/**
+ * Sends a system (OS/Browser) notification if permission is granted.
+ * Requests permission if not already granted.
+ */
+export const sendSystemNotification = async (title: string, options?: NotificationOptions) => {
+     if (typeof window === "undefined" || !("Notification" in window)) return;
+
+     if (Notification.permission === "granted") {
+          new Notification(title, options);
+     } else if (Notification.permission !== "denied") {
+          const permission = await Notification.requestPermission();
+          if (permission === "granted") {
+               new Notification(title, options);
+          }
+     }
+};
+
 export const cosineSimilarity = (vectorA: number[], vectorB: number[]): number => {
      if (!Array.isArray(vectorA) || !Array.isArray(vectorB)) {
           throw new Error("Cosine similarity requires two numeric vectors");

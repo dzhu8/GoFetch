@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { Fragment } from "react";
 import {
      AlertCircle,
      FolderOpen,
@@ -13,7 +14,9 @@ import {
      Trash2,
      Upload,
 } from "lucide-react";
+import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import GoFetchDogBox from "@/assets/GoFetch-dog-box.svg";
+import { sendSystemNotification } from "@/lib/utils";
 
 interface FolderData {
      id: number;
@@ -29,6 +32,8 @@ export default function LibraryPage() {
      const [deletingId, setDeletingId] = useState<number | null>(null);
      const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
      const [uploadingFolderId, setUploadingFolderId] = useState<number | null>(null);
+     const [showProgressModal, setShowProgressModal] = useState(false);
+     const [uploadStatus, setUploadStatus] = useState<string>("Uploading...");
      const [errorModal, setErrorModal] = useState<string | null>(null);
      const fileInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
 
@@ -171,6 +176,8 @@ export default function LibraryPage() {
           }
 
           setUploadingFolderId(folderId);
+          setShowProgressModal(true);
+          setUploadStatus("Uploading PDF...");
 
           try {
                const formData = new FormData();
@@ -189,6 +196,7 @@ export default function LibraryPage() {
 
                const reader = res.body?.getReader();
                const decoder = new TextDecoder();
+               let finalPaper: any = null;
 
                if (reader) {
                     let done = false;
@@ -200,25 +208,46 @@ export default function LibraryPage() {
                               for (const line of lines) {
                                    try {
                                         const event = JSON.parse(line);
-                                        if (event.type === "complete") {
+                                        if (event.type === "complete" && event.paper) {
+                                             finalPaper = event.paper;
                                              setPaperCounts((prev) => {
                                                   const newMap = new Map(prev);
                                                   newMap.set(folderId, (newMap.get(folderId) || 0) + 1);
                                                   return newMap;
                                              });
+                                        } else if (event.type === "status") {
+                                             setUploadStatus(event.message);
                                         } else if (event.type === "error") {
                                              console.error("Upload error:", event.message);
+                                             throw new Error(event.message || "Upload failed");
                                         }
-                                   } catch {}
+                                   } catch (e) {
+                                        if (e instanceof Error) throw e;
+                                   }
                               }
                          }
                     }
                }
+
+               if (finalPaper) {
+                    const titleWords = (finalPaper.title || file.name).split(/\s+/);
+                    const shortTitle = titleWords.slice(0, 7).join(" ") + (titleWords.length > 7 ? "..." : "");
+                    sendSystemNotification(`PDF ${shortTitle} has been successfully uploaded.`, {
+                         body: `Added to folder: ${folders.find(f => f.id === folderId)?.name || "Library"}`,
+                         icon: "/icon.png"
+                    });
+               }
           } catch (error) {
+               const errorMsg = error instanceof Error ? error.message : "Upload failed";
                console.error("Error uploading paper:", error);
-               setErrorModal(error instanceof Error ? error.message : "Upload failed");
+               setErrorModal(errorMsg);
+
+               sendSystemNotification(`Error uploading PDF ${file.name}`, {
+                    body: errorMsg,
+               });
           } finally {
                setUploadingFolderId(null);
+               setShowProgressModal(false);
           }
      };
 
@@ -230,6 +259,67 @@ export default function LibraryPage() {
 
      return (
           <div className="h-full flex flex-col">
+               {/* Progress Modal */}
+               <Transition appear show={showProgressModal} as={Fragment}>
+                    <Dialog as="div" className="relative z-50" onClose={() => setShowProgressModal(false)}>
+                         <TransitionChild
+                              as={Fragment}
+                              enter="ease-out duration-300"
+                              enterFrom="opacity-0"
+                              enterTo="opacity-100"
+                              leave="ease-in duration-200"
+                              leaveFrom="opacity-100"
+                              leaveTo="opacity-0"
+                         >
+                              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+                         </TransitionChild>
+
+                         <div className="fixed inset-0 overflow-y-auto">
+                              <div className="flex min-h-full items-center justify-center p-4">
+                                   <TransitionChild
+                                        as={Fragment}
+                                        enter="ease-out duration-300"
+                                        enterFrom="opacity-0 scale-95"
+                                        enterTo="opacity-100 scale-100"
+                                        leave="ease-in duration-200"
+                                        leaveFrom="opacity-100 scale-100"
+                                        leaveTo="opacity-0 scale-95"
+                                   >
+                                        <DialogPanel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 p-6 shadow-2xl transition-all">
+                                             <DialogTitle as="h3" className="text-lg font-semibold text-black dark:text-white flex items-center gap-2">
+                                                  <Upload className="w-5 h-5 text-[#F8B692]" />
+                                                  Uploading Paper
+                                             </DialogTitle>
+                                             <div className="mt-4 space-y-4">
+                                                  <p className="text-sm text-black/60 dark:text-white/60">
+                                                       Your PDF is being uploaded and indexed. This <strong>may take a long time</strong> for larger documents.
+                                                  </p>
+                                                  <p className="text-sm text-[#F8B692] font-medium p-3 bg-[#F8B692]/10 rounded-lg border border-[#F8B692]/20">
+                                                       Feel free to keep browsing your library! We'll send you a system notification once the indexing is complete.
+                                                  </p>
+                                                  <div className="flex items-center gap-3 pt-4 border-t border-light-200 dark:border-dark-200">
+                                                       <Loader2 className="w-5 h-5 animate-spin text-[#F8B692]" />
+                                                       <span className="text-sm font-mono text-black/70 dark:text-white/70">
+                                                            {uploadStatus}
+                                                       </span>
+                                                  </div>
+                                             </div>
+                                             <div className="mt-8 flex justify-end">
+                                                  <button
+                                                       type="button"
+                                                       className="px-4 py-2 text-sm font-medium text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 rounded-lg border border-light-200 dark:border-dark-200 transition-colors"
+                                                       onClick={() => setShowProgressModal(false)}
+                                                  >
+                                                       Background this
+                                                  </button>
+                                             </div>
+                                        </DialogPanel>
+                                   </TransitionChild>
+                              </div>
+                         </div>
+                    </Dialog>
+               </Transition>
+
                {/* Header Section */}
                <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-6">
                     <div className="flex items-center gap-6">
