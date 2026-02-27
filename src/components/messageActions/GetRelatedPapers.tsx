@@ -30,7 +30,7 @@ const GetRelatedPapers = () => {
 
           setLoading(true);
           setShowProgressModal(true);
-          setStatusMessage("Running…");
+          setStatusMessage("Running");
 
           // Request notification permission upfront so the OS prompt appears
           // in context (while the user is watching) rather than after a long wait.
@@ -74,9 +74,9 @@ const GetRelatedPapers = () => {
                               if (msg.type === "complete") {
                                    ocrResult = msg.data;
                               } else if (msg.type === "page") {
-                                   setStatusMessage(`OCR: page ${msg.value}…`);
+                                   setStatusMessage(`OCR: page ${msg.value}`);
                               } else if (msg.type === "total") {
-                                   setStatusMessage(`OCR: processing ${msg.value} pages…`);
+                                   setStatusMessage(`OCR: processing ${msg.value} pages`);
                               } else if (msg.type === "error") {
                                    throw new Error(msg.message);
                               }
@@ -93,7 +93,7 @@ const GetRelatedPapers = () => {
                     throw new Error("OCR produced no result");
                }
 
-               // ── Extract document metadata (Title & DOI) ──
+               //  Extract document metadata (Title & DOI) 
                const docMetadata = extractDocumentMetadata(ocrResult);
                let pdfTitle = docMetadata.title || file.name.replace(/\.pdf$/i, "");
                let pdfDoi = docMetadata.doi;
@@ -101,8 +101,8 @@ const GetRelatedPapers = () => {
                // Use only first 7 words for notification title to fit comfortably
                const shortTitle = pdfTitle.split(/\s+/).slice(0, 7).join(" ") + (pdfTitle.split(/\s+/).length > 7 ? "..." : "");
 
-               // ── Parse references from the OCR output ──
-               setStatusMessage("Parsing citations…");
+               //  Parse references from the OCR output 
+               setStatusMessage("Parsing citations");
                const references = parseReferences(ocrResult);
 
                if (references.length === 0) {
@@ -113,8 +113,8 @@ const GetRelatedPapers = () => {
                const terms = references.map((r) => r.searchTerm);
                const isDoiFlags = references.map((r) => r.isDoi);
 
-               // ── Search for related papers ──
-               setStatusMessage(`Searching ${terms.length} citation terms…`);
+               //  Search for related papers 
+               setStatusMessage(`Searching ${terms.length} citation terms`);
 
                const searchRes = await fetch("/api/related-papers", {
                     method: "POST",
@@ -129,7 +129,7 @@ const GetRelatedPapers = () => {
 
                const searchData = await searchRes.json();
 
-               // ── Add results to chat and navigate ──
+               //  Add results to chat and navigate 
                addRelatedPapers(searchData);
                window.history.replaceState(null, "", `/c/${chatId}`);
                toast.success(`Found related papers for ${references.length} citations`);
@@ -152,20 +152,15 @@ const GetRelatedPapers = () => {
      return (
           <>
                {loading ? (
-                    <div className="flex items-center gap-2 p-2">
+                    <div className="flex items-center gap-2 w-full h-full p-2">
                          <Loader2 size={16} className="animate-spin text-[#F8B692]" />
-                         {statusMessage && (
-                              <span className="text-xs text-black/50 dark:text-white/50 max-w-[160px] truncate">
-                                   {statusMessage}
-                              </span>
-                         )}
                     </div>
                ) : (
                     <button
                          type="button"
                          onClick={() => fileInputRef.current?.click()}
                          title="Get related papers from PDF citations"
-                         className="active:border-none hover:bg-light-200 hover:dark:bg-dark-200 p-2 rounded-lg focus:outline-none text-black/50 dark:text-white/50 active:scale-95 transition duration-200 hover:text-black dark:hover:text-white"
+                         className="w-full h-full p-2 flex items-center justify-center transition duration-200"
                     >
                          <input type="file" accept=".pdf" onChange={handleChange} ref={fileInputRef} hidden />
                          <FileText size={16} className="text-[#F8B692]" />
@@ -198,35 +193,38 @@ const GetRelatedPapers = () => {
                                         leaveFrom="opacity-100 scale-100"
                                         leaveTo="opacity-0 scale-95"
                                    >
-                                        <DialogPanel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 p-6 text-left align-middle shadow-2xl transition-all">
-                                             <DialogTitle as="h3" className="text-lg font-semibold leading-6 text-black dark:text-white flex items-center gap-2">
-                                                  <FileText className="w-5 h-5 text-[#F8B692]" />
-                                                  Processing PDF
+                                        <DialogPanel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 p-6 text-left align-middle shadow-xl transition-all border border-zinc-200 dark:border-zinc-800">
+                                             <DialogTitle
+                                                  as="h3"
+                                                  className="text-lg font-semibold leading-6 text-zinc-900 dark:text-zinc-100 flex items-center gap-2"
+                                             >
+                                                  <FileText className="text-[#F8B692]" size={20} />
+                                                  Extracting Papers
                                              </DialogTitle>
-                                             
-                                             <div className="mt-4 space-y-3">
-                                                  <p className="text-sm text-black/60 dark:text-white/60">
-                                                       Paper parsing is underway. This <strong>may take a long time</strong> (these kinds of models are intensive), up to tens of minutes for larger documents (more than 15 pages).
-                                                  </p>
-                                                  <p className="text-sm text-[#F8B692] font-medium p-3 bg-[#F8B692]/10 rounded-lg border border-[#F8B692]/20">
-                                                       Feel free to continue using GoFetch. We'll send a notification when it's done!
-                                                  </p>
-
-                                                  <div className="flex items-center gap-3 mt-6 pt-4 border-t border-light-200 dark:border-dark-200">
-                                                       <Loader2 className="w-5 h-5 animate-spin text-[#F8B692]" />
-                                                       <span className="text-sm font-mono text-black/70 dark:text-white/70">
-                                                            {statusMessage}
-                                                       </span>
+                                             <div className="mt-4 flex flex-col items-center gap-4 py-4">
+                                                  <div className="relative">
+                                                       <div className="absolute inset-0 animate-ping rounded-full bg-[#F8B692]/20" />
+                                                       <div className="relative rounded-full bg-[#F8B692]/10 p-4">
+                                                            <Loader2 size={32} className="animate-spin text-[#F8B692]" />
+                                                       </div>
+                                                  </div>
+                                                  <div className="text-center">
+                                                       <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                                                            {statusMessage || "Processing PDF..."}
+                                                       </p>
+                                                       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                                            This may take a minute for large files
+                                                       </p>
                                                   </div>
                                              </div>
 
-                                             <div className="mt-8 flex justify-end">
+                                             <div className="mt-6 flex justify-end">
                                                   <button
                                                        type="button"
-                                                       className="inline-flex justify-center rounded-lg border border-light-200 dark:border-dark-200 px-4 py-2 text-sm font-medium text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 transition-colors focus:outline-none"
+                                                       className="rounded-md border border-transparent bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-200 focus:outline-none dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
                                                        onClick={() => setShowProgressModal(false)}
                                                   >
-                                                       Background this
+                                                       Run in background
                                                   </button>
                                              </div>
                                         </DialogPanel>
@@ -235,40 +233,6 @@ const GetRelatedPapers = () => {
                          </div>
                     </Dialog>
                </Transition>
-
-               {errorMessage && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-                         <div className="w-full max-w-sm bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-xl p-6 space-y-4">
-                              <div className="flex items-start justify-between gap-4">
-                                   <div className="flex items-center gap-3">
-                                        <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/40">
-                                             <X className="w-4 h-4 text-red-600 dark:text-red-400" />
-                                        </div>
-                                        <p className="text-base font-semibold text-black dark:text-white">
-                                             Invalid file
-                                        </p>
-                                   </div>
-                                   <button
-                                        type="button"
-                                        onClick={() => setErrorMessage(null)}
-                                        className="p-1 rounded-full text-black/60 dark:text-white/60 hover:bg-light-200/80 dark:hover:bg-dark-200/80"
-                                   >
-                                        <X className="w-4 h-4" />
-                                   </button>
-                              </div>
-                              <p className="text-sm text-black/70 dark:text-white/70">{errorMessage}</p>
-                              <div className="flex justify-end">
-                                   <button
-                                        type="button"
-                                        onClick={() => setErrorMessage(null)}
-                                        className="px-4 py-2 rounded-lg border border-light-200 dark:border-dark-200 text-sm text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
-                                   >
-                                        Close
-                                   </button>
-                              </div>
-                         </div>
-                    </div>
-               )}
           </>
      );
 };

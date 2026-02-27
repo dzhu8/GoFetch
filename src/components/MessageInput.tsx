@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { ArrowUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
-import AttachMobile from "./messageActions/AttachMobile";
+import ChatToolDropdown from "./messageActions/ChatToolDropdown";
 import { useChat } from "@/lib/chat/Chat";
 
 const MessageInput = () => {
@@ -64,7 +64,7 @@ const MessageInput = () => {
                     mode === "multi" ? "flex-col rounded-2xl" : "flex-row rounded-full"
                )}
           >
-               {mode === "single" && <AttachMobile />}
+               {mode === "single" && <ChatToolDropdown />}
                <TextareaAutosize
                     ref={inputRef}
                     value={message}
@@ -87,7 +87,7 @@ const MessageInput = () => {
                )}
                {mode === "multi" && (
                     <div className="flex flex-row items-center justify-between w-full pt-2">
-                         <AttachMobile />
+                         <ChatToolDropdown />
                          <div className="flex flex-row items-center space-x-4">
                               <button
                                    disabled={message.trim().length === 0 || loading}

@@ -2,10 +2,9 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import TextareaAutosize from "react-textarea-autosize";
-import Attach from "./messageActions/Attach";
 import { useChat } from "@/lib/chat/Chat";
 import ModelSelector from "./messageActions/ChatModelSelector";
-import GetRelatedPapers from "./messageActions/GetRelatedPapers";
+import ChatToolDropdown from "./messageActions/ChatToolDropdown";
 import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
@@ -73,8 +72,7 @@ const EmptyChatMessageInput = () => {
                               <div className="flex flex-row items-center space-x-2">
                                    <div className="flex flex-row items-center space-x-1">
                                         <ModelSelector />
-                                        <Attach />
-                                        <GetRelatedPapers />
+                                        <ChatToolDropdown />
                                    </div>
                                    <button
                                         disabled={message.trim().length === 0}
