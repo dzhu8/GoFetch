@@ -20,7 +20,7 @@ const SetupWizard = ({ configSections }: { configSections: UIConfigSections }) =
                setShowSetup(true);
                setSetupState(1);
                await delay(1500);
-               setSetupState(2);
+               setSetupState(3);
           })();
      }, []);
 
@@ -49,7 +49,7 @@ const SetupWizard = ({ configSections }: { configSections: UIConfigSections }) =
                                         animate={{ opacity: 1 }}
                                         className="text-black/70 dark:text-white/70 text-sm md:text-lg xl:text-2xl mt-2"
                                    >
-                                        <span className="font-light">Index all of your coding projects for</span>{" "}
+                                        <span className="font-light">Index all of your research papers for</span>{" "}
                                         <span className="font-light font-['Big_Softie'] italic">AI</span>
                                    </motion.p>
                               </motion.div>

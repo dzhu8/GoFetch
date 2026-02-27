@@ -119,6 +119,15 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     });
                }
 
+               // Create default library folder if a name was provided
+               if (folderPath.trim()) {
+                    await fetch("/api/library-folders", {
+                         method: "POST",
+                         headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({ name: folderPath.trim() }),
+                    });
+               }
+
                const res = await fetch("/api/config/setup-complete", {
                     method: "POST",
                });
@@ -416,61 +425,35 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               <div className="flex flex-col mb-4 md:mb-6 pb-3 md:pb-4 border-b border-light-200 dark:border-dark-200">
                                    <div>
                                         <p className="text-xs sm:text-sm font-medium text-black dark:text-white">
-                                             Register Folder
+                                             Library Folder
                                         </p>
                                         <p className="text-[10px] sm:text-xs text-black/50 dark:text-white/50 mt-0.5">
-                                             Select a folder to register with the application
+                                             Provide a name for a default folder to serve as the starting point in <code className="px-1 py-0.5 rounded bg-light-secondary dark:bg-dark-secondary font-mono">data/library</code>.
                                         </p>
                                    </div>
                               </div>
 
                               <div className="space-y-4">
                                    <div className="flex flex-col gap-2">
-                                        <label className="text-xs font-medium text-black dark:text-white">
-                                             Folder Path
-                                        </label>
-                                        <div className="flex flex-row gap-2">
-                                             <input
-                                                  type="text"
-                                                  value={folderPath}
-                                                  onChange={(e) => setFolderPath(e.target.value)}
-                                                  placeholder="Select or enter folder path..."
-                                                  className="flex-1 px-3 py-2 text-xs sm:text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white placeholder:text-black/40 dark:placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#F8B692] focus:border-transparent"
-                                             />
-                                             <button
-                                                  type="button"
-                                                  onClick={() => {
-                                                       const input = document.createElement("input");
-                                                       input.type = "file";
-                                                       input.webkitdirectory = true;
-                                                       input.onchange = (e) => {
-                                                            const target = e.target as HTMLInputElement;
-                                                            if (target.files && target.files[0]) {
-                                                                 const path =
-                                                                      target.files[0].webkitRelativePath.split("/")[0];
-                                                                 setFolderPath(path);
-                                                            }
-                                                       };
-                                                       input.click();
-                                                  }}
-                                                  className="flex items-center justify-center px-3 py-2 rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] active:scale-95 transition-all duration-200"
-                                                  title="Browse for folder"
-                                             >
-                                                  <Plus className="w-4 h-4" />
-                                             </button>
+                                        <div className="flex items-center justify-between">
+                                             <label className="text-xs font-medium text-black dark:text-white">
+                                                  Folder Name
+                                             </label>
+                                             <span className="text-[10px] text-black/40 dark:text-white/40 italic">
+                                                  Optional
+                                             </span>
                                         </div>
+                                        <input
+                                             type="text"
+                                             value={folderPath}
+                                             onChange={(e) => setFolderPath(e.target.value)}
+                                             placeholder="e.g. TestFolder"
+                                             className="w-full px-3 py-2 text-xs sm:text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white placeholder:text-black/40 dark:placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#F8B692] focus:border-transparent"
+                                        />
+                                        <p className="text-[10px] text-black/50 dark:text-white/50 italic">
+                                             Note: This is optional- folders can also be created later!
+                                        </p>
                                    </div>
-
-                                   {folderPath && (
-                                        <div className="p-3 bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg">
-                                             <p className="text-[11px] font-medium text-black dark:text-white mb-1">
-                                                  Selected Path:
-                                             </p>
-                                             <p className="text-[11px] text-black/70 dark:text-white/70 break-all font-mono">
-                                                  {folderPath}
-                                             </p>
-                                        </div>
-                                   )}
                               </div>
                          </div>
                     </motion.div>

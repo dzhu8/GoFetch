@@ -5,12 +5,11 @@ import { RunnableLambda, RunnableSequence } from "@langchain/core/runnables";
 import { Document } from "@langchain/core/documents";
 
 import { BaseSearchAgent, BaseSearchAgentConfig, BasicChainInput, SearchRetrieverResult } from "./baseSearchAgent";
-import FileLinksOutputParser from "../outputParsers/fileLinksOutputParser";
 import LineOutputParser from "../outputParsers/lineOutputParser";
 
-import { getDocumentsFromSnippets } from "../utils/snippetRetriever";
 // HNSWSearch is loaded lazily to avoid faiss-node being bundled
 import type { HNSWSearch as HNSWSearchType } from "./HNSWSearch";
+
 import { embedQuery } from "./embedding";
 
 // Lazy load server modules to avoid better-sqlite3 being bundled
@@ -100,267 +99,128 @@ class CodeSearchAgent extends BaseSearchAgent {
                          },
                     });
 
-                    const fileLinksOutputParser = new FileLinksOutputParser({
-                         key: "links",
-                    });
-
                     const questionOutputParser = new LineOutputParser({
                          key: "question",
                     });
 
-                    const fileLinks = await fileLinksOutputParser.parse(llmOutput);
                     let question = (await questionOutputParser.parse(llmOutput)) ?? llmOutput;
 
                     if (question === "not_needed") {
                          emitStatus({
                               stage: "generating",
-                              message: "No code search needed for this query",
+                              message: "No search needed for this query",
                          });
                          return { query: "", docs: [] };
                     }
 
-                    const folderName = capturedFolderNames[0]; // Or handle multiple folders
+                    question = question.replace(/<think>.*?<\/think>/g, "");
 
-                    if (fileLinks.length > 0) {
-                         if (question.length === 0) {
-                              question = "summarize";
-                         }
+                    // Emit status: searching embeddings
+                    emitStatus({
+                         stage: "searching",
+                         message: `Searching embeddings in ${capturedFolderNames.length} folder(s)...`,
+                         details: {
+                              folderCount: capturedFolderNames.length,
+                              folderNames: capturedFolderNames,
+                         },
+                    });
 
-                         const { documents: snippetDocs } = await getDocumentsFromSnippets(llmOutput, folderName);
+                    // Initialize HNSW search from app config (lazy loaded)
+                    const HNSWSearch = getHNSWSearch();
+                    const hnswSearch = HNSWSearch.fromConfig();
 
-                         const docGroups: Document[] = [];
+                    // Add folders to the index
+                    const indexedCount = await hnswSearch.addFolders(capturedFolderNames);
 
-                         for (const doc of snippetDocs) {
-                              const filePath = doc.metadata.relativePath;
+                    // Emit status: embedding query
+                    emitStatus({
+                         stage: "embedding",
+                         message: `Indexed ${indexedCount} embeddings. Generating query embedding...`,
+                         details: {
+                              embeddingCount: indexedCount,
+                         },
+                    });
 
-                              const existingGroup = docGroups.find(
-                                   (d) => d.metadata.relativePath === filePath && d.metadata.totalDocs < 10
-                              );
+                    let results: any[] = [];
 
-                              if (!existingGroup) {
-                                   docGroups.push(
-                                        new Document({
-                                             pageContent: doc.pageContent,
-                                             metadata: {
-                                                  ...doc.metadata,
-                                                  totalDocs: 1,
-                                             },
-                                        })
-                                   );
-                              } else {
-                                   existingGroup.pageContent += `\n\n` + doc.pageContent;
-                                   existingGroup.metadata.totalDocs += 1;
-                              }
-                         }
-
-                         const docs: Document[] = docGroups;
-
-                         await Promise.all(
-                              docGroups.map(async (doc) => {
-                                   // Format each document's content with code fences and metadata
-                                   const formattedCode = `\`\`\`${doc.metadata.language}
-                                   // ${doc.metadata.relativePath}:${doc.metadata.startLine}-${doc.metadata.endLine}
-                                   ${doc.pageContent}
-                                   \`\`\``;
-
-                                   const res = await llm.invoke(`
-                                        You are a code analysis assistant, tasked with explaining code snippets retrieved from a codebase search. Your job is to provide a detailed, 2-4 paragraph explanation that captures the code's purpose, implementation, and relevance to the query.
-                                        If the query is "summarize", provide a detailed explanation of what the code does. If the query is a specific question, answer it based on the code.
-
-                                        - **Technical accuracy**: Explain the code's functionality precisely, including key functions, data structures, and patterns used.
-                                        - **Implementation details**: Highlight important logic, control flow, dependencies, and any notable design decisions.
-                                        - **Context-aware**: Reference the file path and symbol names when relevant.
-                                        - **Concise but thorough**: Focus on the most relevant aspects without excessive verbosity.
-
-                                        The query will be inside the \`query\` XML tag. 
-
-                                        <example>
-                                        1. Query: "How does authentication work?"
-
-                                        \`\`\`typescript
-                                        // src/auth/login.ts:10-25
-                                        async function handleLogin(credentials: Credentials): Promise<AuthResult> {
-                                             const user = await findUserByEmail(credentials.email);
-                                             if (!user) throw new AuthError('User not found');
-                                             const valid = await bcrypt.compare(credentials.password, user.passwordHash);
-                                             if (!valid) throw new AuthError('Invalid password');
-                                             return generateAuthToken(user);
-                                        }
-                                        \`\`\`
-
-                                        Response:
-                                        The authentication flow is handled by the \`handleLogin\` function in \`src/auth/login.ts\`. It takes user credentials and performs a two-step verification: first looking up the user by email, then comparing the provided password against the stored hash using bcrypt.
-
-                                        If either check fails, an \`AuthError\` is thrown with an appropriate message. Upon successful validation, the function generates and returns an authentication token for the user. This implementation follows standard security practices by using bcrypt for password hashing and separating the user lookup from password verification.
-
-                                        2. Query: "summarize"
-
-                                        \`\`\`typescript
-                                        // src/utils/retry.ts:5-20
-                                        export async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, delay = 1000): Promise<T> {
-                                             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                                             try {
-                                                  return await fn();
-                                             } catch (err) {
-                                                  if (attempt === maxAttempts) throw err;
-                                                  await sleep(delay * attempt);
-                                             }
-                                             }
-                                             throw new Error('Unreachable');
-                                        }
-                                        \`\`\`
-
-                                        Response:
-                                        The \`withRetry\` utility in \`src/utils/retry.ts\` implements an exponential backoff retry mechanism for async operations. It accepts a function to execute, maximum retry attempts (defaulting to 3), and an initial delay in milliseconds.
-
-                                        The function attempts to execute the provided async function, and on failure, waits for an increasing delay (delay × attempt number) before retrying. If all attempts fail, the last error is propagated. This pattern is useful for handling transient failures in network requests or external service calls.
-                                        </example>
-
-                                        Everything below is the actual data you will be working with.
-
-                                        <query>
-                                        ${question}
-                                        </query>
-
-                                        ${formattedCode}
-
-                                        Make sure to answer the query based on the code provided.
-                                   `);
-
-                                   const document = new Document({
-                                        pageContent: res.content as string,
-                                        metadata: {
-                                             type: "code_snippet",
-                                             title: doc.metadata.symbolName || doc.metadata.nodeType,
-                                             url: `file://${doc.metadata.filePath}`,
-                                             relativePath: doc.metadata.relativePath,
-                                             language: doc.metadata.language,
-                                             startLine: doc.metadata.startLine,
-                                             endLine: doc.metadata.endLine,
-                                        },
-                                   });
-
-                                   docs.push(document);
-                              })
+                    // 1. Try Raw Query First
+                    if (capturedOriginalQuery && capturedOriginalQuery.trim().length > 0) {
+                         const rawEmbedding = await embedQuery(capturedOriginalQuery);
+                         results = await hnswSearch.searchWithThreshold(
+                              rawEmbedding,
+                              this.config.maxNDocuments
                          );
+                    }
 
-                         return { query: question, docs: docs };
-                    } else {
-                         question = question.replace(/<think>.*?<\/think>/g, "");
-
-                         // Emit status: searching embeddings
-                         emitStatus({
-                              stage: "searching",
-                              message: `Searching code embeddings in ${capturedFolderNames.length} folder(s)...`,
-                              details: {
-                                   folderCount: capturedFolderNames.length,
-                                   folderNames: capturedFolderNames,
-                              },
-                         });
-
-                         // Initialize HNSW search from app config (lazy loaded)
-                         const HNSWSearch = getHNSWSearch();
-                         const hnswSearch = HNSWSearch.fromConfig();
-
-                         // Add folders to the index
-                         const indexedCount = await hnswSearch.addFolders(capturedFolderNames);
-
-                         // Emit status: embedding query
-                         emitStatus({
-                              stage: "embedding",
-                              message: `Indexed ${indexedCount} embeddings. Generating query embedding...`,
-                              details: {
-                                   embeddingCount: indexedCount,
-                              },
-                         });
-
-                         let results: any[] = [];
-
-                         // 1. Try Raw Query First
-                         if (capturedOriginalQuery && capturedOriginalQuery.trim().length > 0) {
-                              const rawEmbedding = await embedQuery(capturedOriginalQuery);
-                              results = await hnswSearch.searchWithThreshold(
-                                   rawEmbedding,
-                                   this.config.maxNDocuments
-                              );
-                         }
-
-                         // 2. If no results, try Rephrased Query (if different)
-                         if (results.length === 0 && question !== capturedOriginalQuery) {
-                              if (capturedOriginalQuery) {
-                                   emitStatus({
-                                        stage: "retrieving",
-                                        message: "No results with raw query. Trying rephrased query...",
-                                   });
-                              }
-                              
-                              const rephrasedEmbedding = await embedQuery(question);
-                              results = await hnswSearch.searchWithThreshold(
-                                   rephrasedEmbedding,
-                                   this.config.maxNDocuments
-                              );
-                         }
-
-                         // If still no results, return a special document prompting to lower threshold
-                         if (results.length === 0) {
+                    // 2. If no results, try Rephrased Query (if different)
+                    if (results.length === 0 && question !== capturedOriginalQuery) {
+                         if (capturedOriginalQuery) {
                               emitStatus({
-                                   stage: "generating",
-                                   message: "No matching code found in embeddings",
-                                   details: {
-                                        resultCount: 0,
-                                   },
+                                   stage: "retrieving",
+                                   message: "No results with raw query. Trying rephrased query...",
                               });
-                              
-                              return { 
-                                   query: question, 
-                                   docs: [
-                                        new Document({
-                                             pageContent: "No relevant code found with the current similarity threshold. Please try lowering the threshold in settings or rephrasing your query.",
-                                             metadata: {
-                                                  type: "system_message",
-                                                  title: "No Results Found",
-                                                  score: 0
-                                             }
-                                        })
-                                   ] 
-                              };
                          }
 
-                         // Emit status: results found
+                         const rephrasedEmbedding = await embedQuery(question);
+                         results = await hnswSearch.searchWithThreshold(
+                              rephrasedEmbedding,
+                              this.config.maxNDocuments
+                         );
+                    }
+
+                    // If still no results, return an informative document
+                    if (results.length === 0) {
                          emitStatus({
                               stage: "generating",
-                              message:
-                                   results.length > 0
-                                        ? `Found ${results.length} relevant code snippet(s)`
-                                        : "No matching code found in embeddings",
-                              details: {
-                                   resultCount: results.length,
-                              },
+                              message: "No matching documents found in embeddings",
+                              details: { resultCount: 0 },
                          });
 
-                         const documents = results.map(
-                              (result) =>
+                         return {
+                              query: question,
+                              docs: [
                                    new Document({
-                                        pageContent: result.content ?? "",
+                                        pageContent:
+                                             "No relevant documents found with the current similarity threshold. Please try lowering the threshold in settings or rephrasing your query.",
                                         metadata: {
-                                             type: "code_snippet",
-                                             title:
-                                                  (result.metadata.symbolName as string) ||
-                                                  (result.metadata.nodeType as string) ||
-                                                  result.relativePath,
-                                             url: `file://${result.filePath}`,
-                                             relativePath: result.relativePath,
-                                             folderName: result.folderName,
-                                             score: result.score,
-                                             language: result.metadata.language,
-                                             startLine: result.metadata.startLine,
-                                             endLine: result.metadata.endLine,
+                                             type: "system_message",
+                                             title: "No Results Found",
+                                             score: 0,
                                         },
-                                   })
-                         );
-
-                         return { query: question, docs: documents };
+                                   }),
+                              ],
+                         };
                     }
+
+                    // Emit status: results found
+                    emitStatus({
+                         stage: "generating",
+                         message: `Found ${results.length} relevant document(s)`,
+                         details: { resultCount: results.length },
+                    });
+
+                    const documents = results.map(
+                         (result) =>
+                              new Document({
+                                   pageContent: result.content ?? "",
+                                   metadata: {
+                                        type: "document",
+                                        title:
+                                             (result.metadata.symbolName as string) ||
+                                             (result.metadata.nodeType as string) ||
+                                             result.relativePath,
+                                        url: `file://${result.filePath}`,
+                                        relativePath: result.relativePath,
+                                        folderName: result.folderName,
+                                        score: result.score,
+                                        language: result.metadata.language,
+                                        startLine: result.metadata.startLine,
+                                        endLine: result.metadata.endLine,
+                                   },
+                              })
+                    );
+
+                    return { query: question, docs: documents };
                }),
           ]);
      }

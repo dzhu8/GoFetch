@@ -6,18 +6,10 @@ import { eq, inArray, sql } from "drizzle-orm";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
-import {
-     filterFocusNodes,
-     inferFocusSymbolName,
-     parseFolderRegistration,
-     type ParsedFileAst,
-     type SerializedNode,
-     type SupportedLanguage,
-} from "@/lib/ast";
 import { chunkFolderRegistration, type ChunkedFile, type SupportedTextFormat } from "@/lib/chunk";
 import folderRegistry, { type FolderRegistration } from "@/server/folderRegistry";
 import db from "@/server/db";
-import { astFileSnapshots, astNodes, embeddings as embeddingsTable, textChunkSnapshots } from "@/server/db/schema";
+import { embeddings as embeddingsTable, textChunkSnapshots } from "@/server/db/schema";
 import modelRegistry from "@/server/providerRegistry";
 import configManager from "@/server";
 import type { ModelPreference } from "@/lib/models/modelPreference";
@@ -26,7 +18,6 @@ import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import { clearTaskProgress, taskProgressEmitter, updateTaskProgress } from "@/lib/embed/progress";
 import folderEvents from "@/server/folderEvents";
 
-const MAX_NODE_SNIPPET = 256;
 const EMBEDDING_BATCH_SIZE = 64;
 const SUMMARIZATION_BATCH_SIZE = 8;
 
@@ -35,7 +26,6 @@ interface ScheduledEmbeddingJob {
 }
 
 const pendingEmbeds = new Map<string, ScheduledEmbeddingJob>();
-const astInFlight = new Map<string, Promise<void>>();
 
 interface SettingsSnapshot {
      preferences?: {
@@ -46,11 +36,10 @@ interface SettingsSnapshot {
 }
 
 export async function ensureFolderPrimed(folder: FolderRegistration): Promise<void> {
-     const [astResult, chunkResult] = await Promise.all([ensureAstSnapshots(folder), ensureTextChunkSnapshots(folder)]);
+     const chunkResult = await ensureTextChunkSnapshots(folder);
      const hasEmbeddings = folderHasEmbeddings(folder.name);
-     const totalSourceCount = astResult.fileCount + chunkResult.chunkCount;
 
-     if (!hasEmbeddings && totalSourceCount > 0) {
+     if (!hasEmbeddings && chunkResult.chunkCount > 0) {
           await embedFolderFromSnapshots(folder.name);
      }
 }
@@ -69,14 +58,14 @@ export async function scheduleInitialEmbedding(folder: FolderRegistration): Prom
           startedAt: new Date().toISOString(),
      });
 
-     Promise.all([ensureAstSnapshots(folder), ensureTextChunkSnapshots(folder)])
-          .then(async ([astResult, chunkResult]) => {
+     Promise.all([ensureTextChunkSnapshots(folder)])
+          .then(async ([chunkResult]) => {
                if (job.cancelled) {
                     return;
                }
 
-               const totalSourceFiles = astResult.fileCount + chunkResult.chunkCount;
-               taskProgressEmitter.emit("ast:complete", { folderName: folder.name, fileCount: totalSourceFiles });
+               const totalSourceFiles = chunkResult.chunkCount;
+               taskProgressEmitter.emit("chunks:complete", { folderName: folder.name, fileCount: totalSourceFiles });
 
                let totalDocuments = 0;
                await embedFolderFromSnapshots(folder.name, {
@@ -169,71 +158,6 @@ export async function cancelInitialEmbedding(folderName: string): Promise<void> 
      }
 }
 
-interface AstSnapshotResult {
-     created: boolean;
-     fileCount: number;
-}
-
-async function ensureAstSnapshots(folder: FolderRegistration): Promise<AstSnapshotResult> {
-     if (folderHasAst(folder.name)) {
-          return {
-               created: false,
-               fileCount: countAstSnapshots(folder.name),
-          };
-     }
-
-     const inflight = astInFlight.get(folder.name);
-     if (inflight) {
-          await inflight;
-          return {
-               created: true,
-               fileCount: countAstSnapshots(folder.name),
-          };
-     }
-
-     let parsedCount = 0;
-     const job = (async () => {
-          try {
-               const parsed = parseFolderRegistration(folder, {
-                    includeText: true,
-                    maxTextLength: 256,
-               });
-               parsedCount = parsed.length;
-               persistAstSnapshots(folder.name, parsed);
-          } finally {
-               astInFlight.delete(folder.name);
-          }
-     })();
-
-     astInFlight.set(folder.name, job);
-     await job;
-     return {
-          created: true,
-          fileCount: parsedCount,
-     };
-}
-
-function folderHasAst(folderName: string): boolean {
-     const existing = db
-          .select({ id: astFileSnapshots.id })
-          .from(astFileSnapshots)
-          .where(eq(astFileSnapshots.folderName, folderName))
-          .limit(1)
-          .get();
-
-     return Boolean(existing);
-}
-
-function countAstSnapshots(folderName: string): number {
-     const result = db
-          .select({ value: sql<number>`count(*)` })
-          .from(astFileSnapshots)
-          .where(eq(astFileSnapshots.folderName, folderName))
-          .get();
-
-     return result?.value ?? 0;
-}
-
 function folderHasEmbeddings(folderName: string): boolean {
      const existing = db
           .select({ id: embeddingsTable.id })
@@ -243,48 +167,6 @@ function folderHasEmbeddings(folderName: string): boolean {
           .get();
 
      return Boolean(existing);
-}
-
-function persistAstSnapshots(folderName: string, parsedFiles: ParsedFileAst[]): void {
-     db.transaction((tx) => {
-          tx.delete(astFileSnapshots).where(eq(astFileSnapshots.folderName, folderName)).run();
-
-          for (const fileAst of parsedFiles) {
-               const contentHash = crypto.createHash("sha256").update(JSON.stringify(fileAst.ast)).digest("hex");
-
-               const snapshotResult = tx
-                    .insert(astFileSnapshots)
-                    .values({
-                         folderName,
-                         filePath: fileAst.filePath,
-                         relativePath: fileAst.relativePath,
-                         language: fileAst.language,
-                         contentHash,
-                         ast: fileAst.ast,
-                         diagnostics: fileAst.diagnostics,
-                         metadata: {},
-                    })
-                    .run();
-
-               const fileId = Number(snapshotResult.lastInsertRowid);
-
-               // Filter to focus nodes before flattening
-               const focusAst = filterFocusNodes(fileAst.ast, fileAst.language, { requireMultiLine: true });
-               const nodeRows = flattenAstNodes(focusAst, fileId, fileAst.language);
-
-               if (nodeRows.length === 0) {
-                    continue;
-               }
-
-               const chunkSize = 200;
-               for (let i = 0; i < nodeRows.length; i += chunkSize) {
-                    const chunk = nodeRows.slice(i, i + chunkSize);
-                    tx.insert(astNodes).values(chunk).run();
-               }
-          }
-
-          return undefined;
-     });
 }
 
 interface TextChunkSnapshotResult {
@@ -378,48 +260,21 @@ interface EmbedOptions {
      onEmbeddingProgress?: (processed: number, total: number) => void;
 }
 
-interface NodeDocument {
-     snapshotId: number;
-     filePath: string;
-     relativePath: string;
-     language: string;
-     nodePath: string;
-     nodeType: string;
-     symbolName: string | null;
-     content: string;
-     originalSnippet: string;
-}
-
-interface ChunkDocument {
-     chunkId: number;
-     filePath: string;
-     relativePath: string;
-     format: SupportedTextFormat;
-     chunkIndex: number;
-     label: string;
-     content: string;
-     originalContent: string;
-}
-
 interface SummarizedDocument {
-     originalDocument: NodeDocument | ChunkDocument;
+     originalDocument: ChunkDocument;
      summary: string;
-     type: "ast-node" | "text-chunk";
 }
 
 async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptions): Promise<void> {
      const folder = folderRegistry.getFolderByName(folderName);
 
-     // Collect AST node documents
-     const nodeDocuments = await collectAstNodeDocuments(folderName, folder);
-
      // Collect text chunk documents
      const chunkDocuments = await collectTextChunkDocuments(folderName, folder);
 
-     const totalDocuments = nodeDocuments.length + chunkDocuments.length;
+     const totalDocuments = chunkDocuments.length;
 
      if (totalDocuments === 0) {
-          console.warn(`[embed] No documents (AST nodes or text chunks) found for folder ${folderName}.`);
+          console.warn(`[embed] No text chunk documents found for folder ${folderName}.`);
           options?.onSummarizationStart?.(0);
           return;
      }
@@ -442,10 +297,10 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
 
      if (shouldEmbedSummaries) {
           // Summarization mode: use chat model to generate summaries before embedding
-          await embedWithSummarization(folderName, nodeDocuments, chunkDocuments, embeddingModel, options);
+          await embedWithSummarization(folderName, chunkDocuments, embeddingModel, options);
      } else {
-          // Direct embedding mode: embed code snippets directly (faster)
-          await embedDirectly(folderName, nodeDocuments, chunkDocuments, embeddingModel, options);
+          // Direct embedding mode: embed text chunks directly (faster)
+          await embedDirectly(folderName, chunkDocuments, embeddingModel, options);
      }
 }
 
@@ -455,12 +310,11 @@ async function embedFolderFromSnapshots(folderName: string, options?: EmbedOptio
  */
 async function embedWithSummarization(
      folderName: string,
-     nodeDocuments: NodeDocument[],
      chunkDocuments: ChunkDocument[],
      embeddingModel: EmbeddingModelClient,
      options?: EmbedOptions
 ): Promise<void> {
-     const totalDocuments = nodeDocuments.length + chunkDocuments.length;
+     const totalDocuments = chunkDocuments.length;
 
      // Resolve chat model for summarization
      const chatPreference = resolveChatPreferenceFromSettings();
@@ -475,44 +329,20 @@ async function embedWithSummarization(
           `[embed] Started summarizing folder "${folderName}" using chat model "${chatPreference.modelKey}" from provider "${chatPreference.providerId}"`
      );
 
-     // Phase 1: Summarize all documents
+     // Phase 1: Summarize all text chunk documents
      options?.onSummarizationStart?.(totalDocuments);
      const summarizedDocuments: SummarizedDocument[] = [];
      let summarizedCount = 0;
      let totalTokensOutput = 0;
 
-     // Summarize AST node documents
-     for (let i = 0; i < nodeDocuments.length; i += SUMMARIZATION_BATCH_SIZE) {
-          const batch = nodeDocuments.slice(i, i + SUMMARIZATION_BATCH_SIZE);
-          const result = await summarizeDocumentBatch(chatModel, batch, "ast-node");
-
-          for (let j = 0; j < batch.length; j++) {
-               summarizedDocuments.push({
-                    originalDocument: batch[j],
-                    summary: result.summaries[j],
-                    type: "ast-node",
-               });
-          }
-
-          summarizedCount += batch.length;
-          totalTokensOutput += result.tokensOutput;
-          options?.onSummarizationProgress?.(summarizedCount, totalDocuments, totalTokensOutput);
-
-          if (options?.isCancelled?.()) {
-               return;
-          }
-     }
-
-     // Summarize text chunk documents
      for (let i = 0; i < chunkDocuments.length; i += SUMMARIZATION_BATCH_SIZE) {
           const batch = chunkDocuments.slice(i, i + SUMMARIZATION_BATCH_SIZE);
-          const result = await summarizeDocumentBatch(chatModel, batch, "text-chunk");
+          const result = await summarizeDocumentBatch(chatModel, batch);
 
           for (let j = 0; j < batch.length; j++) {
                summarizedDocuments.push({
                     originalDocument: batch[j],
                     summary: result.summaries[j],
-                    type: "text-chunk",
                });
           }
 
@@ -540,48 +370,24 @@ async function embedWithSummarization(
 
           vectors.forEach((vector: number[], index: number) => {
                const summarized = batch[index];
-               const doc = summarized.originalDocument;
-
-               if (summarized.type === "ast-node") {
-                    const nodeDoc = doc as NodeDocument;
-                    rowsToInsert.push({
-                         folderName,
-                         filePath: nodeDoc.filePath,
-                         relativePath: nodeDoc.relativePath,
-                         fileSnapshotId: nodeDoc.snapshotId,
-                         content: summarized.summary,
-                         embedding: vectorToBuffer(vector),
-                         dim: vector.length,
-                         metadata: {
-                              stage: "initial",
-                              type: "ast-node",
-                              language: nodeDoc.language,
-                              nodePath: nodeDoc.nodePath,
-                              nodeType: nodeDoc.nodeType,
-                              ...(nodeDoc.symbolName ? { symbolName: nodeDoc.symbolName } : {}),
-                              originalSnippet: nodeDoc.originalSnippet,
-                         },
-                    });
-               } else {
-                    const chunkDoc = doc as ChunkDocument;
-                    rowsToInsert.push({
-                         folderName,
-                         filePath: chunkDoc.filePath,
-                         relativePath: chunkDoc.relativePath,
-                         fileSnapshotId: null,
-                         content: summarized.summary,
-                         embedding: vectorToBuffer(vector),
-                         dim: vector.length,
-                         metadata: {
-                              stage: "initial",
-                              type: "text-chunk",
-                              format: chunkDoc.format,
-                              chunkIndex: chunkDoc.chunkIndex,
-                              label: chunkDoc.label,
-                              originalContent: chunkDoc.originalContent,
-                         },
-                    });
-               }
+               const chunkDoc = summarized.originalDocument;
+               rowsToInsert.push({
+                    folderName,
+                    filePath: chunkDoc.filePath,
+                    relativePath: chunkDoc.relativePath,
+                    fileSnapshotId: null,
+                    content: summarized.summary,
+                    embedding: vectorToBuffer(vector),
+                    dim: vector.length,
+                    metadata: {
+                         stage: "initial",
+                         type: "text-chunk",
+                         format: chunkDoc.format,
+                         chunkIndex: chunkDoc.chunkIndex,
+                         label: chunkDoc.label,
+                         originalContent: chunkDoc.originalContent,
+                    },
+               });
           });
 
           embeddedCount += batch.length;
@@ -619,12 +425,11 @@ async function embedWithSummarization(
  */
 async function embedDirectly(
      folderName: string,
-     nodeDocuments: NodeDocument[],
      chunkDocuments: ChunkDocument[],
      embeddingModel: EmbeddingModelClient,
      options?: EmbedOptions
 ): Promise<void> {
-     const totalDocuments = nodeDocuments.length + chunkDocuments.length;
+     const totalDocuments = chunkDocuments.length;
 
      console.log(`[embed] Embedding folder "${folderName}" directly (${totalDocuments} documents)`);
 
@@ -632,41 +437,6 @@ async function embedDirectly(
      options?.onEmbeddingStart?.(totalDocuments);
      const rowsToInsert: (typeof embeddingsTable.$inferInsert)[] = [];
      let embeddedCount = 0;
-
-     // Embed AST node documents
-     for (let i = 0; i < nodeDocuments.length; i += EMBEDDING_BATCH_SIZE) {
-          const batch = nodeDocuments.slice(i, i + EMBEDDING_BATCH_SIZE);
-          const vectors = await embeddingModel.embedDocuments(batch.map((doc) => doc.content));
-
-          vectors.forEach((vector: number[], index: number) => {
-               const nodeDoc = batch[index];
-               rowsToInsert.push({
-                    folderName,
-                    filePath: nodeDoc.filePath,
-                    relativePath: nodeDoc.relativePath,
-                    fileSnapshotId: nodeDoc.snapshotId,
-                    content: nodeDoc.content,
-                    embedding: vectorToBuffer(vector),
-                    dim: vector.length,
-                    metadata: {
-                         stage: "initial",
-                         type: "ast-node",
-                         language: nodeDoc.language,
-                         nodePath: nodeDoc.nodePath,
-                         nodeType: nodeDoc.nodeType,
-                         ...(nodeDoc.symbolName ? { symbolName: nodeDoc.symbolName } : {}),
-                         originalSnippet: nodeDoc.originalSnippet,
-                    },
-               });
-          });
-
-          embeddedCount += batch.length;
-          options?.onEmbeddingProgress?.(embeddedCount, totalDocuments);
-
-          if (options?.isCancelled?.()) {
-               return;
-          }
-     }
 
      // Embed text chunk documents
      for (let i = 0; i < chunkDocuments.length; i += EMBEDDING_BATCH_SIZE) {
@@ -745,18 +515,14 @@ interface SummarizationResult {
 
 async function summarizeDocumentBatch(
      chatModel: BaseChatModel,
-     documents: (NodeDocument | ChunkDocument)[],
-     type: "ast-node" | "text-chunk"
+     documents: ChunkDocument[]
 ): Promise<SummarizationResult> {
      const summaries: string[] = [];
      let tokensOutput = 0;
 
      for (const doc of documents) {
           try {
-               const userPrompt =
-                    type === "ast-node"
-                         ? formatNodeSummarizationPrompt(doc as NodeDocument)
-                         : formatChunkSummarizationPrompt(doc as ChunkDocument);
+               const userPrompt = formatChunkSummarizationPrompt(doc);
 
                const response = await chatModel.invoke([
                     new SystemMessage(SUMMARIZATION_SYSTEM_PROMPT),
@@ -786,18 +552,6 @@ async function summarizeDocumentBatch(
      return { summaries, tokensOutput };
 }
 
-function formatNodeSummarizationPrompt(doc: NodeDocument): string {
-     const lines = [`File: ${doc.relativePath}`, `Language: ${doc.language}`, `Type: ${doc.nodeType}`];
-
-     if (doc.symbolName) {
-          lines.push(`Symbol Name: ${doc.symbolName}`);
-     }
-
-     lines.push("", "Code:", "```", doc.originalSnippet, "```");
-
-     return lines.join("\n");
-}
-
 function formatChunkSummarizationPrompt(doc: ChunkDocument): string {
      return [
           `File: ${doc.relativePath}`,
@@ -808,96 +562,6 @@ function formatChunkSummarizationPrompt(doc: ChunkDocument): string {
           doc.originalContent,
           "```",
      ].join("\n");
-}
-
-async function collectAstNodeDocuments(
-     folderName: string,
-     folder: FolderRegistration | undefined
-): Promise<NodeDocument[]> {
-     let snapshots = db
-          .select({
-               id: astFileSnapshots.id,
-               filePath: astFileSnapshots.filePath,
-               relativePath: astFileSnapshots.relativePath,
-               language: astFileSnapshots.language,
-          })
-          .from(astFileSnapshots)
-          .where(eq(astFileSnapshots.folderName, folderName))
-          .all();
-
-     // If no AST snapshots exist, try to create them
-     if (snapshots.length === 0 && folder) {
-          console.info(`[embed] No AST snapshots for ${folderName}; creating them now.`);
-          const { fileCount } = await ensureAstSnapshots(folder);
-          if (fileCount === 0) {
-               return [];
-          }
-
-          // Re-fetch snapshots after creation
-          snapshots = db
-               .select({
-                    id: astFileSnapshots.id,
-                    filePath: astFileSnapshots.filePath,
-                    relativePath: astFileSnapshots.relativePath,
-                    language: astFileSnapshots.language,
-               })
-               .from(astFileSnapshots)
-               .where(eq(astFileSnapshots.folderName, folderName))
-               .all();
-     }
-
-     const snapshotIds = snapshots.map((row) => row.id).filter((id): id is number => typeof id === "number");
-     if (snapshotIds.length === 0) {
-          return [];
-     }
-
-     const snapshotById = new Map<number, (typeof snapshots)[number]>();
-     for (const row of snapshots) {
-          snapshotById.set(row.id, row);
-     }
-
-     const nodeRows = db
-          .select({
-               id: astNodes.id,
-               fileId: astNodes.fileId,
-               nodePath: astNodes.nodePath,
-               type: astNodes.type,
-               textSnippet: astNodes.textSnippet,
-               startRow: astNodes.startRow,
-               startColumn: astNodes.startColumn,
-               endRow: astNodes.endRow,
-               endColumn: astNodes.endColumn,
-               metadata: astNodes.metadata,
-          })
-          .from(astNodes)
-          .where(inArray(astNodes.fileId, snapshotIds))
-          .all();
-
-     const documents: NodeDocument[] = [];
-     for (const node of nodeRows) {
-          const snapshot = snapshotById.get(node.fileId);
-          if (!snapshot) {
-               continue;
-          }
-
-          const nodeMetadata = parseNodeMetadata(node.metadata);
-          const symbolName = typeof nodeMetadata.symbolName === "string" ? nodeMetadata.symbolName : null;
-          const originalSnippet = node.textSnippet ? truncate(node.textSnippet, MAX_NODE_SNIPPET) : "";
-
-          documents.push({
-               snapshotId: snapshot.id,
-               filePath: snapshot.filePath,
-               relativePath: snapshot.relativePath,
-               language: snapshot.language,
-               nodePath: node.nodePath,
-               nodeType: node.type,
-               symbolName,
-               content: formatNodeDocument(snapshot, node, symbolName),
-               originalSnippet,
-          });
-     }
-
-     return documents;
 }
 
 async function collectTextChunkDocuments(
@@ -976,53 +640,6 @@ async function collectTextChunkDocuments(
      return documents;
 }
 
-function parseNodeMetadata(value: unknown): Record<string, unknown> {
-     if (!value) {
-          return {};
-     }
-     if (typeof value === "object") {
-          return value as Record<string, unknown>;
-     }
-     try {
-          return JSON.parse(String(value)) as Record<string, unknown>;
-     } catch {
-          return {};
-     }
-}
-
-function formatNodeDocument(
-     snapshot: { relativePath: string; language: string },
-     node: {
-          nodePath: string;
-          type: string;
-          textSnippet: string | null;
-          startRow: number;
-          startColumn: number;
-          endRow: number;
-          endColumn: number;
-     },
-     symbolName: string | null
-): string {
-     const snippet = node.textSnippet ? truncate(node.textSnippet, MAX_NODE_SNIPPET) : "<no snippet>";
-     const lines = [
-          `Path: ${snapshot.relativePath}`,
-          `Language: ${snapshot.language}`,
-          `Node Path: ${node.nodePath}`,
-          `Node Type: ${node.type}`,
-     ];
-
-     if (symbolName) {
-          lines.push(`Symbol: ${symbolName}`);
-     }
-
-     lines.push(
-          `Span: (${node.startRow},${node.startColumn})-(${node.endRow},${node.endColumn})`,
-          `Snippet: ${snippet}`
-     );
-
-     return lines.join("\n");
-}
-
 const MAX_CHUNK_LABEL = 50;
 
 function formatChunkDocument(chunk: {
@@ -1099,53 +716,6 @@ function deleteExistingInitialEmbeddings(folderName: string): void {
           const batch = initialIds.slice(i, i + batchSize);
           db.delete(embeddingsTable).where(inArray(embeddingsTable.id, batch)).run();
      }
-}
-
-function flattenAstNodes(
-     ast: SerializedNode,
-     fileId: number,
-     language: SupportedLanguage
-): (typeof astNodes.$inferInsert)[] {
-     const rows: (typeof astNodes.$inferInsert)[] = [];
-
-     // Only embed top-level focus nodes (direct children of the root).
-     // Do NOT recurse into nested focus nodes (e.g., methods inside classes,
-     // inner functions inside functions) to avoid embedding thousands of
-     // nested arrow functions, callbacks, etc. that bloat the embedding store.
-     // The text snippet of a focus node already captures its full content,
-     // making nested embeddings redundant.
-     for (let index = 0; index < ast.children.length; index++) {
-          const node = ast.children[index];
-          const path = `root.${index}`;
-          const symbolName = inferFocusSymbolName(language, node);
-          const metadata = {
-               truncatedByDepth: node.truncatedByDepth ?? false,
-               truncatedByChildLimit: node.truncatedByChildLimit ?? false,
-          } as Record<string, unknown>;
-
-          if (symbolName) {
-               metadata.symbolName = symbolName;
-          }
-
-          rows.push({
-               fileId,
-               nodePath: path,
-               type: node.type,
-               named: node.named,
-               hasError: node.hasError,
-               startIndex: node.startIndex,
-               endIndex: node.endIndex,
-               startRow: node.startPosition.row,
-               startColumn: node.startPosition.column,
-               endRow: node.endPosition.row,
-               endColumn: node.endPosition.column,
-               childCount: node.childCount,
-               textSnippet: node.textSnippet ?? null,
-               metadata,
-          });
-     }
-
-     return rows;
 }
 
 function truncate(value: string, maxLength: number): string {

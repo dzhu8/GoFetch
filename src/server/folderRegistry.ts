@@ -3,7 +3,7 @@ import path from "path";
 import { execSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import db from "@/server/db";
-import { folders as foldersTable, astFileSnapshots, embeddings } from "@/server/db/schema";
+import { folders as foldersTable, embeddings } from "@/server/db/schema";
 import { IGNORED_DIRECTORY_NAMES, IGNORED_FILE_NAMES } from "./folderIgnore";
 import { indexFolder, removeFolderIndex } from "./merkle/service";
 import merkleMonitor from "./merkle/monitor";
@@ -103,9 +103,7 @@ export class FolderRegistry {
                this.folders.delete(name);
           }
 
-          // Clean up AST snapshots and embeddings for this folder.
-          // astNodes cascade-delete from astFileSnapshots, and embeddings.fileSnapshotId
-          // also cascades, but embeddings without a snapshot link must be deleted explicitly.
+          // Clean up embeddings for this folder.
           this.cleanupFolderData(name);
 
           this.deleteFolderRecord(name);
@@ -114,10 +112,8 @@ export class FolderRegistry {
 
      private cleanupFolderData(folderName: string): void {
           try {
-               // Delete embeddings first (some may not have fileSnapshotId set)
+               // Delete embeddings for this folder
                db.delete(embeddings).where(eq(embeddings.folderName, folderName)).run();
-               // Delete AST snapshots (astNodes cascade automatically)
-               db.delete(astFileSnapshots).where(eq(astFileSnapshots.folderName, folderName)).run();
           } catch (error) {
                console.error(`[folderRegistry] Failed to clean up data for ${folderName}:`, error);
           }
