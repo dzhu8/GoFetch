@@ -1,5 +1,5 @@
 # GoFetch
-Live index of your codebase to identify the correct files to pass as context to AI pair programmers.  
+Live index of your research library to identify related papers and answer research questions.  
 
 Use `yarn install` to get started!
 

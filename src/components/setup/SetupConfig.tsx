@@ -27,10 +27,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [isFinishing, setIsFinishing] = useState(false);
      const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
      const [folderPath, setFolderPath] = useState("");
-     const [cliWatcherConsent, setCliWatcherConsent] = useState(false);
-     const [embedSummaries, setEmbedSummaries] = useState(false);
-     const [isCliConsentLoading, setIsCliConsentLoading] = useState(true);
-     const [isCliConsentSaving, setIsCliConsentSaving] = useState(false);
      const [defaultChatModel, setDefaultChatModel] = useState<ModelPreference | null>(null);
      const [defaultEmbeddingModel, setDefaultEmbeddingModel] = useState<ModelPreference | null>(null);
 
@@ -40,13 +36,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      const [selectedPythonPath, setSelectedPythonPath] = useState<string>("");
      const [newVenvPath, setNewVenvPath] = useState("");
      const [isCreatingVenv, setIsCreatingVenv] = useState(false);
-
-     // Install progress modal state
-     const [showInstallModal, setShowInstallModal] = useState(false);
-     const [installLines, setInstallLines] = useState<string[]>([]);
-     const [installStatus, setInstallStatus] = useState<"running" | "done" | "error">("running");
-     const [installError, setInstallError] = useState<string | null>(null);
-     const installScrollRef = useRef<HTMLDivElement>(null);
 
      const fetchProviders = useCallback(async (options?: { suppressSpinner?: boolean }) => {
           const showSpinner = !options?.suppressSpinner;
@@ -94,13 +83,11 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      }, [setupState]);
 
      useEffect(() => {
-          const fetchCliConsent = async () => {
+          const fetchSettings = async () => {
                try {
                     const res = await fetch("/api/config");
                     if (!res.ok) throw new Error("Failed to load configuration");
                     const data = await res.json();
-                    setCliWatcherConsent(Boolean(data.values?.preferences?.cliFolderWatcher));
-                    setEmbedSummaries(Boolean(data.values?.preferences?.embedSummaries));
 
                     const chatPreference = data.values?.preferences?.defaultChatModel;
                     if (chatPreference?.providerId && chatPreference?.modelKey) {
@@ -112,70 +99,12 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                          setDefaultEmbeddingModel(embeddingPreference);
                     }
                } catch (error) {
-                    console.error("Error loading CLI consent:", error);
-               } finally {
-                    setIsCliConsentLoading(false);
+                    console.error("Error loading settings:", error);
                }
           };
 
-          fetchCliConsent();
+          fetchSettings();
      }, []);
-
-     const handleCliConsentChange = async (value: boolean) => {
-          setIsCliConsentSaving(true);
-          try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ key: "preferences.cliFolderWatcher", value }),
-               });
-
-               if (!res.ok) throw new Error("Failed to update preference");
-
-               setCliWatcherConsent(value);
-               if (value) {
-                    await window.GoFetchCLI?.requestWatcherConsent?.();
-               }
-
-               return true;
-          } catch (error) {
-               console.error("Error saving CLI consent:", error);
-               toast.error("Failed to update CLI folder watcher preference");
-               return false;
-          } finally {
-               setIsCliConsentSaving(false);
-          }
-     };
-
-     const handleCliConsentSelection = async (value: boolean) => {
-          if (isCliConsentLoading || isCliConsentSaving) return;
-
-          if (cliWatcherConsent === value) {
-               setSetupState(3);
-               return;
-          }
-
-          const success = await handleCliConsentChange(value);
-          if (success) {
-               setSetupState(3);
-          }
-     };
-
-     const handleEmbedSummariesChange = async (value: boolean) => {
-          try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ key: "preferences.embedSummaries", value }),
-               });
-
-               if (!res.ok) throw new Error("Failed to update preference");
-               setEmbedSummaries(value);
-          } catch (error) {
-               console.error("Error saving embed summaries preference:", error);
-               toast.error("Failed to update embedding preference");
-          }
-     };
 
      const handleFinish = useCallback(async () => {
           try {
@@ -196,80 +125,20 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
 
                if (!res.ok) throw new Error("Failed to complete setup");
 
-               // If a Python env was selected, kick off the PaddleOCR install in background
-               // and show the progress modal. Otherwise just reload.
+               // If a Python env is selected, store a flag so PaddleInstallMonitor
+               // can pick it up and run the install from the main page.
                if (selectedPythonPath) {
-                    setInstallLines([]);
-                    setInstallStatus("running");
-                    setInstallError(null);
-                    setShowInstallModal(true);
-                    setIsFinishing(false);
-
-                    // Stream the install output
-                    try {
-                         const installRes = await fetch("/api/related-papers/paddleocr/install", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ pythonPath: selectedPythonPath }),
-                         });
-
-                         if (!installRes.ok) {
-                              const err = await installRes.json().catch(() => ({ error: "Installation failed" }));
-                              setInstallError((err as { error?: string }).error ?? "Installation failed");
-                              setInstallStatus("error");
-                              return;
-                         }
-
-                         const reader = installRes.body?.getReader();
-                         const decoder = new TextDecoder();
-                         if (!reader) {
-                              setInstallStatus("error");
-                              setInstallError("No response stream");
-                              return;
-                         }
-
-                         let buf = "";
-                         while (true) {
-                              const { done, value } = await reader.read();
-                              if (done) break;
-                              buf += decoder.decode(value, { stream: true });
-                              const parts = buf.split("\n");
-                              buf = parts.pop() ?? "";
-                              for (const part of parts) {
-                                   const trimmed = part.trim();
-                                   if (!trimmed) continue;
-                                   try {
-                                        const msg = JSON.parse(trimmed) as { type: string; line?: string; message?: string };
-                                        if (msg.type === "output" || msg.type === "command") {
-                                             setInstallLines((prev) => [...prev, msg.line ?? ""]);
-                                        } else if (msg.type === "error") {
-                                             setInstallError(msg.message ?? "Unknown error");
-                                             setInstallStatus("error");
-                                        } else if (msg.type === "done") {
-                                             setInstallStatus("done");
-                                        }
-                                   } catch { /* ignore malformed lines */ }
-                              }
-                         }
-
-                         if (installStatus !== "error") {
-                              setInstallStatus("done");
-                         }
-                    } catch (streamErr) {
-                         console.error("Install stream error:", streamErr);
-                         setInstallError(streamErr instanceof Error ? streamErr.message : "Installation failed");
-                         setInstallStatus("error");
-                    }
-               } else {
-                    await delay(600);
-                    window.location.reload();
+                    localStorage.setItem("paddleocr_install_pending", selectedPythonPath);
                }
+
+               await delay(300);
+               window.location.reload();
           } catch (error) {
                console.error("Error completing setup:", error);
                toast.error("Failed to complete setup");
                setIsFinishing(false);
           }
-     }, [selectedPythonPath, installStatus]);
+     }, [selectedPythonPath]);
 
      const handleCreateVenv = async () => {
           if (!newVenvPath.trim()) {
@@ -298,18 +167,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
           } finally {
                setIsCreatingVenv(false);
           }
-     };
-
-     // Auto-scroll the install log to the bottom as new lines arrive
-     useEffect(() => {
-          if (installScrollRef.current) {
-               installScrollRef.current.scrollTop = installScrollRef.current.scrollHeight;
-          }
-     }, [installLines]);
-
-     const handleDismissInstallModal = () => {
-          setShowInstallModal(false);
-          window.location.reload();
      };
 
      const visibleProviders = useMemo(
@@ -343,6 +200,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     type: provider.type,
                     chatModels: provider.chatModels ?? [],
                     embeddingModels: provider.embeddingModels ?? [],
+                    ocrModels: provider.ocrModels ?? [],
                })),
           [visibleProviders]
      );
@@ -429,190 +287,6 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                     providerSections={configSections.modelProviders ?? []}
                     onProviderAdded={() => fetchProviders()}
                />
-
-               {/* PaddleOCR Install Progress Modal */}
-               {showInstallModal && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                         <div className="w-[90vw] max-w-2xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-2xl p-5 sm:p-6 flex flex-col gap-4">
-                              <div className="flex items-center justify-between">
-                                   <div className="flex items-center gap-2">
-                                        {installStatus === "running" && (
-                                             <Loader2 className="w-4 h-4 animate-spin text-[#F8B692]" />
-                                        )}
-                                        {installStatus === "done" && (
-                                             <Check className="w-4 h-4 text-green-500" />
-                                        )}
-                                        {installStatus === "error" && (
-                                             <X className="w-4 h-4 text-red-500" />
-                                        )}
-                                        <p className="text-sm font-medium text-black dark:text-white">
-                                             {installStatus === "running" && "Installing PaddleOCR..."}
-                                             {installStatus === "done" && "PaddleOCR installed successfully"}
-                                             {installStatus === "error" && "Installation failed"}
-                                        </p>
-                                   </div>
-                                   <button
-                                        type="button"
-                                        onClick={handleDismissInstallModal}
-                                        disabled={installStatus === "running"}
-                                        className="text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                                        title="Close"
-                                   >
-                                        <X className="w-4 h-4" />
-                                   </button>
-                              </div>
-
-                              {installError && (
-                                   <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-700 dark:text-red-400">
-                                        {installError}
-                                   </div>
-                              )}
-
-                              <div
-                                   ref={installScrollRef}
-                                   className="h-64 overflow-y-auto rounded-lg bg-black/90 p-3 font-mono text-[11px] text-green-400 space-y-0.5"
-                              >
-                                   {installLines.length === 0 ? (
-                                        <p className="text-white/40">Waiting for output...</p>
-                                   ) : (
-                                        installLines.map((line, i) => (
-                                             <p key={i} className="leading-relaxed whitespace-pre-wrap break-all">{line}</p>
-                                        ))
-                                   )}
-                              </div>
-
-                              <div className="flex justify-end">
-                                   <button
-                                        type="button"
-                                        onClick={handleDismissInstallModal}
-                                        disabled={installStatus === "running"}
-                                        className="px-4 py-2 text-sm rounded-lg bg-[#F8B692] text-black hover:bg-[#e6ad82] transition-all disabled:opacity-40 disabled:cursor-not-allowed font-medium"
-                                   >
-                                        {installStatus === "running" ? "Installing..." : "Get Started"}
-                                   </button>
-                              </div>
-                         </div>
-                    </div>
-               )}
-
-               {setupState === 2 && (
-                    <motion.div
-                         initial={{ opacity: 0, y: 20 }}
-                         animate={{
-                              opacity: 1,
-                              y: 0,
-                              transition: { duration: 0.5, delay: 0.1 },
-                         }}
-                         className="w-full flex items-center justify-center"
-                    >
-                         <div className="w-[90vw] max-w-lg bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-2xl shadow-xl p-5 sm:p-6 space-y-6 text-center">
-                              {/* CLI Folder Watcher Section */}
-                              <div className="space-y-3">
-                                   <div>
-                                        <p className="text-sm font-medium text-black dark:text-white">
-                                             Enable CLI Folder Watcher
-                                        </p>
-                                        <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
-                                             Let the GoFetch CLI capture folder selections directly from your computer's
-                                             file explorer.
-                                        </p>
-                                   </div>
-                                   <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
-                                        <p className="text-[11px] text-black/60 dark:text-white/60">
-                                             {isCliConsentLoading
-                                                  ? "Checking CLI helper status..."
-                                                  : cliWatcherConsent
-                                                    ? "CLI helper is ready. Keep it enabled to streamline folder registration."
-                                                    : "Enable this to avoid needing to type folder paths manually when adding folders."}
-                                        </p>
-                                        <div className="flex flex-row gap-2">
-                                             <button
-                                                  type="button"
-                                                  onClick={() => handleCliConsentChange(true)}
-                                                  disabled={isCliConsentLoading || isCliConsentSaving}
-                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
-                                                       cliWatcherConsent
-                                                            ? "bg-[#F8B692] text-black"
-                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
-                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
-                                             >
-                                                  Enabled
-                                             </button>
-                                             <button
-                                                  type="button"
-                                                  onClick={() => handleCliConsentChange(false)}
-                                                  disabled={isCliConsentLoading || isCliConsentSaving}
-                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
-                                                       !cliWatcherConsent
-                                                            ? "bg-[#F8B692] text-black"
-                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
-                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
-                                             >
-                                                  Disabled
-                                             </button>
-                                        </div>
-                                   </div>
-                              </div>
-
-                              {/* Embedding Mode Section */}
-                              <div className="space-y-3">
-                                   <div>
-                                        <p className="text-sm font-medium text-black dark:text-white">Embedding Mode</p>
-                                        <p className="text-[11px] text-black/60 dark:text-white/60 mt-1">
-                                             Choose how code snippets are embedded for semantic search.
-                                        </p>
-                                   </div>
-                                   <div className="rounded-xl border border-dashed border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 p-4 space-y-3">
-                                        <p className="text-[11px] text-black/60 dark:text-white/60">
-                                             {embedSummaries
-                                                  ? "Summaries mode: Uses a chat model to generate searchable summaries before embedding. Slower but may improve search quality."
-                                                  : "Direct mode: Embeds code snippets directly. Faster and works well for most use cases."}
-                                        </p>
-                                        <div className="flex flex-row gap-2">
-                                             <button
-                                                  type="button"
-                                                  onClick={() => handleEmbedSummariesChange(false)}
-                                                  disabled={isCliConsentLoading}
-                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
-                                                       !embedSummaries
-                                                            ? "bg-[#F8B692] text-black"
-                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
-                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
-                                             >
-                                                  Directly Embed Code (Faster)
-                                             </button>
-                                             <button
-                                                  type="button"
-                                                  onClick={() => handleEmbedSummariesChange(true)}
-                                                  disabled={isCliConsentLoading}
-                                                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
-                                                       embedSummaries
-                                                            ? "bg-[#F8B692] text-black"
-                                                            : "border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
-                                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
-                                             >
-                                                  Embed Summaries (Focus on the Main Ideas)
-                                             </button>
-                                        </div>
-                                   </div>
-                              </div>
-
-                              {/* Continue Button */}
-                              <button
-                                   type="button"
-                                   onClick={() => setSetupState(3)}
-                                   disabled={isCliConsentLoading || isCliConsentSaving}
-                                   className="w-full px-4 py-2 text-sm rounded-lg bg-[#F8B692] text-black font-medium hover:bg-[#e6ad82] disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-                              >
-                                   Continue
-                              </button>
-
-                              <p className="text-[10px] text-black/50 dark:text-white/50">
-                                   You can change these settings later.
-                              </p>
-                         </div>
-                    </motion.div>
-               )}
 
                {setupState === 3 && (
                     <motion.div
@@ -918,7 +592,7 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                               }}
                               type="button"
                               disabled={isFinishing}
-                              onClick={() => setSetupState(Math.max(2, setupState - 1))}
+                              onClick={() => setSetupState(Math.max(3, setupState - 1))}
                               className="flex flex-row items-center gap-1.5 md:gap-2 px-3 md:px-5 py-2 md:py-2.5 rounded-lg border border-light-200 dark:border-dark-200 bg-[#F8B692] text-black active:scale-95 hover:bg-[#e6ad82] transition-all duration-200 text-xs sm:text-sm font-medium disabled:text-black/40 dark:disabled:text-white/40 disabled:border-light-200/50 dark:disabled:border-dark-200/40 disabled:cursor-not-allowed disabled:active:scale-100"
                          >
                               <ArrowLeft className="w-4 h-4" />

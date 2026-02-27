@@ -1,6 +1,7 @@
 **/test/*
 **/dist/*
 data/*
+deprecated/*
 drizzle/*
 temp/*
 node_modules/

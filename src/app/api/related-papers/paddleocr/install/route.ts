@@ -54,6 +54,28 @@ async function detectNvcc(): Promise<{ cudaTag: string } | { error: string }> {
      });
 }
 
+// PaddlePaddle publishes wheels for these CPython versions only.
+// Python 3.13+ wheels do not exist yet (as of early 2026).
+const PADDLE_MIN_PYTHON = [3, 8] as const;
+const PADDLE_MAX_PYTHON = [3, 12] as const;
+
+// Returns [major, minor] or null if the version cannot be determined.
+function getPythonVersion(pythonExe: string): Promise<[number, number] | null> {
+     return new Promise((resolve) => {
+          const proc = spawn(pythonExe, ["-c", "import sys; print(sys.version_info.major, sys.version_info.minor)"]);
+          let output = "";
+          proc.stdout?.on("data", (d: Buffer) => { output += d.toString(); });
+          const timeout = setTimeout(() => { proc.kill(); resolve(null); }, 10000);
+          proc.on("close", () => {
+               clearTimeout(timeout);
+               const match = output.trim().match(/^(\d+)\s+(\d+)$/);
+               if (!match) { resolve(null); return; }
+               resolve([parseInt(match[1], 10), parseInt(match[2], 10)]);
+          });
+          proc.on("error", () => { clearTimeout(timeout); resolve(null); });
+     });
+}
+
 // Returns true if `import torch` succeeds in the given Python environment.
 function checkTorchInstalled(pythonExe: string): Promise<boolean> {
      return new Promise((resolve) => {
@@ -272,6 +294,27 @@ export async function POST(req: NextRequest) {
                };
 
                const runPipeline = async () => {
+                    // Step 0: Verify Python version is within PaddlePaddle's supported range.
+                    const pyVersion = await getPythonVersion(pythonExe);
+                    if (pyVersion) {
+                         const [maj, min] = pyVersion;
+                         const [minMaj, minMin] = PADDLE_MIN_PYTHON;
+                         const [maxMaj, maxMin] = PADDLE_MAX_PYTHON;
+                         const tooOld = maj < minMaj || (maj === minMaj && min < minMin);
+                         const tooNew = maj > maxMaj || (maj === maxMaj && min > maxMin);
+                         if (tooOld || tooNew) {
+                              const range = `${minMaj}.${minMin}–${maxMaj}.${maxMin}`;
+                              send({
+                                   type: "error",
+                                   message: `Python ${maj}.${min} is not supported. PaddlePaddle requires Python ${range}. ` +
+                                        `Please select or create a conda environment with a supported Python version ` +
+                                        `(e.g. \`conda create -n paddle_env python=3.12\`).`,
+                              });
+                              controller.close();
+                              return;
+                         }
+                    }
+
                     // Step 1: Ensure torch is installed (required for cuDNN detection)
                     const torchInstalled = await checkTorchInstalled(pythonExe);
                     if (!torchInstalled) {
@@ -313,7 +356,7 @@ export async function POST(req: NextRequest) {
                          "-m", "pip",
                          "install",
                          paddleSpec,
-                         "--extra-index-url",
+                         "--index-url",
                          paddleURL,
                          // Upgrade to ensure we replace any older installed version
                          "--upgrade",

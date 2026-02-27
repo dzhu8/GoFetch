@@ -78,10 +78,8 @@ async function detectCondaEnvs(): Promise<PythonEnvironment[]> {
                if (!version) continue;
 
                const baseName = path.basename(envPath);
-               const isBase =
-                    baseName === "base" ||
-                    envPath.toLowerCase().includes("miniconda") ||
-                    envPath.toLowerCase().includes("anaconda");
+               // Named envs live under <conda_root>/envs/<name>; the base env is the root itself.
+               const isBase = !envPath.includes(`${path.sep}envs${path.sep}`) && !envPath.includes("/envs/");
 
                results.push({
                     name: isBase ? `conda: base (${version})` : `conda: ${baseName} (${version})`,

@@ -12,6 +12,7 @@ import { Toaster } from "sonner";
 import ThemeProvider from "@/components/theme/Provider";
 import { ChatProvider } from "@/lib/chat/Chat";
 import SetupWizard from "@/components/setup/SetupWizard";
+import PaddleInstallMonitor from "@/components/setup/PaddleInstallMonitor";
 import { TaskProgressProvider } from "@/components/progress/TaskProgressProvider";
 import TaskProgressToasts from "@/components/progress/TaskProgressToasts";
 
@@ -43,6 +44,7 @@ export default async function RootLayout({
                               {setupComplete ? (
                                    <ChatProvider>
                                         <Sidebar>{children}</Sidebar>
+                                        <PaddleInstallMonitor />
                                         <Toaster
                                              toastOptions={{
                                                   unstyled: true,

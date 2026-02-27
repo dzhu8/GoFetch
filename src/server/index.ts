@@ -246,7 +246,7 @@ class ConfigManager {
 
      private initialize() {
           this.initializeConfig();
-          this.loadSettingsFromDatabase();
+          //this.loadSettingsFromDatabase();
           this.initializeFromEnv();
      }
 
@@ -259,7 +259,7 @@ class ConfigManager {
           this.lastRefreshTime = now;
 
           this.syncConfigFromDisk();
-          this.loadSettingsFromDatabase({ persistToDisk: false });
+          //this.loadSettingsFromDatabase({ persistToDisk: false });
      }
 
      private saveConfig() {
