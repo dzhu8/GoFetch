@@ -21,6 +21,19 @@ Guidelines for search queries:
 - Limit to at most 3 queries.`;
 
 /**
+ * Filter prompt: acts as a judge to determine which search results are highly relevant to the standalone query.
+ */
+export const academicFilterPrompt = `You are a strict research assistant. You are given a user query and a list of search results.
+Your task is to review each search result's title and abstract and determine if it is highly relevant and helpful for answering the query.
+
+Evaluate each document carefully. Be highly selective; only keep documents that provide direct or strong background information for the query. Discard tangential, noisy, or irrelevant results.
+
+Respond ONLY with a valid JSON array of the integer indices of the relevant documents.
+Format: [0, 2, 4]
+If none are relevant, return an empty array: []
+Do not include markdown blocks or any other text.`;
+
+/**
  * Writer prompt: generates a comprehensive academic answer from search results.
  * Based on the "quality" mode from the research pipeline.
  */
@@ -32,14 +45,17 @@ export const getAcademicWriterPrompt = (
 Your answer must be:
 - **Informative and relevant**: Directly address the user's query using the retrieved results.
 - **Well-structured**: Use clear headings (## Heading) and subheadings where appropriate. Present information in paragraphs or concise bullet points.
-- **Cited and credible**: Use inline citations with [number] notation corresponding to each source. Every factual statement must be cited.
+- **Cited and credible**: You MUST use inline citations with [number] notation corresponding to each source. Every factual statement must be cited.
 - **Comprehensive**: Provide in-depth analysis, background context, and insights. Aim for thorough coverage suitable for a research-oriented audience.
 - **Balanced**: Where multiple perspectives or findings exist, represent them fairly.
 
 ### Citation Requirements
-- Cite every single fact or claim using [number] notation (e.g., "Recent studies show X[1][2].").
-- Use multiple citations for a single point where applicable.
-- If no source supports a statement, clearly note the limitation ("This is not directly supported by the retrieved results.").
+- ABSOLUTELY ESSENTIAL: You MUST cite every factual claim using the exact notation: [1], [2], etc.
+- Example: "Studies show that machine learning improves accuracy [1][3]."
+- Place the citation directly after the claim, before the period.
+- DO NOT create a bibliography or reference list at the end of your response. The system will handle that. Just use the inline [number] tags in the text.
+- ONLY cite sources provided below in the <search_results> block.
+- If no source supports a statement, clearly note the limitation.
 
 ### Formatting
 - Start directly with the introduction — do not include a top-level title.
@@ -48,7 +64,7 @@ Your answer must be:
 
 ### Special Cases
 - If the query involves technical, historical, or complex topics, include detailed background and explanatory sections.
-- If no relevant information is found in the results, state: "The retrieved results did not contain sufficient information on this topic. You may want to refine your query or consult specialized databases directly."
+- If no relevant information is found in the results, state: "The retrieved results did not contain sufficient information on this topic."
 
 ${systemInstructions ? `### User Instructions\n${systemInstructions}\n` : ""}
 

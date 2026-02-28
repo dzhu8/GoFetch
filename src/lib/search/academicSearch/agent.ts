@@ -3,6 +3,7 @@ import { SystemMessage, HumanMessage, AIMessage, BaseMessage } from "@langchain/
 import EventEmitter from "events";
 import { searchSearxng } from "@/lib/searxng";
 import { classifyAcademicQuery } from "./classifier";
+import { filterRelevantChunks } from "./filter";
 import { getAcademicWriterPrompt } from "@/lib/prompts/academicSearch";
 import { AcademicSearchChunk } from "./types";
 
@@ -24,9 +25,11 @@ async function executeSearch(
 ): Promise<void> {
      try {
           // Step 1: classify query and generate targeted search queries
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "analyzing", message: "Analyzing query..." } }));
           const { standaloneQuery, searchQueries } = await classifyAcademicQuery(query, history, llm);
 
           // Step 2: search SearXNG in parallel for each query
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "searching", message: "Querying academic databases..." } }));
           const allChunks: AcademicSearchChunk[] = [];
 
           await Promise.all(
@@ -48,23 +51,40 @@ async function executeSearch(
 
           // Deduplicate by URL
           const seen = new Set<string>();
-          const dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
+          let dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
                if (seen.has(url)) return false;
                seen.add(url);
                return true;
           });
 
-          // Step 3: emit sources so the client can display them
-          const sources = dedupedChunks.map((chunk) => ({
+          // Limit initial search results to avoid context explosion in the filter step
+          dedupedChunks = dedupedChunks.slice(0, 45);
+
+          // Step 3: use the LLM as a judge to filter out irrelevant sources
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "analyzing", message: "Filtering relevant sources..." } }));
+          let filteredChunks = await filterRelevantChunks(standaloneQuery, dedupedChunks, llm);
+
+          // If filtering accidentally dropped everything but we originally had results, fallback entirely
+          if (filteredChunks.length === 0 && dedupedChunks.length > 0) {
+              console.warn("[academicSearch] Filter discarded all chunks. Falling back to top 3.");
+              filteredChunks = dedupedChunks.slice(0, 3);
+          }
+
+          // Limit to a maximum of 15 relevant sources to avoid context explosion and citation confusion
+          filteredChunks = filteredChunks.slice(0, 15);
+
+          // Step 4: emit sources so the client can display them
+          const sources = filteredChunks.map((chunk) => ({
                pageContent: chunk.content,
                metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
           }));
 
           emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
 
-          // Step 4: build context string and stream the writer response
-          const context = dedupedChunks
-               .map((chunk, i) => `[${i + 1}] ${chunk.metadata.title}\n${chunk.content}\n(${chunk.metadata.url})`)
+          // Step 5: build context string and stream the writer response
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Synthesizing answer..." } }));
+          const context = filteredChunks
+               .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\nAbstract: ${chunk.content}`)
                .join("\n\n");
 
           const writerPrompt = getAcademicWriterPrompt(context, systemInstructions);
