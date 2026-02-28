@@ -227,3 +227,27 @@ export const textChunkSnapshots = sqliteTable("text_chunk_snapshots", {
           .default(sql`CURRENT_TIMESTAMP`)
           .notNull(),
 });
+
+// --- Academic Search History ---
+
+interface AcademicSource {
+     pageContent: string;
+     metadata: {
+          title: string;
+          url: string;
+          [key: string]: any;
+     };
+}
+
+export const academicSearches = sqliteTable("academic_searches", {
+     id: integer("id").primaryKey(),
+     chatId: text("chat_id").notNull(),
+     query: text("query").notNull(),
+     sources: text("sources", { mode: "json" })
+          .$type<AcademicSource[]>()
+          .default(sql`'[]'`),
+     response: text("response"),
+     createdAt: text("created_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});

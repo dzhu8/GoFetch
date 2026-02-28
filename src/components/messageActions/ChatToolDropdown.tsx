@@ -2,19 +2,21 @@
 
 import { cn } from "@/lib/utils";
 import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/react";
-import { ChevronDown, Paperclip, FileText, Plus, LucideIcon } from "lucide-react";
+import { ChevronDown, Paperclip, FileText, Plus, GraduationCap, LucideIcon } from "lucide-react";
 import { Fragment } from "react";
 import Attach from "./Attach";
 import GetRelatedPapers from "./GetRelatedPapers";
+import { useChat } from "@/lib/chat/Chat";
 
-interface ToolItemProps {
+interface OverlayToolItemProps {
   label: string;
   description: string;
   icon: LucideIcon;
   component: React.ReactNode;
 }
 
-const ToolItem = ({ label, description, icon: Icon, component }: ToolItemProps) => {
+/** Item that renders an invisible overlay so the real component (e.g. file input) handles the click. */
+const OverlayToolItem = ({ label, description, icon: Icon, component }: OverlayToolItemProps) => {
   return (
     <div className="flex flex-row items-start space-x-3 p-3 hover:bg-light-200 dark:hover:bg-dark-200 rounded-lg transition-colors cursor-pointer group relative">
       <div className="mt-1">
@@ -24,11 +26,6 @@ const ToolItem = ({ label, description, icon: Icon, component }: ToolItemProps) 
         <span className="text-sm font-medium text-black dark:text-white">{label}</span>
         <span className="text-xs text-black/50 dark:text-white/50">{description}</span>
       </div>
-      {/* 
-        This is a trick to overlay the actual action component (Attach or GetRelatedPapers) 
-        over the visual menu item while keeping the layout. 
-        Most action components are just buttons that trigger a hidden input or show a popover.
-      */}
       <div className="absolute inset-0 opacity-0 overflow-hidden">
         {component}
       </div>
@@ -37,9 +34,12 @@ const ToolItem = ({ label, description, icon: Icon, component }: ToolItemProps) 
 };
 
 const ChatToolDropdown = () => {
+  const { focusMode, setFocusMode } = useChat();
+  const academicActive = focusMode === "academic";
+
   return (
     <Popover className="relative">
-      {({ open }) => (
+      {({ open, close }) => (
         <>
           <PopoverButton
             className={cn(
@@ -63,18 +63,50 @@ const ChatToolDropdown = () => {
           >
             <PopoverPanel className="absolute left-0 bottom-full mb-2 z-50 w-72 origin-bottom-left">
               <div className="bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-xl shadow-xl overflow-hidden p-1 flex flex-col space-y-1">
-                <ToolItem 
-                  label="Attach Files" 
-                  description="Upload PDF, DOCX, or TXT for analysis" 
-                  icon={Paperclip} 
+                <OverlayToolItem
+                  label="Attach Files"
+                  description="Upload PDF, DOCX, or TXT for analysis"
+                  icon={Paperclip}
                   component={<Attach />}
                 />
-                <ToolItem 
-                  label="Related Papers" 
-                  description="Find academic papers related to your PDF" 
-                  icon={FileText} 
+                <OverlayToolItem
+                  label="Related Papers"
+                  description="Find academic papers related to your PDF"
+                  icon={FileText}
                   component={<GetRelatedPapers />}
                 />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFocusMode(academicActive ? "default" : "academic");
+                    close();
+                  }}
+                  className={cn(
+                    "flex flex-row items-start space-x-3 p-3 rounded-lg transition-colors w-full text-left group",
+                    academicActive
+                      ? "bg-sky-500/10 hover:bg-sky-500/20"
+                      : "hover:bg-light-200 dark:hover:bg-dark-200"
+                  )}
+                >
+                  <div className="mt-1">
+                    <GraduationCap
+                      size={18}
+                      className={cn(
+                        "transition-colors",
+                        academicActive ? "text-sky-500" : "text-black/50 dark:text-white/50 group-hover:text-sky-500"
+                      )}
+                    />
+                  </div>
+                  <div className="flex flex-col flex-1">
+                    <span className={cn("text-sm font-medium", academicActive ? "text-sky-500" : "text-black dark:text-white")}>
+                      Academic Search
+                      {academicActive && <span className="ml-2 text-xs font-normal opacity-70">(active)</span>}
+                    </span>
+                    <span className="text-xs text-black/50 dark:text-white/50">
+                      {academicActive ? "Click to return to default mode" : "Search arxiv, Google Scholar & PubMed"}
+                    </span>
+                  </div>
+                </button>
               </div>
             </PopoverPanel>
           </Transition>

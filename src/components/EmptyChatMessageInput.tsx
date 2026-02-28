@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, GraduationCap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import TextareaAutosize from "react-textarea-autosize";
@@ -8,7 +8,7 @@ import ChatToolDropdown from "./messageActions/ChatToolDropdown";
 import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
-     const { sendMessage } = useChat();
+     const { sendMessage, focusMode } = useChat();
 
      /* const [copilotEnabled, setCopilotEnabled] = useState(false); */
      const [message, setMessage] = useState("");
@@ -66,13 +66,19 @@ const EmptyChatMessageInput = () => {
                               onChange={(e) => setMessage(e.target.value)}
                               minRows={2}
                               className="px-2 bg-transparent placeholder:text-[15px] placeholder:text-black/50 dark:placeholder:text-white/50 text-sm text-black dark:text-white resize-none focus:outline-none w-full max-h-24 lg:max-h-36 xl:max-h-48"
-                              placeholder="Ask anything..."
+                              placeholder={focusMode === "academic" ? "Search for academic papers..." : "Ask anything..."}
                          />
                          <div className="flex flex-row items-center justify-between mt-4">
                               <div className="flex flex-row items-center space-x-2">
                                    <div className="flex flex-row items-center space-x-1">
                                         <ModelSelector />
                                         <ChatToolDropdown />
+                                        {focusMode === "academic" && (
+                                             <div className="flex items-center space-x-1 px-3 py-1.5 bg-sky-500/10 text-sky-500 rounded-lg text-xs font-medium border border-sky-500/20">
+                                                  <GraduationCap size={14} />
+                                                  <span>Academic Search</span>
+                                             </div>
+                                        )}
                                    </div>
                                    <button
                                         disabled={message.trim().length === 0}

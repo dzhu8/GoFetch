@@ -1,0 +1,26 @@
+use_default_settings: true
+
+general:
+  instance_name: 'gofetch-searxng'
+
+search:
+  autocomplete: 'google'
+  formats:
+    - html
+    - json
+
+server:
+  # Override via SEARXNG_SECRET env var in production
+  secret_key: 'gofetch-searxng-secret-change-in-production'
+  bind_address: '0.0.0.0:8080'
+  public_instance: false
+
+engines:
+  - name: arxiv
+    disabled: false
+  - name: google scholar
+    disabled: false
+  - name: pubmed
+    disabled: false
+  - name: wolframalpha
+    disabled: false

@@ -41,6 +41,9 @@ class ConfigManager {
           ollama: {
                baseURL: "http://localhost:11434",
           },
+          search: {
+               searxngURL: "",
+          },
           // Optional initial folder to register at startup
           folder: {
                path: "",
@@ -227,6 +230,19 @@ class ConfigManager {
                     ],
                },
           ],
+          search: [
+               {
+                    name: "SearXNG URL",
+                    key: "search.searxngURL",
+                    type: "string" as const,
+                    required: false,
+                    description: "URL of your SearXNG instance for academic web search",
+                    placeholder: "http://localhost:8080",
+                    default: "",
+                    scope: "server" as const,
+                    env: "SEARXNG_API_URL",
+               },
+          ],
      };
 
      constructor() {
@@ -334,6 +350,12 @@ class ConfigManager {
           if (this.currentConfig.preferences.textChunkOverlapTokens === undefined) {
                this.currentConfig.preferences.textChunkOverlapTokens = 100;
           }
+          if (!this.currentConfig.search || typeof this.currentConfig.search !== "object") {
+               this.currentConfig.search = {};
+          }
+          if (this.currentConfig.search.searxngURL === undefined) {
+               this.currentConfig.search.searxngURL = "";
+          }
      }
 
      private ensureModelProvidersArray() {
@@ -348,6 +370,13 @@ class ConfigManager {
           if (envOllama) {
                this.applyConfigValue("ollama.baseURL", envOllama);
                this.persistSettingToDatabase("ollama.baseURL", envOllama);
+          }
+
+          // Load SearXNG URL from env if provided
+          const envSearxng = process.env.SEARXNG_API_URL;
+          if (envSearxng) {
+               this.applyConfigValue("search.searxngURL", envSearxng);
+               this.persistSettingToDatabase("search.searxngURL", envSearxng);
           }
 
           // Map UI-config fields that declare envs for known top-level sections

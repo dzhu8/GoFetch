@@ -42,6 +42,8 @@ type ChatContext = {
      messageAppeared: boolean;
      isReady: boolean;
      hasError: boolean;
+     focusMode: "academic" | "default";
+     setFocusMode: (mode: "academic" | "default") => void;
      chatModelProvider: ChatModelProvider;
      embeddingModelProvider: EmbeddingModelProvider;
      ocrModelProvider: OcrModelProvider | null;
@@ -55,6 +57,7 @@ type ChatContext = {
      setFiles: (files: File[]) => void;
      setFileIds: (fileIds: string[]) => void;
      sendMessage: (message: string, messageId?: string, rewrite?: boolean) => Promise<void>;
+     sendAcademicSearch: (query: string) => Promise<void>;
      rewrite: (messageId: string) => void;
      setChatModelProvider: (provider: ChatModelProvider) => void;
      setEmbeddingModelProvider: (provider: EmbeddingModelProvider) => void;
@@ -224,6 +227,8 @@ export const chatContext = createContext<ChatContext>({
      chatTurns: [],
      sections: [],
      notFound: false,
+     focusMode: "default",
+     setFocusMode: () => {},
      chatModelProvider: { key: "", providerId: "" },
      embeddingModelProvider: { key: "", providerId: "" },
      ocrModelProvider: null,
@@ -234,6 +239,7 @@ export const chatContext = createContext<ChatContext>({
      removeRelatedPapers: () => {},
      rewrite: () => {},
      sendMessage: async () => {},
+     sendAcademicSearch: async () => {},
      setFileIds: () => {},
      setFiles: () => {},
      setChatModelProvider: () => {},
@@ -259,6 +265,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      const [fileIds, setFileIds] = useState<string[]>([]);
 
      const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
+
+     const [focusMode, setFocusMode] = useState<"academic" | "default">("default");
 
      const [notFound, setNotFound] = useState(false);
 
@@ -492,11 +500,14 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      }, [isConfigReady, isReady, initialMessage]);
 
      const sendMessage: ChatContext["sendMessage"] = async (message, messageId, rewrite = false) => {
+          if (focusMode === "academic") {
+               return sendAcademicSearch(message);
+          }
           if (loading || !message) return;
           setLoading(true);
           setMessageAppeared(false);
 
-          if (messages.length <= 1) {
+          if (messages.length <= 0) {
                window.history.replaceState(null, "", `/c/${chatId}`);
           }
 
@@ -678,6 +689,131 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           }
      };
 
+     const sendAcademicSearch: ChatContext["sendAcademicSearch"] = async (query) => {
+          if (loading || !query) return;
+          setLoading(true);
+          setMessageAppeared(false);
+
+          if (messages.length <= 0) {
+               window.history.replaceState(null, "", `/c/${chatId}`);
+          }
+
+          let receivedMessage = "";
+          let added = false;
+          const messageId = crypto.randomBytes(7).toString("hex");
+
+          setMessages((prev) => [
+               ...prev,
+               {
+                    content: query,
+                    messageId,
+                    chatId: chatId!,
+                    role: "user",
+                    createdAt: new Date(),
+               },
+          ]);
+
+          const messageHandler = async (data: any) => {
+               if (data.type === "error") {
+                    toast.error(data.data);
+                    setLoading(false);
+                    setSearchStatus(null);
+                    return;
+               }
+
+               if (data.type === "sources") {
+                    setSearchStatus(null);
+                    setMessageAppeared(true);
+                    setMessages((prev) => [
+                         ...prev,
+                         {
+                              messageId: data.messageId,
+                              chatId: chatId!,
+                              role: "source",
+                              sources: data.data ?? [],
+                              createdAt: new Date(),
+                         },
+                    ]);
+               }
+
+               if (data.type === "message") {
+                    if (!added) {
+                         setMessages((prev) => [
+                              ...prev,
+                              {
+                                   content: data.data,
+                                   messageId: data.messageId,
+                                   chatId: chatId!,
+                                   role: "assistant",
+                                   createdAt: new Date(),
+                              },
+                         ]);
+                         added = true;
+                         setMessageAppeared(true);
+                    } else {
+                         setMessages((prev) =>
+                              prev.map((msg) => {
+                                   if (msg.messageId === data.messageId && msg.role === "assistant") {
+                                        return { ...msg, content: msg.content + data.data };
+                                   }
+                                   return msg;
+                              }),
+                         );
+                    }
+                    receivedMessage += data.data;
+               }
+
+               if (data.type === "messageEnd") {
+                    setChatHistory((prev) => [...prev, ["human", query], ["assistant", receivedMessage]]);
+                    setLoading(false);
+                    setSearchStatus(null);
+               }
+          };
+
+          const res = await fetch("/api/academic-search", {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({
+                    query,
+                    chatId: chatId!,
+                    messageId,
+                    history: chatHistory,
+                    chatModel: {
+                         key: chatModelProvider.key,
+                         providerId: chatModelProvider.providerId,
+                    },
+                    systemInstructions: systemInstructions || undefined,
+               }),
+          });
+
+          if (!res.body) {
+               setLoading(false);
+               toast.error("Academic search returned no response");
+               return;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let partialChunk = "";
+
+          while (true) {
+               const { value, done } = await reader.read();
+               if (done) break;
+               partialChunk += decoder.decode(value, { stream: true });
+               try {
+                    const msgs = partialChunk.split("\n");
+                    for (const msg of msgs) {
+                         if (!msg.trim()) continue;
+                         const json = JSON.parse(msg);
+                         messageHandler(json);
+                    }
+                    partialChunk = "";
+               } catch {
+                    console.warn("Incomplete JSON, waiting for next chunk...");
+               }
+          }
+     };
+
      return (
           <chatContext.Provider
                value={{
@@ -694,10 +830,13 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     loading,
                     messageAppeared,
                     notFound,
+                    focusMode,
+                    setFocusMode,
                     setFileIds,
                     setFiles,
                     rewrite,
                     sendMessage,
+                    sendAcademicSearch,
                     setChatModelProvider,
                     chatModelProvider,
                     embeddingModelProvider,

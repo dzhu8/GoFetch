@@ -76,6 +76,7 @@ export type UIConfigSections = {
      personalization: UIConfigField[];
      modelProviders: ModelProviderUISection[];
      folders?: FolderUISection[];
+     search?: UIConfigField[];
 };
 
 export type Config = {
