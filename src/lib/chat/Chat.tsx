@@ -12,7 +12,7 @@ import {
 } from "@/components/ChatWindow";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import crypto from "crypto";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { getSuggestions } from "../output/suggestions/actions";
 import { resolveModelPreference, resolveOcrModelPreference } from "../models/preferenceResolver";
@@ -249,6 +249,7 @@ export const chatContext = createContext<ChatContext>({
 
 export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
      const params: { chatId: string } = useParams();
+     const pathname = usePathname();
      const searchParams = useSearchParams();
      const initialMessage = searchParams.get("q");
 
@@ -424,6 +425,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           );
           // eslint-disable-next-line react-hooks/exhaustive-deps
      }, []);
+
+     // Reset to a clean state when navigating to the home page
+     useEffect(() => {
+          if (pathname === "/") {
+               setMessages([]);
+               setChatHistory([]);
+               setFiles([]);
+               setFileIds([]);
+               setIsMessagesLoaded(false);
+               setNotFound(false);
+               setNewChatCreated(false);
+               setChatId(undefined);
+               setFocusMode("default");
+          }
+     }, [pathname]);
 
      useEffect(() => {
           if (params.chatId && params.chatId !== chatId) {

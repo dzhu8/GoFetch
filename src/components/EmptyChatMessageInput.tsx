@@ -1,4 +1,4 @@
-import { ArrowRight, GraduationCap } from "lucide-react";
+import { ArrowRight, GraduationCap, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import TextareaAutosize from "react-textarea-autosize";
@@ -8,7 +8,7 @@ import ChatToolDropdown from "./messageActions/ChatToolDropdown";
 import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
-     const { sendMessage, focusMode } = useChat();
+     const { sendMessage, focusMode, setFocusMode } = useChat();
 
      /* const [copilotEnabled, setCopilotEnabled] = useState(false); */
      const [message, setMessage] = useState("");
@@ -74,9 +74,18 @@ const EmptyChatMessageInput = () => {
                                         <ModelSelector />
                                         <ChatToolDropdown />
                                         {focusMode === "academic" && (
-                                             <div className="flex items-center space-x-1 px-3 py-1.5 bg-sky-500/10 text-sky-500 rounded-lg text-xs font-medium border border-sky-500/20">
-                                                  <GraduationCap size={14} />
-                                                  <span>Academic Search</span>
+                                             <div className="flex items-center space-x-2 px-3 py-1.5 bg-sky-500/10 text-sky-500 rounded-lg text-xs font-medium border border-sky-500/20 whitespace-nowrap min-w-max">
+                                                  <div className="flex items-center space-x-1">
+                                                       <GraduationCap size={14} />
+                                                       <span>Academic Web Search</span>
+                                                  </div>
+                                                  <button
+                                                       type="button"
+                                                       onClick={() => setFocusMode("default")}
+                                                       className="hover:bg-sky-500/20 rounded-full p-0.5 transition-colors"
+                                                  >
+                                                       <X size={12} />
+                                                  </button>
                                              </div>
                                         )}
                                    </div>

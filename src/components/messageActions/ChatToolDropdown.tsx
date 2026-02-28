@@ -62,51 +62,63 @@ const ChatToolDropdown = () => {
             leaveTo="opacity-0 translate-y-1 scale-95"
           >
             <PopoverPanel className="absolute left-0 bottom-full mb-2 z-50 w-72 origin-bottom-left">
-              <div className="bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-xl shadow-xl overflow-hidden p-1 flex flex-col space-y-1">
-                <OverlayToolItem
-                  label="Attach Files"
-                  description="Upload PDF, DOCX, or TXT for analysis"
-                  icon={Paperclip}
-                  component={<Attach />}
-                />
-                <OverlayToolItem
-                  label="Related Papers"
-                  description="Find academic papers related to your PDF"
-                  icon={FileText}
-                  component={<GetRelatedPapers />}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFocusMode(academicActive ? "default" : "academic");
-                    close();
-                  }}
-                  className={cn(
-                    "flex flex-row items-start space-x-3 p-3 rounded-lg transition-colors w-full text-left group",
-                    academicActive
-                      ? "bg-sky-500/10 hover:bg-sky-500/20"
-                      : "hover:bg-light-200 dark:hover:bg-dark-200"
-                  )}
-                >
-                  <div className="mt-1">
-                    <GraduationCap
-                      size={18}
-                      className={cn(
-                        "transition-colors",
-                        academicActive ? "text-sky-500" : "text-black/50 dark:text-white/50 group-hover:text-sky-500"
-                      )}
-                    />
-                  </div>
-                  <div className="flex flex-col flex-1">
-                    <span className={cn("text-sm font-medium", academicActive ? "text-sky-500" : "text-black dark:text-white")}>
-                      Academic Search
-                      {academicActive && <span className="ml-2 text-xs font-normal opacity-70">(active)</span>}
-                    </span>
-                    <span className="text-xs text-black/50 dark:text-white/50">
-                      {academicActive ? "Click to return to default mode" : "Search arxiv, Google Scholar & PubMed"}
+              <div className="bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-xl shadow-xl overflow-hidden p-1 flex flex-col">
+                <div className="flex flex-col space-y-1">
+                  <OverlayToolItem
+                    label="Attach Files"
+                    description="Upload PDF, DOCX, or TXT for analysis"
+                    icon={Paperclip}
+                    component={<Attach />}
+                  />
+                  <OverlayToolItem
+                    label="Related Papers"
+                    description="Find academic papers related to your PDF"
+                    icon={FileText}
+                    component={<GetRelatedPapers />}
+                  />
+                </div>
+
+                <div className="my-1 border-t border-light-200 dark:border-dark-200" />
+
+                <div className="flex flex-col space-y-1">
+                  <div className="px-3 py-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">
+                      Search Modes
                     </span>
                   </div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFocusMode(academicActive ? "default" : "academic");
+                      close();
+                    }}
+                    className={cn(
+                      "flex flex-row items-start space-x-3 p-3 rounded-lg transition-colors w-full text-left group",
+                      academicActive
+                        ? "bg-sky-500/10 hover:bg-sky-500/20"
+                        : "hover:bg-light-200 dark:hover:bg-dark-200"
+                    )}
+                  >
+                    <div className="mt-1">
+                      <GraduationCap
+                        size={18}
+                        className={cn(
+                          "transition-colors",
+                          academicActive ? "text-sky-500" : "text-black/50 dark:text-white/50 group-hover:text-sky-500"
+                        )}
+                      />
+                    </div>
+                    <div className="flex flex-col flex-1">
+                      <span className={cn("text-sm font-medium", academicActive ? "text-sky-500" : "text-black dark:text-white")}>
+                        Academic Web Search
+                        {academicActive && <span className="ml-2 text-xs font-normal opacity-70">(active)</span>}
+                      </span>
+                      <span className="text-xs text-black/50 dark:text-white/50">
+                        {academicActive ? "Click to return to default mode" : "Search arxiv, Google Scholar & PubMed"}
+                      </span>
+                    </div>
+                  </button>
+                </div>
               </div>
             </PopoverPanel>
           </Transition>

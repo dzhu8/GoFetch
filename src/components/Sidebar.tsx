@@ -23,7 +23,7 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
           {
                icon: Home,
                href: "/",
-               active: segments.length === 0 || segments.includes("c"),
+               active: segments.length === 0,
                label: "Home",
           },
           {
@@ -56,6 +56,7 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
                active: segments.includes("models"),
                label: "Models",
           },
+
      ];
 
      // Prefetch all routes on mount for faster navigation
