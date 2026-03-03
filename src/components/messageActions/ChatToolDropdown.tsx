@@ -2,9 +2,9 @@
 
 import { cn } from "@/lib/utils";
 import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/react";
-import { ChevronDown, Paperclip, FileText, Plus, GraduationCap, LucideIcon } from "lucide-react";
+import { ChevronDown, Paperclip, FileText, Plus, GraduationCap, ScanText, LucideIcon } from "lucide-react";
 import { Fragment } from "react";
-import Attach from "./Attach";
+import ParsePDF from "./ParsePDF";
 import GetRelatedPapers from "./GetRelatedPapers";
 import { useChat } from "@/lib/chat/Chat";
 
@@ -12,13 +12,13 @@ interface OverlayToolItemProps {
   label: string;
   description: string;
   icon: LucideIcon;
-  component: React.ReactNode;
+  component?: React.ReactNode;
 }
 
 /** Item that renders an invisible overlay so the real component (e.g. file input) handles the click. */
 const OverlayToolItem = ({ label, description, icon: Icon, component }: OverlayToolItemProps) => {
   return (
-    <div className="flex flex-row items-start space-x-3 p-3 hover:bg-light-200 dark:hover:bg-dark-200 rounded-lg transition-colors cursor-pointer group relative">
+    <div className={`flex flex-row items-start space-x-3 p-3 hover:bg-light-200 dark:hover:bg-dark-200 rounded-lg transition-colors group relative ${component ? 'cursor-pointer' : 'cursor-default opacity-60'}`}>
       <div className="mt-1">
         <Icon size={18} className="text-black/50 dark:text-white/50 group-hover:text-sky-500 transition-colors" />
       </div>
@@ -26,9 +26,11 @@ const OverlayToolItem = ({ label, description, icon: Icon, component }: OverlayT
         <span className="text-sm font-medium text-black dark:text-white">{label}</span>
         <span className="text-xs text-black/50 dark:text-white/50">{description}</span>
       </div>
-      <div className="absolute inset-0 opacity-0 overflow-hidden">
-        {component}
-      </div>
+      {component && (
+        <div className="absolute inset-0 opacity-0 overflow-hidden">
+          {component}
+        </div>
+      )}
     </div>
   );
 };
@@ -66,9 +68,14 @@ const ChatToolDropdown = () => {
                 <div className="flex flex-col space-y-1">
                   <OverlayToolItem
                     label="Attach Files"
-                    description="Upload PDF, DOCX, or TXT for analysis"
+                    description="Provide files as context for question answering"
                     icon={Paperclip}
-                    component={<Attach />}
+                  />
+                  <OverlayToolItem
+                    label="Parse PDF"
+                    description="Upload a PDF to extract and embed its contents"
+                    icon={ScanText}
+                    component={<ParsePDF />}
                   />
                   <OverlayToolItem
                     label="Related Papers"

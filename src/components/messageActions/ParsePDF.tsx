@@ -5,7 +5,7 @@ import { Fragment, useRef, useState } from "react";
 import { useChat } from "@/lib/chat/Chat";
 import { toast } from "sonner";
 
-const Attach = () => {
+const ParsePDF = () => {
      const { files, setFiles, setFileIds, fileIds, embeddingModelProvider } = useChat();
 
      const [loading, setLoading] = useState(false);
@@ -139,4 +139,4 @@ const Attach = () => {
      );
 };
 
-export default Attach;
+export default ParsePDF;
