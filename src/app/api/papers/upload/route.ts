@@ -68,12 +68,16 @@ export async function POST(req: NextRequest) {
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
                async start(controller) {
+                    const safeEnqueue = (data: any) => {
+                         try {
+                              controller.enqueue(encoder.encode(JSON.stringify(data) + "\n"));
+                         } catch (e) {
+                              // Stream closed or aborted, ignore
+                         }
+                    };
+
                     try {
-                         controller.enqueue(
-                              encoder.encode(
-                                   JSON.stringify({ type: "created", paperId: paperRow.id }) + "\n"
-                              )
-                         );
+                         safeEnqueue({ type: "created", paperId: paperRow.id });
 
                          // Update to processing
                          db.update(papers)
@@ -81,11 +85,7 @@ export async function POST(req: NextRequest) {
                               .where(eq(papers.id, paperRow.id))
                               .run();
 
-                         controller.enqueue(
-                              encoder.encode(
-                                   JSON.stringify({ type: "status", message: "Running OCR..." }) + "\n"
-                              )
-                         );
+                         safeEnqueue({ type: "status", message: "Running OCR..." });
 
                          // Run PaddleOCR extraction
                          tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-paper-ocr-"));
@@ -121,11 +121,7 @@ export async function POST(req: NextRequest) {
                                         if (trimmed.startsWith("PROGRESS:")) {
                                              const parts = trimmed.split(":");
                                              if (parts[1] === "PAGE") {
-                                                  controller.enqueue(
-                                                       encoder.encode(
-                                                            JSON.stringify({ type: "progress", page: parseInt(parts[2]) }) + "\n"
-                                                       )
-                                                  );
+                                                  safeEnqueue({ type: "progress", page: parseInt(parts[2]) });
                                              }
                                         }
                                    }
@@ -188,11 +184,7 @@ export async function POST(req: NextRequest) {
                          let title = metadata.title;
                          let doi = metadata.doi;
 
-                         controller.enqueue(
-                              encoder.encode(
-                                   JSON.stringify({ type: "status", message: "Searching Semantic Scholar..." }) + "\n"
-                              )
-                         );
+                         safeEnqueue({ type: "status", message: "Searching Semantic Scholar..." });
 
                          // Try to extract the first figure from OCR pages
                          let firstFigurePath: string | null = null;
@@ -242,23 +234,19 @@ export async function POST(req: NextRequest) {
                               .where(eq(papers.id, paperRow.id))
                               .run();
 
-                         controller.enqueue(
-                              encoder.encode(
-                                   JSON.stringify({
-                                        type: "complete",
-                                        paper: {
-                                             id: paperRow.id,
-                                             title: title || sanitizedName.replace(/\.pdf$/i, ""),
-                                             doi,
-                                             abstract,
-                                             semanticScholarId,
-                                             semanticScholarCitation: citation,
-                                             firstFigurePath,
-                                             status: "ready",
-                                        },
-                                   }) + "\n"
-                              )
-                         );
+                         safeEnqueue({
+                              type: "complete",
+                              paper: {
+                                   id: paperRow.id,
+                                   title: title || sanitizedName.replace(/\.pdf$/i, ""),
+                                   doi,
+                                   abstract,
+                                   semanticScholarId,
+                                   semanticScholarCitation: citation,
+                                   firstFigurePath,
+                                   status: "ready",
+                              },
+                         });
                          controller.close();
                     } catch (err) {
                          const msg = err instanceof Error ? err.message : "Upload processing failed";
@@ -269,9 +257,7 @@ export async function POST(req: NextRequest) {
                               .where(eq(papers.id, paperRow.id))
                               .run();
 
-                         controller.enqueue(
-                              encoder.encode(JSON.stringify({ type: "error", message: msg }) + "\n")
-                         );
+                         safeEnqueue({ type: "error", message: msg });
                          controller.close();
                     } finally {
                          if (tempDir) {
