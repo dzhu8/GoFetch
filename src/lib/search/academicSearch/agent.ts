@@ -9,6 +9,26 @@ import { AcademicSearchChunk } from "./types";
 
 const ACADEMIC_ENGINES = ["arxiv", "google scholar", "pubmed"];
 
+const REPUTABLE_PUBLISHERS = [
+     "nature.com",
+     "science.org",
+     "sciencedirect.com",
+     "ieeexplore.ieee.org",
+     "pnas.org",
+     "nejm.org",
+     "thelancet.com",
+     "cell.com",
+     "jamanetwork.com",
+     "arxiv.org",
+     "springer.com",
+     "wiley.com"
+];
+
+function isReputable(url: string): boolean {
+     const normalizedUrl = url.toLowerCase();
+     return REPUTABLE_PUBLISHERS.some((publisher) => normalizedUrl.includes(publisher));
+}
+
 /**
  * Executes the full academic search pipeline:
  * 1. Classifies the query to get a standalone version + search queries
@@ -72,6 +92,15 @@ async function executeSearch(
 
           // Limit to a maximum of 15 relevant sources to avoid context explosion and citation confusion
           filteredChunks = filteredChunks.slice(0, 15);
+
+          // Prioritize reputable publishers
+          filteredChunks.sort((a, b) => {
+               const aReputable = isReputable(a.metadata.url);
+               const bReputable = isReputable(b.metadata.url);
+               if (aReputable && !bReputable) return -1;
+               if (!aReputable && bReputable) return 1;
+               return 0;
+          });
 
           // Step 4: emit sources so the client can display them
           const sources = filteredChunks.map((chunk) => ({

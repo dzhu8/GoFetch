@@ -15,6 +15,8 @@ import SetupWizard from "@/components/setup/SetupWizard";
 import PaddleInstallMonitor from "@/components/setup/PaddleInstallMonitor";
 import { TaskProgressProvider } from "@/components/progress/TaskProgressProvider";
 import TaskProgressToasts from "@/components/progress/TaskProgressToasts";
+import { PdfParseProvider } from "@/components/progress/PdfParseProvider";
+import PdfParseToasts from "@/components/progress/PdfParseToasts";
 
 const montserrat = Montserrat({
      weight: ["300", "400", "500", "700"],
@@ -41,6 +43,7 @@ export default async function RootLayout({
                <body className="h-full">
                     <ThemeProvider>
                          <TaskProgressProvider>
+                              <PdfParseProvider>
                               {setupComplete ? (
                                    <ChatProvider>
                                         <Sidebar>{children}</Sidebar>
@@ -58,6 +61,8 @@ export default async function RootLayout({
                                    <SetupWizard configSections={configSections} />
                               )}
                               <TaskProgressToasts />
+                              <PdfParseToasts />
+                              </PdfParseProvider>
                          </TaskProgressProvider>
                     </ThemeProvider>
                </body>

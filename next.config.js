@@ -21,6 +21,10 @@ const nextConfig = {
           optimizePackageImports: ["lucide-react", "@headlessui/react", "framer-motion"],
           // Native Node.js modules that should not be bundled
           serverExternalPackages: ["faiss-node", "better-sqlite3"],
+          // Allow larger file uploads via Server Actions (default is 1 MB)
+          serverActions: {
+               bodySizeLimit: "50mb",
+          },
      },
      // Turbopack configuration for development (Next.js 16+ uses Turbopack by default)
      turbopack: {

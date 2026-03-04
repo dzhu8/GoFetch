@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Fragment } from "react";
 import {
      AlertCircle,
      FolderOpen,
@@ -14,9 +13,8 @@ import {
      Trash2,
      Upload,
 } from "lucide-react";
-import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import GoFetchDogBox from "@/assets/GoFetch-dog-box.svg";
-import { sendSystemNotification } from "@/lib/utils";
+import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
 
 interface FolderData {
      id: number;
@@ -31,19 +29,18 @@ export default function LibraryPage() {
      const [isLoading, setIsLoading] = useState(true);
      const [deletingId, setDeletingId] = useState<number | null>(null);
      const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
-     const [uploadingFolderId, setUploadingFolderId] = useState<number | null>(null);
-     const [showProgressModal, setShowProgressModal] = useState(false);
-     const [uploadStatus, setUploadStatus] = useState<string>("Uploading...");
      const [errorModal, setErrorModal] = useState<string | null>(null);
      const fileInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
+     const { startParseJob } = usePdfParseActions();
 
      const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
      const [isPromptingFolder, setIsPromptingFolder] = useState(false);
      const [newFolderName, setNewFolderName] = useState("");
      const [isSavingFolder, setIsSavingFolder] = useState(false);
+     const [createFolderError, setCreateFolderError] = useState("");
      const [libraryRoot, setLibraryRoot] = useState<string | null>(null);
 
-     const fetchFolders = async () => {
+     const fetchFolders = useCallback(async () => {
           try {
                setIsLoading(true);
                const res = await fetch("/api/library-folders");
@@ -71,13 +68,18 @@ export default function LibraryPage() {
           } finally {
                setIsLoading(false);
           }
-     };
+     }, []);
 
      // "Create Folder": user types a name → creates data/library/[name]
      const handleCreateFolder = async () => {
           const trimmedName = newFolderName.trim();
           if (!trimmedName) {
-               setErrorModal("Folder name is required.");
+               setCreateFolderError("Folder name is required.");
+               return;
+          }
+          // Client-side duplicate check (case-insensitive)
+          if (folders.some((f) => f.name.toLowerCase() === trimmedName.toLowerCase())) {
+               setCreateFolderError(`A folder named "${trimmedName}" already exists.`);
                return;
           }
           setIsSavingFolder(true);
@@ -89,14 +91,16 @@ export default function LibraryPage() {
                });
                if (!res.ok) {
                     const err = await res.json().catch(() => ({ error: "Failed to create folder" }));
-                    throw new Error(err.error || "Failed to create folder");
+                    setCreateFolderError(err.error || "Failed to create folder.");
+                    return;
                }
                setIsCreateModalOpen(false);
                setNewFolderName("");
+               setCreateFolderError("");
                await fetchFolders();
           } catch (error) {
                console.error("Error creating folder:", error);
-               setErrorModal(error instanceof Error ? error.message : "Failed to create folder");
+               setCreateFolderError(error instanceof Error ? error.message : "Failed to create folder.");
           } finally {
                setIsSavingFolder(false);
           }
@@ -165,7 +169,7 @@ export default function LibraryPage() {
           if (input) input.click();
      };
 
-     const handleFileSelected = async (folderId: number, e: React.ChangeEvent<HTMLInputElement>) => {
+     const handleFileSelected = (folderId: number, e: React.ChangeEvent<HTMLInputElement>) => {
           const file = e.target.files?.[0];
           if (!file) return;
           e.target.value = "";
@@ -175,151 +179,20 @@ export default function LibraryPage() {
                return;
           }
 
-          setUploadingFolderId(folderId);
-          setShowProgressModal(true);
-          setUploadStatus("Uploading PDF...");
-
-          try {
-               const formData = new FormData();
-               formData.append("pdf", file);
-               formData.append("folderId", String(folderId));
-
-               const res = await fetch("/api/papers/upload", {
-                    method: "POST",
-                    body: formData,
-               });
-
-               if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.error || "Upload failed");
-               }
-
-               const reader = res.body?.getReader();
-               const decoder = new TextDecoder();
-               let finalPaper: any = null;
-
-               if (reader) {
-                    let done = false;
-                    while (!done) {
-                         const { value, done: streamDone } = await reader.read();
-                         done = streamDone;
-                         if (value) {
-                              const lines = decoder.decode(value).split("\n").filter(Boolean);
-                              for (const line of lines) {
-                                   try {
-                                        const event = JSON.parse(line);
-                                        if (event.type === "complete" && event.paper) {
-                                             finalPaper = event.paper;
-                                             setPaperCounts((prev) => {
-                                                  const newMap = new Map(prev);
-                                                  newMap.set(folderId, (newMap.get(folderId) || 0) + 1);
-                                                  return newMap;
-                                             });
-                                        } else if (event.type === "status") {
-                                             setUploadStatus(event.message);
-                                        } else if (event.type === "error") {
-                                             console.error("Upload error:", event.message);
-                                             throw new Error(event.message || "Upload failed");
-                                        }
-                                   } catch (e) {
-                                        if (e instanceof Error) throw e;
-                                   }
-                              }
-                         }
-                    }
-               }
-
-               if (finalPaper) {
-                    const titleWords = (finalPaper.title || file.name).split(/\s+/);
-                    const shortTitle = titleWords.slice(0, 7).join(" ") + (titleWords.length > 7 ? "..." : "");
-                    sendSystemNotification(`PDF ${shortTitle} has been successfully uploaded.`, {
-                         body: `Added to folder: ${folders.find(f => f.id === folderId)?.name || "Library"}`,
-                         icon: "/icon.png"
-                    });
-               }
-          } catch (error) {
-               const errorMsg = error instanceof Error ? error.message : "Upload failed";
-               console.error("Error uploading paper:", error);
-               setErrorModal(errorMsg);
-
-               sendSystemNotification(`Error uploading PDF ${file.name}`, {
-                    body: errorMsg,
-               });
-          } finally {
-               setUploadingFolderId(null);
-               setShowProgressModal(false);
-          }
+          const folder = folders.find((f) => f.id === folderId);
+          startParseJob(file, folderId, folder?.name ?? String(folderId));
+          // Refresh paper counts after a short delay so the new entry appears
+          setTimeout(fetchFolders, 3000);
      };
 
      useEffect(() => {
           fetchFolders();
-     }, []);
+     }, [fetchFolders]);
 
      const folderForDelete = folders.find((f) => f.id === confirmDeleteId);
 
      return (
           <div className="h-full flex flex-col">
-               {/* Progress Modal */}
-               <Transition appear show={showProgressModal} as={Fragment}>
-                    <Dialog as="div" className="relative z-50" onClose={() => setShowProgressModal(false)}>
-                         <TransitionChild
-                              as={Fragment}
-                              enter="ease-out duration-300"
-                              enterFrom="opacity-0"
-                              enterTo="opacity-100"
-                              leave="ease-in duration-200"
-                              leaveFrom="opacity-100"
-                              leaveTo="opacity-0"
-                         >
-                              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
-                         </TransitionChild>
-
-                         <div className="fixed inset-0 overflow-y-auto">
-                              <div className="flex min-h-full items-center justify-center p-4">
-                                   <TransitionChild
-                                        as={Fragment}
-                                        enter="ease-out duration-300"
-                                        enterFrom="opacity-0 scale-95"
-                                        enterTo="opacity-100 scale-100"
-                                        leave="ease-in duration-200"
-                                        leaveFrom="opacity-100 scale-100"
-                                        leaveTo="opacity-0 scale-95"
-                                   >
-                                        <DialogPanel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 p-6 shadow-2xl transition-all">
-                                             <DialogTitle as="h3" className="text-lg font-semibold text-black dark:text-white flex items-center gap-2">
-                                                  <Upload className="w-5 h-5 text-[#F8B692]" />
-                                                  Uploading Paper
-                                             </DialogTitle>
-                                             <div className="mt-4 space-y-4">
-                                                  <p className="text-sm text-black/60 dark:text-white/60">
-                                                       Your PDF is being uploaded and indexed. This <strong>may take a long time</strong> for larger documents.
-                                                  </p>
-                                                  <p className="text-sm text-[#F8B692] font-medium p-3 bg-[#F8B692]/10 rounded-lg border border-[#F8B692]/20">
-                                                       Feel free to keep browsing your library! We'll send you a system notification once the indexing is complete.
-                                                  </p>
-                                                  <div className="flex items-center gap-3 pt-4 border-t border-light-200 dark:border-dark-200">
-                                                       <Loader2 className="w-5 h-5 animate-spin text-[#F8B692]" />
-                                                       <span className="text-sm font-mono text-black/70 dark:text-white/70">
-                                                            {uploadStatus}
-                                                       </span>
-                                                  </div>
-                                             </div>
-                                             <div className="mt-8 flex justify-end">
-                                                  <button
-                                                       type="button"
-                                                       className="px-4 py-2 text-sm font-medium text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 rounded-lg border border-light-200 dark:border-dark-200 transition-colors"
-                                                       onClick={() => setShowProgressModal(false)}
-                                                  >
-                                                       Background this
-                                                  </button>
-                                             </div>
-                                        </DialogPanel>
-                                   </TransitionChild>
-                              </div>
-                         </div>
-                    </Dialog>
-               </Transition>
-
                {/* Header Section */}
                <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-6">
                     <div className="flex items-center gap-6">
@@ -425,15 +298,10 @@ export default function LibraryPage() {
                                                             e.stopPropagation();
                                                             handleUploadClick(folder.id);
                                                        }}
-                                                       disabled={uploadingFolderId === folder.id}
-                                                       className="p-2 rounded-lg text-black/50 dark:text-white/50 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200 disabled:opacity-50"
+                                                       className="p-2 rounded-lg text-black/50 dark:text-white/50 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200"
                                                        aria-label="Upload paper"
                                                   >
-                                                       {uploadingFolderId === folder.id ? (
-                                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                                       ) : (
-                                                            <Upload className="w-4 h-4" />
-                                                       )}
+                                                       <Upload className="w-4 h-4" />
                                                   </button>
                                                   {/* Hidden file input */}
                                                   <input
@@ -488,12 +356,22 @@ export default function LibraryPage() {
                                    <input
                                         type="text"
                                         value={newFolderName}
-                                        onChange={(e) => setNewFolderName(e.target.value)}
+                                        onChange={(e) => {
+                                             setNewFolderName(e.target.value);
+                                             if (createFolderError) setCreateFolderError("");
+                                        }}
                                         onKeyDown={(e) => { if (e.key === "Enter") handleCreateFolder(); }}
                                         autoFocus
-                                        className="mt-1 w-full px-3 py-2 text-sm bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 rounded-lg text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F8B692]"
+                                        className={`mt-1 w-full px-3 py-2 text-sm bg-light-secondary dark:bg-dark-secondary border rounded-lg text-black dark:text-white focus:outline-none focus:ring-2 ${
+                                             createFolderError
+                                                  ? "border-red-400 focus:ring-red-400"
+                                                  : "border-light-200 dark:border-dark-200 focus:ring-[#F8B692]"
+                                        }`}
                                         placeholder="e.g. Neuroscience Papers"
                                    />
+                                   {createFolderError && (
+                                        <p className="mt-1.5 text-xs text-red-500">{createFolderError}</p>
+                                   )}
                               </div>
                               <div className="flex justify-end gap-3 mt-6">
                                    <button
@@ -501,6 +379,7 @@ export default function LibraryPage() {
                                         onClick={() => {
                                              setIsCreateModalOpen(false);
                                              setNewFolderName("");
+                                             setCreateFolderError("");
                                         }}
                                         className="px-4 py-2 rounded-lg border border-light-200 dark:border-dark-200 text-sm text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60"
                                    >

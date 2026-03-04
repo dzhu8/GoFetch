@@ -40,9 +40,14 @@ export async function POST(req: NextRequest) {
 
           const resolvedPath = rootPath || path.join(LIBRARY_ROOT, name);
 
-          if (!fs.existsSync(resolvedPath)) {
-               fs.mkdirSync(resolvedPath, { recursive: true });
+          if (fs.existsSync(resolvedPath)) {
+               return NextResponse.json(
+                    { error: `A folder named "${name}" already exists in the library directory.` },
+                    { status: 409 }
+               );
           }
+
+          fs.mkdirSync(resolvedPath, { recursive: true });
 
           const row = db
                .insert(libraryFolders)

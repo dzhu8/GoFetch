@@ -166,6 +166,15 @@ export async function POST(req: NextRequest) {
                               proc.on("error", reject);
                          });
 
+                         // Save OCR result to JSON file in library folder
+                         try {
+                              const jsonFileName = sanitizedName.replace(/\.pdf$/i, "") + ".ocr.json";
+                              const jsonDestPath = path.join(folder.rootPath, jsonFileName);
+                              fs.writeFileSync(jsonDestPath, JSON.stringify(ocrResult, null, 2));
+                         } catch (err) {
+                              console.warn("[Paper upload] Failed to save OCR JSON:", err);
+                         }
+
                          // Extract DOI and title from OCR result
                          const metadata = extractDocumentMetadata(ocrResult);
                          let title = metadata.title;
