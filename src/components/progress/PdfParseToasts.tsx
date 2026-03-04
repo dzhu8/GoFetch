@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePdfParseActions, usePdfParseJobs, PdfParseJob } from "./PdfParseProvider";
-import { FileText, Loader2, CheckCircle2, AlertCircle, X, ChevronDown } from "lucide-react";
+import { FileText, Loader2, CheckCircle2, AlertCircle, X, ChevronDown, Ban } from "lucide-react";
 
 const MAX_VISIBLE = 5;
 
@@ -37,7 +37,7 @@ function getLabel(status: PdfParseJob["status"]) {
 
 export default function PdfParseToasts() {
      const jobs = usePdfParseJobs();
-     const { dismissJob } = usePdfParseActions();
+     const { dismissJob, cancelJob } = usePdfParseActions();
      const [queueExpanded, setQueueExpanded] = useState(false);
 
      const activeJobs = jobs
@@ -84,9 +84,22 @@ export default function PdfParseToasts() {
                               {job.message}
                          </p>
 
-                         <p className="mt-1 text-[10px] text-black/40 dark:text-white/40">
-                              Folder: {job.folderName}
-                         </p>
+                         <div className="mt-2 flex items-center justify-between">
+                              <p className="text-[10px] text-black/40 dark:text-white/40">
+                                   Folder: {job.folderName}
+                              </p>
+                              {(job.status === "uploading" || job.status === "processing") && (
+                                   <button
+                                        type="button"
+                                        onClick={() => cancelJob(job.id)}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-red-500/80 hover:text-red-500 hover:bg-red-500/10 border border-red-500/20 hover:border-red-500/40 transition-colors"
+                                        aria-label="Cancel OCR"
+                                   >
+                                        <Ban size={10} />
+                                        Cancel
+                                   </button>
+                              )}
+                         </div>
                     </div>
                ))}
 

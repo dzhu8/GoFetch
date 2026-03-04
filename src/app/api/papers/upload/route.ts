@@ -7,6 +7,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
+import { activeProcs } from "./processRegistry";
 
 export const maxDuration = 300;
 
@@ -108,6 +109,9 @@ export async function POST(req: NextRequest) {
                                    env,
                               });
 
+                              // Register process so the cancel endpoint can SIGTERM it
+                              activeProcs.set(paperRow.id, { proc, tempDir: tempDir! });
+
                               let stderrAccum = "";
 
                               proc.stdout?.on("data", (d: Buffer) => {
@@ -132,6 +136,7 @@ export async function POST(req: NextRequest) {
                               });
 
                               proc.on("close", (code) => {
+                                   activeProcs.delete(paperRow.id);
                                    if (code !== 0) {
                                         reject(new Error(`PaddleOCR exited with code ${code}: ${stderrAccum.slice(0, 500)}`));
                                    } else {
@@ -163,7 +168,10 @@ export async function POST(req: NextRequest) {
                                    }
                               });
 
-                              proc.on("error", reject);
+                              proc.on("error", (err) => {
+                                   activeProcs.delete(paperRow.id);
+                                   reject(err);
+                              });
                          });
 
                          // Save OCR result to JSON file in library folder
