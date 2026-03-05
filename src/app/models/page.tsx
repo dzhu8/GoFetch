@@ -1,10 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
      Check,
      Download,
      Loader2,
+     Plus,
      RefreshCcw,
      X,
      ScanText,
@@ -21,6 +22,8 @@ import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
 import type { MinimalProvider } from "@/lib/models/types";
 import { cn } from "@/lib/utils";
 import ModelFamilyGroup, { inferFamilyFromName } from "@/components/setup/modelsView/ModelFamilyGroup";
+import AddProvider from "@/components/models/AddProvider";
+import type { ModelProviderUISection } from "@/lib/config/types";
 
 interface NormalizedModelRow {
      key: string;
@@ -29,6 +32,7 @@ interface NormalizedModelRow {
      sizeLabel: string;
      contextWindowLabel: string;
      parameterLabel: string;
+     pricingLabel?: string;
      supportsChat: boolean;
      supportsEmbedding: boolean;
      supportsOCR: boolean;
@@ -55,7 +59,7 @@ const TEST_TABS = [
 type TestTabId = (typeof TEST_TABS)[number]["id"];
 
 const deriveParameterLabelFromName = (value?: string) => {
-     if (!value) return "â€”";
+     if (!value) return "—";
 
      // First try to match after the colon
      const afterColon = value.split(":").pop() ?? "";
@@ -67,14 +71,23 @@ const deriveParameterLabelFromName = (value?: string) => {
 
      // Fallback: match anywhere in the string
      const match = value.match(/(?<amount>\d+(?:\.\d+)?)\s*(?<unit>[bm])/i);
-     if (!match || !match.groups) return "â€”";
+     if (!match || !match.groups) return "—";
      const unit = match.groups.unit?.toUpperCase();
      return `${match.groups.amount}${unit}`;
 };
 
 const formatSizeLabel = (value?: string) => {
-     if (!value || !value.trim()) return "â€”";
+     if (!value || !value.trim()) return "—";
      return value;
+};
+
+const formatPricingLabel = (inputPrice?: number, outputPrice?: number): string | undefined => {
+     if (typeof inputPrice !== "number") return undefined;
+     const fmt = (v: number) => (v < 1 ? `$${v}` : `$${v.toFixed(2)}`);
+     if (typeof outputPrice === "number") {
+          return `${fmt(inputPrice)} in / ${fmt(outputPrice)} out per 1M tokens`;
+     }
+     return `${fmt(inputPrice)} per 1M tokens`;
 };
 
 const capabilityBadgeClasses = (value: boolean) =>
@@ -106,6 +119,9 @@ const ModelsPage = () => {
      const [installLogMap, setInstallLogMap] = useState<Record<string, string>>({});
      const [cudaError, setCudaError] = useState<string | null>(null);
      const [activeTestConfig, setActiveTestConfig] = useState<TestModalConfig | null>(null);
+     const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
+     const [providerSections, setProviderSections] = useState<ModelProviderUISection[]>([]);
+     const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
 
      const providerLookup = useMemo(() => {
           const map = new Map<string, MinimalProvider>();
@@ -188,8 +204,8 @@ const ModelsPage = () => {
                          displayName: model.name,
                          description: model.description ?? "GPU-accelerated OCR model installed via pip",
                          sizeLabel: "~1 GB",
-                         contextWindowLabel: "â€”",
-                         parameterLabel: "â€”",
+                         contextWindowLabel: "—",
+                         parameterLabel: "—",
                          supportsChat: false,
                          supportsEmbedding: false,
                          supportsOCR: true,
@@ -238,7 +254,7 @@ const ModelsPage = () => {
                               displayName: model.name,
                               description: model.description,
                               sizeLabel: formatSizeLabel(model.size),
-                              contextWindowLabel: model.contextWindow ?? "â€”",
+                              contextWindowLabel: model.contextWindow ?? "—",
                               parameterLabel: deriveParameterLabelFromName(model.name),
                               supportsChat: Boolean(model.supportsChat),
                               supportsEmbedding: Boolean(model.supportsEmbedding),
@@ -293,11 +309,12 @@ const ModelsPage = () => {
                          key: model.key,
                          displayName: model.displayName ?? model.name ?? model.key,
                          description: model.description,
-                         sizeLabel: model.sizeLabel ?? "â€”",
-                         contextWindowLabel: model.contextWindow ?? "â€”",
+                         sizeLabel: model.sizeLabel ?? "—",
+                         contextWindowLabel: model.contextWindow ?? "—",
                          parameterLabel:
                               model.parameterLabel ??
                               deriveParameterLabelFromName(model.displayName ?? model.name ?? model.key),
+                         pricingLabel: formatPricingLabel(model.inputPricePerMToken, model.outputPricePerMToken),
                          supportsChat: Boolean(model.supportsChat),
                          supportsEmbedding: Boolean(model.supportsEmbedding),
                          supportsOCR: Boolean(model.supportsOCR),
@@ -347,10 +364,10 @@ const ModelsPage = () => {
                               list = (refreshedData.providers ?? []) as MinimalProvider[];
                          }
                     } catch {
-                         // Non-fatal â€” OCR section will populate on next visit
+                         // Non-fatal — OCR section will populate on next visit
                     }
                } else if (paddleOcrProviders.length > 1) {
-                    // Duplicates can be created by React StrictMode's double-invocation â€” keep only the first
+                    // Duplicates can be created by React StrictMode's double-invocation — keep only the first
                     for (const extra of paddleOcrProviders.slice(1)) {
                          await fetch(`/api/providers/${extra.id}`, { method: "DELETE" }).catch(() => {});
                     }
@@ -375,6 +392,13 @@ const ModelsPage = () => {
      useEffect(() => {
           void fetchProviders();
      }, [fetchProviders]);
+
+     useEffect(() => {
+          fetch("/api/config")
+               .then((res) => res.json())
+               .then((data) => setProviderSections(data.fields?.modelProviders ?? []))
+               .catch(() => {});
+     }, []);
 
      const totalModels = useMemo(() => {
           return Object.values(providerModels).reduce((total, models) => total + (models?.length ?? 0), 0);
@@ -573,6 +597,24 @@ const ModelsPage = () => {
           });
      }, []);
 
+     const handleDeleteProvider = useCallback(async (provider: MinimalProvider) => {
+          if (!confirm(`Are you sure you want to delete "${provider.name}"?`)) return;
+          setDeletingProviderId(provider.id);
+          try {
+               const res = await fetch(`/api/providers/${provider.id}`, { method: "DELETE" });
+               if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error((err as { message?: string }).message || "Failed to delete provider");
+               }
+               toast.success("Provider deleted successfully");
+               await fetchProviders();
+          } catch (error) {
+               toast.error(error instanceof Error ? error.message : "Failed to delete provider");
+          } finally {
+               setDeletingProviderId(null);
+          }
+     }, [fetchProviders]);
+
      const renderProviderTable = (provider: MinimalProvider) => {
           // PaddleOCR models are shown exclusively in the OCR section above
           if (provider.type === "paddleocr") return null;
@@ -590,7 +632,7 @@ const ModelsPage = () => {
                          <div>
                               <p className="text-lg font-semibold text-black dark:text-white">{provider.name}</p>
                               <p className="text-xs text-black/60 dark:text-white/60">
-                                   {providerType} Provider â€¢ {rows.length} {rows.length === 1 ? "model" : "models"}
+                                   {providerType} Provider • {rows.length} {rows.length === 1 ? "model" : "models"}
                               </p>
                          </div>
                          <div className="flex flex-wrap gap-2">
@@ -601,6 +643,19 @@ const ModelsPage = () => {
                               >
                                    <RefreshCcw className="w-4 h-4" />
                                    Refresh
+                              </button>
+                              <button
+                                   type="button"
+                                   onClick={() => void handleDeleteProvider(provider)}
+                                   disabled={deletingProviderId === provider.id}
+                                   className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-red-200 dark:border-red-900/40 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                   {deletingProviderId === provider.id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                   ) : (
+                                        <Trash2 className="w-4 h-4" />
+                                   )}
+                                   Remove
                               </button>
                          </div>
                     </div>
@@ -680,6 +735,14 @@ const ModelsPage = () => {
                                    <RefreshCcw className="w-4 h-4" />
                                    Refresh All
                               </button>
+                              <button
+                                   type="button"
+                                   onClick={() => setIsAddProviderOpen(true)}
+                                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-[#F8B692] text-[#F8B692] font-medium text-sm hover:bg-[#F8B692]/10 active:scale-95 transition"
+                              >
+                                   <Plus className="w-4 h-4" />
+                                   Add Connection
+                              </button>
                          </div>
                     </div>
 
@@ -704,7 +767,7 @@ const ModelsPage = () => {
                                         No providers configured yet
                                    </p>
                                    <p className="text-sm text-black/50 dark:text-white/50">
-                                        Add a provider from the setup flow to begin managing models.
+                                        Use the &quot;Add Connection&quot; button above to connect a model provider.
                                    </p>
                               </div>
                          ) : (
@@ -847,6 +910,12 @@ const ModelsPage = () => {
                     </div>
                </div>
 
+               <AddProvider
+                    isOpen={isAddProviderOpen}
+                    setIsOpen={setIsAddProviderOpen}
+                    providerSections={providerSections}
+                    onProviderAdded={() => void fetchProviders()}
+               />
                <TestEmbeddingModal config={activeTestConfig} onClose={() => setActiveTestConfig(null)} />
                <CudaErrorModal errorMessage={cudaError} onClose={() => setCudaError(null)} />
           </>
@@ -932,7 +1001,7 @@ const TestEmbeddingModal = ({ config, onClose }: TestEmbeddingModalProps) => {
                          <div>
                               <p className="text-lg font-semibold text-black dark:text-white">Test Embedding</p>
                               <p className="text-xs text-black/60 dark:text-white/60">
-                                   {config.providerName} â€¢ {config.modelName}
+                                   {config.providerName} • {config.modelName}
                               </p>
                          </div>
                          <button

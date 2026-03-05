@@ -210,6 +210,31 @@ class ConfigManager {
                          },
                     ],
                },
+               {
+                    name: "OpenAI",
+                    key: "openai",
+                    fields: [
+                         {
+                              name: "API Key",
+                              key: "apiKey",
+                              type: "string",
+                              required: true,
+                              description: "Your OpenAI API key (sk-...)",
+                              placeholder: "sk-...",
+                              scope: "server",
+                              env: "OPENAI_API_KEY",
+                         },
+                         {
+                              name: "Base URL",
+                              key: "baseUrl",
+                              type: "string",
+                              required: false,
+                              description: "Override the API base URL for OpenAI-compatible services like Azure OpenAI, Groq, Together AI, etc. Leave blank for the default OpenAI endpoint.",
+                              placeholder: "https://api.openai.com/v1",
+                              scope: "server",
+                         },
+                    ],
+               },
           ],
           folders: [
                {

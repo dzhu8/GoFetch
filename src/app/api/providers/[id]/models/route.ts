@@ -30,7 +30,7 @@ const formatParameters = (parameters?: number) => {
 };
 
 export const GET = async (_req: NextRequest, { params }: { params: { id: string } }) => {
-     const id = params?.id;
+     const { id } = await params;
 
      if (!id) {
           return NextResponse.json({ message: "Provider id is required" }, { status: 400 });
@@ -93,6 +93,8 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
                     sizeLabel: undefined as string | undefined,
                     parameterLabel: undefined as string | undefined,
                     contextWindow: undefined as number | undefined,
+                    inputPricePerMToken: undefined as number | undefined,
+                    outputPricePerMToken: undefined as number | undefined,
                     supportsChat: false,
                     supportsEmbedding: false,
                     supportsOCR: false,
@@ -119,6 +121,12 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
                     current.parameterLabel = formatParameters(metadata.parameters);
                }
                current.contextWindow = metadata.contextWindow ?? current.contextWindow;
+               if (typeof metadata.inputPricePerMToken === "number") {
+                    current.inputPricePerMToken = metadata.inputPricePerMToken;
+               }
+               if (typeof metadata.outputPricePerMToken === "number") {
+                    current.outputPricePerMToken = metadata.outputPricePerMToken;
+               }
           }
      };
 

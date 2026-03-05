@@ -584,7 +584,7 @@ print("EXTRACTED")
                     [scriptPath, pdfPath, String(pageIndex),
                      String(nx0), String(ny0), String(nx1), String(ny1),
                      figDestPath],
-                    { cwd: tempDir },
+                    { cwd: tempDir, env: process.env },
                );
                let stdout = "";
                let stderr = "";
@@ -594,7 +594,10 @@ print("EXTRACTED")
                     if (code !== 0) reject(new Error(`Figure crop failed (exit ${code}): ${stderr.slice(0, 800)}`));
                     else resolve(stdout.trim());
                });
-               proc.on("error", reject);
+               proc.on("error", (err) => {
+                    console.error("[Figure Extraction] spawn error:", err.message);
+                    reject(err);
+               });
           });
 
           if (result.includes("EXTRACTED") && fs.existsSync(figDestPath)) return figName;

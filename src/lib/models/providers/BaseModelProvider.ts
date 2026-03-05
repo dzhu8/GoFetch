@@ -7,6 +7,8 @@ export type ProviderModelMetadata = {
      sizeGB?: number;
      contextWindow?: number;
      description?: string;
+     inputPricePerMToken?: number;
+     outputPricePerMToken?: number;
 };
 
 export abstract class BaseModelProvider<

@@ -12,6 +12,7 @@ interface ModelRow {
      sizeLabel: string;
      contextWindowLabel: string;
      parameterLabel: string;
+     pricingLabel?: string;
      supportsChat: boolean;
      supportsEmbedding: boolean;
      supportsOCR: boolean;
@@ -39,6 +40,9 @@ interface ModelFamilyGroupProps {
 export const inferFamilyFromName = (name: string): string => {
      const lower = name.toLowerCase();
      if (lower.includes("gpt-os") || lower.includes("gpt-oss")) return "GPT-OSS";
+     if (lower.includes("gpt") || lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4")) return "GPT";
+     if (lower.includes("claude")) return "Claude";
+     if (lower.includes("text-embedding") || lower.includes("embed")) return "Embeddings";
      if (lower.includes("llama")) return "Llama";
      if (lower.includes("deepseek") || lower.includes("r1")) return "DeepSeek";
      if (lower.includes("qwen")) return "Qwen";
@@ -50,14 +54,18 @@ export const inferFamilyFromName = (name: string): string => {
 };
 
 const FAMILY_META: Record<string, { color: string; initial: string; icon?: string }> = {
-     "GPT-OSS":    { color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", initial: "O", icon: "/assets/openai.svg" },
-     Llama:        { color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",  initial: "L", icon: "/assets/meta-color.svg" },
-     DeepSeek:     { color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",  initial: "D", icon: "/assets/deepseek-color.svg" },
-     Qwen:         { color: "bg-sky-500/10 text-sky-600 dark:text-sky-400",           initial: "Q", icon: "/assets/qwen-color.svg"  },
-     Gemma:        { color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",        initial: "G", icon: "/assets/gemma-color.svg"  },
-     Mistral:      { color: "bg-orange-500/10 text-orange-600 dark:text-orange-400",  initial: "M", icon: "/assets/mistral-color.svg"  },
-     Phi:          { color: "bg-teal-500/10 text-teal-600 dark:text-teal-400",        initial: "Φ", icon: "/assets/microsoft-color.svg"  },
-     Granite:      { color: "bg-stone-500/10 text-stone-600 dark:text-stone-400",     initial: "Gr", icon: "/assets/ibm.svg" },
+     "GPT-OSS":  { color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", initial: "O",  icon: "/assets/openai.svg" },
+     GPT:        { color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", initial: "G",  icon: "/assets/openai.svg" },
+     Claude:     { color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",       initial: "C" },
+     Embeddings: { color: "bg-violet-500/10 text-violet-600 dark:text-violet-400",    initial: "E" },
+     Llama:      { color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",    initial: "L",  icon: "/assets/meta-color.svg" },
+     DeepSeek:   { color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",    initial: "D",  icon: "/assets/deepseek-color.svg" },
+     Qwen:       { color: "bg-sky-500/10 text-sky-600 dark:text-sky-400",             initial: "Q",  icon: "/assets/qwen-color.svg" },
+     Gemma:      { color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",          initial: "G",  icon: "/assets/gemma-color.svg" },
+     Mistral:    { color: "bg-orange-500/10 text-orange-600 dark:text-orange-400",    initial: "M",  icon: "/assets/mistral-color.svg" },
+     Phi:        { color: "bg-teal-500/10 text-teal-600 dark:text-teal-400",          initial: "Φ",  icon: "/assets/microsoft-color.svg" },
+     Granite:    { color: "bg-stone-500/10 text-stone-600 dark:text-stone-400",       initial: "Gr", icon: "/assets/ibm.svg" },
+     Other:      { color: "bg-light-200/60 dark:bg-dark-200/60 text-black/50 dark:text-white/50", initial: "?" },
 };
 
 const ModelFamilyGroup = ({
@@ -173,6 +181,11 @@ const ModelFamilyGroup = ({
                                                   {model.contextWindowLabel && model.contextWindowLabel !== "—" && (
                                                        <span className="text-[10px] text-black/40 dark:text-white/30 bg-light-secondary dark:bg-dark-secondary px-2 py-0.5 rounded border border-light-200 dark:border-dark-200">
                                                             ctx {model.contextWindowLabel}
+                                                       </span>
+                                                  )}
+                                                  {model.pricingLabel && (
+                                                       <span className="text-[10px] text-black/40 dark:text-white/30 bg-light-secondary dark:bg-dark-secondary px-2 py-0.5 rounded border border-light-200 dark:border-dark-200">
+                                                            {model.pricingLabel}
                                                        </span>
                                                   )}
                                                   {model.supportsChat && (
