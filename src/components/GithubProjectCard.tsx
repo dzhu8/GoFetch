@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import GithubIcon from "@/assets/Octicons-mark-github.svg";
+import GithubIcon from "../../public/assets/Octicons-mark-github.svg";
 import { FolderGit2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";

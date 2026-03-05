@@ -1,6 +1,6 @@
 "use client";
 
-import GoFetchLogo from "@/assets/GoFetch-logo.svg";
+import GoFetchLogo from "../../public/assets/GoFetch-logo.svg";
 import { cn } from "@/lib/utils";
 import { BookCopy, FolderSync, History, Home, MessageSquareMore, Search } from "lucide-react";
 import Image from "next/image";

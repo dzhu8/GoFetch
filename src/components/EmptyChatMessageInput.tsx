@@ -5,7 +5,7 @@ import TextareaAutosize from "react-textarea-autosize";
 import { useChat } from "@/lib/chat/Chat";
 import ModelSelector from "./messageActions/ChatModelSelector";
 import ChatToolDropdown from "./messageActions/ChatToolDropdown";
-import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
+import GoFetchDog from "../../public/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
      const { sendMessage, focusMode, setFocusMode } = useChat();

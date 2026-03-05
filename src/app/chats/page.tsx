@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Loader2, Trash2 } from "lucide-react";
-import GoFetchDogSweater from "@/assets/GoFetch-dog-sweater.svg";
+import GoFetchDogSweater from "../../../public/assets/GoFetch-dog-sweater.svg";
 
 type ChatData = {
      id: string;

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import Image from "next/image";
-import GoFetchDog from "@/assets/GoFetch-dog-1.svg";
+import GoFetchDog from "../../../public/assets/GoFetch-dog-1.svg";
 import type { MinimalProvider } from "@/lib/models/types";
 import { cn } from "@/lib/utils";
 import ModelFamilyGroup, { inferFamilyFromName } from "@/components/setup/modelsView/ModelFamilyGroup";

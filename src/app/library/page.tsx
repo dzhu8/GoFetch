@@ -13,7 +13,7 @@ import {
      Trash2,
      Upload,
 } from "lucide-react";
-import GoFetchDogBox from "@/assets/GoFetch-dog-box.svg";
+import GoFetchDogBox from "../../../public/assets/GoFetch-dog-box.svg";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
 
 interface FolderData {
