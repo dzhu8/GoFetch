@@ -211,6 +211,22 @@ class ConfigManager {
                     ],
                },
                {
+                    name: "Anthropic",
+                    key: "anthropic",
+                    fields: [
+                         {
+                              name: "API Key",
+                              key: "apiKey",
+                              type: "string",
+                              required: true,
+                              description: "Your Anthropic API key (sk-ant-...)",
+                              placeholder: "sk-ant-...",
+                              scope: "server",
+                              env: "ANTHROPIC_API_KEY",
+                         },
+                    ],
+               },
+               {
                     name: "OpenAI",
                     key: "openai",
                     fields: [

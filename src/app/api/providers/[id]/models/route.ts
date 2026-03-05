@@ -29,6 +29,13 @@ const formatParameters = (parameters?: number) => {
      return parameters.toLocaleString();
 };
 
+const formatContextWindow = (tokens?: number): string | undefined => {
+     if (typeof tokens !== "number" || Number.isNaN(tokens) || tokens <= 0) return undefined;
+     if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+     if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+     return tokens.toString();
+};
+
 export const GET = async (_req: NextRequest, { params }: { params: { id: string } }) => {
      const { id } = await params;
 
@@ -150,6 +157,7 @@ export const GET = async (_req: NextRequest, { params }: { params: { id: string 
           ...model,
           sizeLabel: model.sizeLabel ?? "—",
           parameterLabel: model.parameterLabel ?? "—",
+          contextWindow: formatContextWindow(model.contextWindow) ?? model.contextWindow,
      }));
 
      return NextResponse.json({

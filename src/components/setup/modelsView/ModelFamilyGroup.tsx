@@ -56,7 +56,7 @@ export const inferFamilyFromName = (name: string): string => {
 const FAMILY_META: Record<string, { color: string; initial: string; icon?: string }> = {
      "GPT-OSS":  { color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", initial: "O",  icon: "/assets/openai.svg" },
      GPT:        { color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", initial: "G",  icon: "/assets/openai.svg" },
-     Claude:     { color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",       initial: "C" },
+     Claude:     { color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",       initial: "C",  icon: "/assets/claude-color.svg", },
      Embeddings: { color: "bg-violet-500/10 text-violet-600 dark:text-violet-400",    initial: "E" },
      Llama:      { color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",    initial: "L",  icon: "/assets/meta-color.svg" },
      DeepSeek:   { color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",    initial: "D",  icon: "/assets/deepseek-color.svg" },
