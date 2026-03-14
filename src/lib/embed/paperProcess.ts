@@ -168,7 +168,7 @@ export async function processPaperOCR(paperId: number, ocrPath: string) {
 }
 
 // ---- Per-folder paper-level progress tracking ----
-// totalFiles / processedFiles represent PAPERS (not chunks).
+// totalFiles / processedFiles.
 // Use globalThis to survive Next.js module re-instantiation.
 const GLOBAL_KEY_TOTAL = Symbol.for("gofetch.folderTotalPapers");
 const GLOBAL_KEY_PROCESSED = Symbol.for("gofetch.folderProcessedPapers");

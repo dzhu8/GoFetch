@@ -107,7 +107,7 @@ type LibraryChunkRow = {
 
 type PaperLegendEntry = {
      paperId: number;
-     name: string;
+     paperTitle: string;
      color: { r: number; g: number; b: number };
 };
 
@@ -294,14 +294,18 @@ export default function InspectPage() {
      const cliPollingErrorLoggedRef = useRef(false);
 
      // Query visualization state
-     const [querySelectedFolders, setQuerySelectedFolders] = useState<Set<string>>(new Set());
+     const [querySelectedFolderIds, setQuerySelectedFolderIds] = useState<Set<number>>(new Set());
      const [isQueryModalOpen, setIsQueryModalOpen] = useState(false);
      const [queryText, setQueryText] = useState("");
      const [isQueryVisualizing, setIsQueryVisualizing] = useState(false);
      const [queryPlotPoints, setQueryPlotPoints] = useState<PlotPoints | null>(null);
+     const [queryColors, setQueryColors] = useState<{ r: number; g: number; b: number }[] | null>(null);
+     const [queryPaperLegend, setQueryPaperLegend] = useState<PaperLegendEntry[]>([]);
      const [queryPoint, setQueryPoint] = useState<QueryPoint | null>(null);
      const [isQueryPlotOpen, setIsQueryPlotOpen] = useState(false);
      const [queryLoadProgress, setQueryLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
+     const [queryRawChunks, setQueryRawChunks] = useState<LibraryChunkRow[]>([]);
+     const [clickedQueryChunk, setClickedQueryChunk] = useState<LibraryChunkRow | null>(null);
      const [queryNearestIndices, setQueryNearestIndices] = useState<number[]>([]);
      const [queryNearestScores, setQueryNearestScores] = useState<number[]>([]);
 
@@ -739,13 +743,13 @@ export default function InspectPage() {
      );
 
      // Query visualization handlers
-     const handleToggleQueryFolder = (folderName: string) => {
-          setQuerySelectedFolders((prev) => {
+     const handleToggleQueryFolder = (folderId: number) => {
+          setQuerySelectedFolderIds((prev) => {
                const next = new Set(prev);
-               if (next.has(folderName)) {
-                    next.delete(folderName);
+               if (next.has(folderId)) {
+                    next.delete(folderId);
                } else {
-                    next.add(folderName);
+                    next.add(folderId);
                }
                return next;
           });
@@ -759,15 +763,19 @@ export default function InspectPage() {
      const handleCloseQueryPlot = useCallback(() => {
           setIsQueryPlotOpen(false);
           setQueryPlotPoints(null);
+          setQueryColors(null);
+          setQueryPaperLegend([]);
           setQueryPoint(null);
           setIsQueryVisualizing(false);
           setQueryLoadProgress(null);
+          setQueryRawChunks([]);
+          setClickedQueryChunk(null);
           setQueryNearestIndices([]);
           setQueryNearestScores([]);
      }, []);
 
      const handleVisualizeQuery = async () => {
-          if (querySelectedFolders.size === 0) {
+          if (querySelectedFolderIds.size === 0) {
                setErrorMessage("Please select at least one folder.");
                return;
           }
@@ -805,110 +813,96 @@ export default function InspectPage() {
                     throw new Error("Query embedding response did not contain a vector");
                }
 
-               // Step 2: Fetch all embeddings from selected folders
-               const allRows: EmbeddingRow[] = [];
-               const selectedFolderNames = Array.from(querySelectedFolders);
-               let totalEmbeddings = 0;
+               // Step 2: Fetch all embeddings from selected paper library folders
+               const allChunks: LibraryChunkRow[] = [];
+               const selectedFolderIds = Array.from(querySelectedFolderIds);
 
-               // First, get total counts
-               for (const folderName of selectedFolderNames) {
-                    const folder = folders.find((f) => f.name === folderName);
-                    totalEmbeddings += folder?.embeddingCount ?? 0;
-               }
-
-               setQueryLoadProgress({ loaded: 0, total: totalEmbeddings });
-
-               for (const folderName of selectedFolderNames) {
+               for (const folderId of selectedFolderIds) {
                     let offset = 0;
-                    const batchSize = 500;
+                    const batchSize = 1000;
                     let hasMore = true;
 
                     while (hasMore) {
                          const params = new URLSearchParams({
-                              folderName,
+                              folderId: String(folderId),
                               limit: String(batchSize),
                               offset: String(offset),
                          });
 
-                         const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
+                         const res = await fetch(`/api/paper-embeddings?${params.toString()}`, { cache: "no-store" });
                          const data = (await res.json().catch(() => ({}))) as {
-                              embeddings?: EmbeddingRow[];
+                              chunks?: LibraryChunkRow[];
                               error?: string;
-                              hasMore?: boolean;
                               total?: number;
                          };
 
                          if (!res.ok) {
-                              throw new Error(data?.error || `Failed to load embeddings for ${folderName}`);
+                              const folder = libraryFolders.find(f => f.id === folderId);
+                              throw new Error(data?.error || `Failed to load embeddings for ${folder?.name || folderId}`);
                          }
 
-                         const rows = data.embeddings ?? [];
-                         allRows.push(...rows);
-                         hasMore = data.hasMore ?? false;
-                         offset += rows.length;
+                         const batchChunks = data.chunks ?? [];
+                         allChunks.push(...batchChunks);
+                         
+                         // The paper-embeddings API doesn't return hasMore, but we can verify if we got less than limit
+                         hasMore = batchChunks.length === batchSize;
+                         offset += batchChunks.length;
 
-                         setQueryLoadProgress({ loaded: allRows.length, total: totalEmbeddings });
+                         setQueryLoadProgress({ loaded: allChunks.length, total: allChunks.length }); // Total unknown for batches
 
-                         // Safety limit
-                         if (allRows.length > 10000) {
-                              console.warn("Reached safety limit of 10000 embeddings");
+                         if (allChunks.length > 20000) {
+                              console.warn("Reached safety limit of 20000 embeddings");
                               break;
                          }
                     }
                }
 
-               if (allRows.length === 0) {
+               if (allChunks.length === 0) {
                     setErrorMessage("No embeddings found in selected folders.");
                     handleCloseQueryPlot();
                     return;
                }
-               // Perform semantic search to find nearest neighbors
-               try {
-                    const searchRes = await fetch("/api/search", {
-                         method: "POST",
-                         headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({
-                              query: queryText.trim(),
-                              folderNames: Array.from(querySelectedFolders),
-                              k: 10,
-                         }),
-                    });
 
-                    if (searchRes.ok) {
-                         const searchData = await searchRes.json();
-                         const results = searchData.results || [];
-                         const resultIds = new Set(results.map((r: any) => r.id));
-                         const resultScores = new Map(results.map((r: any) => [r.id, r.score]));
+               // Step 3: Sort chunks to ensure colors are consistent across different runs
+               const sortedChunks = [...allChunks].sort((a, b) => {
+                    const paperIdA = a.paperId ?? 0;
+                    const paperIdB = b.paperId ?? 0;
+                    if (paperIdA !== paperIdB) return paperIdA - paperIdB;
+                    return a.id - b.id;
+               });
 
-                         const indices: number[] = [];
-                         const scores: number[] = [];
-
-                         // We need to preserve the order of results from search (ranked by score)
-                         // But we need indices into allRows array
-                         // So let's map result IDs to their indices in allRows first
-                         const idToRowIndex = new Map<number, number>();
-                         allRows.forEach((row, idx) => {
-                              idToRowIndex.set(row.id, idx);
-                         });
-
-                         results.forEach((result: any) => {
-                              const idx = idToRowIndex.get(result.id);
-                              if (idx !== undefined) {
-                                   indices.push(idx);
-                                   scores.push(result.score);
-                              }
-                         });
-
-                         setQueryNearestIndices(indices);
-                         setQueryNearestScores(scores);
+               // Step 4: Map sorted chunks into color groups
+               const paperColorMap = new Map<number, number>();
+               const uniquePaperIdsSet = new Set<number>();
+               sortedChunks.forEach((chunk) => {
+                    if (chunk.paperId !== undefined && chunk.paperId !== null) {
+                         uniquePaperIdsSet.add(chunk.paperId);
                     }
-               } catch (err) {
-                    console.error("Failed to fetch nearest neighbors", err);
-               }
+               });
 
-               // Step 4:
-               // Step 3: Run UMAP on all vectors including the query vector
-               const allVectors = [...allRows.map((row) => row.vector), queryVector];
+               const sortedPaperIdsArr = Array.from(uniquePaperIdsSet).sort((a, b) => a - b);
+               sortedPaperIdsArr.forEach((pid, idx) => {
+                    paperColorMap.set(pid, idx % godsnot_102.length);
+               });
+
+               // Prepare Legend
+               const paperMap = new Map<number, string>();
+               sortedChunks.forEach((chunk) => {
+                    if (chunk.paperId) {
+                         const paperName = chunk.title?.trim() || chunk.fileName.replace(/\.pdf$/i, "");
+                         paperMap.set(chunk.paperId, paperName);
+                    }
+               });
+
+               const newLegendItems: PaperLegendEntry[] = sortedPaperIdsArr.map((pid) => ({
+                    paperId: pid,
+                    paperTitle: paperMap.get(pid) || `Paper ${pid}`,
+                    color: hexToRgb01(godsnot_102[paperColorMap.get(pid)!]),
+               }));
+               setQueryPaperLegend(newLegendItems);
+
+               // Step 5: Run UMAP on all vectors including the query vector
+               const allVectors = [...sortedChunks.map((row) => row.vector), queryVector];
                const nNeighbors = Math.min(15, Math.max(2, allVectors.length - 1));
                const reducer = new UMAP({ nComponents: 3, nNeighbors, minDist: 0.25 });
                const coordinates =
@@ -919,12 +913,18 @@ export default function InspectPage() {
                const queryCoord = coordinates[coordinates.length - 1];
 
                const payload: PlotPoints = { x: [], y: [], z: [], text: [] };
+               const colors: { r: number; g: number; b: number }[] = [];
                regularCoords.forEach((point, index) => {
                     const [x = 0, y = 0, z = 0] = point || [];
                     payload.x.push(x);
                     payload.y.push(y);
                     payload.z.push(z);
-                    payload.text.push(buildLabel(allRows[index]));
+                    const chunk = sortedChunks[index];
+                    const paperName = chunk.title?.trim() || chunk.fileName.replace(/\.pdf$/i, "");
+                    payload.text.push(`${chunk.sectionType} @ ${paperName}`);
+
+                    const colorIdx = chunk.paperId ? (paperColorMap.get(chunk.paperId) ?? 0) : 0;
+                    colors.push(hexToRgb01(godsnot_102[colorIdx]));
                });
 
                const queryPointData: QueryPoint = {
@@ -935,7 +935,9 @@ export default function InspectPage() {
                };
 
                setQueryPlotPoints(payload);
+               setQueryColors(colors);
                setQueryPoint(queryPointData);
+               setQueryRawChunks(sortedChunks);
                setQueryLoadProgress(null);
           } catch (error) {
                console.error("Failed to visualize query", error);
@@ -947,6 +949,15 @@ export default function InspectPage() {
                setIsQueryVisualizing(false);
           }
      };
+
+     const handleQueryPointClick = useCallback(
+          (index: number) => {
+               if (index >= 0 && index < queryRawChunks.length) {
+                    setClickedQueryChunk(queryRawChunks[index]);
+               }
+          },
+          [queryRawChunks]
+     );
 
      const fetchLibraryFolders = useCallback(async () => {
           setIsLoadingLibraryFolders(true);
@@ -1022,7 +1033,7 @@ export default function InspectPage() {
                const uniquePaperIds = [...new Set(chunks.map((c) => c.paperId))];
                const paperColorMap = new Map<number, { r: number; g: number; b: number }>();
                uniquePaperIds.forEach((pid, idx) => {
-                    paperColorMap.set(pid, getSectionColor(idx));
+                    paperColorMap.set(pid, hexToRgb01(godsnot_102[idx % godsnot_102.length]));
                });
 
                // Build legend
@@ -1030,7 +1041,7 @@ export default function InspectPage() {
                     const chunk = chunks.find((c) => c.paperId === pid)!;
                     return {
                          paperId: pid,
-                         name: chunk.title?.trim() || chunk.fileName.replace(/\.pdf$/i, ""),
+                         paperTitle: chunk.title?.trim() || chunk.fileName.replace(/\.pdf$/i, ""),
                          color: paperColorMap.get(pid)!,
                     };
                });
@@ -1253,29 +1264,32 @@ export default function InspectPage() {
                                                             pointSize={dotSize}
                                                             colors={libraryColors ?? undefined}
                                                             onPointClick={handleLibraryPointClick}
+                                                            onEmptyClick={() => setClickedChunk(null)}
                                                        />
                                                        {clickedChunk && (() => {
                                                             const { title, body } = getChunkTitleAndBody(clickedChunk);
                                                             const paperName = clickedChunk.title?.trim() || clickedChunk.fileName.replace(/\.pdf$/i, "");
                                                             return (
-                                                                 <div className="absolute top-3 right-3 z-10 flex w-[340px] max-w-[45%] max-h-[70%] flex-col rounded-xl border border-white/10 bg-black/85 shadow-2xl backdrop-blur-sm">
-                                                                      <div className="flex items-start justify-between gap-2 border-b border-white/10 px-4 py-3">
-                                                                           <div className="min-w-0">
-                                                                                <p className="text-xs font-semibold text-white leading-snug">{title}</p>
-                                                                                <p className="mt-0.5 truncate text-[10px] text-white/50">{paperName}</p>
+                                                                 <div 
+                                                                      className="absolute top-3 right-3 z-10 flex w-[340px] max-w-[45%] max-h-[70%] flex-col rounded-xl border border-white/10 bg-black/85 shadow-2xl backdrop-blur-sm pointer-events-auto"
+                                                                 >
+                                                                           <div className="flex items-start justify-between gap-2 border-b border-white/10 px-4 py-3">
+                                                                                <div className="min-w-0">
+                                                                                     <p className="text-xs font-semibold text-white leading-snug">{title}</p>
+                                                                                     <p className="mt-0.5 truncate text-[10px] text-white/50">{paperName}</p>
+                                                                                </div>
+                                                                                <button
+                                                                                     type="button"
+                                                                                     onClick={() => setClickedChunk(null)}
+                                                                                     className="mt-0.5 flex-shrink-0 rounded p-0.5 text-white/50 hover:text-white transition-colors"
+                                                                                     aria-label="Close"
+                                                                                >
+                                                                                     <X className="h-3.5 w-3.5" />
+                                                                                </button>
                                                                            </div>
-                                                                           <button
-                                                                                type="button"
-                                                                                onClick={() => setClickedChunk(null)}
-                                                                                className="mt-0.5 flex-shrink-0 rounded p-0.5 text-white/50 hover:text-white transition-colors"
-                                                                                aria-label="Close"
-                                                                           >
-                                                                                <X className="h-3.5 w-3.5" />
-                                                                           </button>
-                                                                      </div>
-                                                                      <div className="overflow-y-auto px-4 py-3">
-                                                                           <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/80">{body}</p>
-                                                                      </div>
+                                                                           <div className="overflow-y-auto px-4 py-3">
+                                                                                <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/80">{body}</p>
+                                                                           </div>
                                                                  </div>
                                                             );
                                                        })()}
@@ -1293,7 +1307,7 @@ export default function InspectPage() {
                                                                                 backgroundColor: `rgb(${Math.round(entry.color.r * 255)}, ${Math.round(entry.color.g * 255)}, ${Math.round(entry.color.b * 255)})`,
                                                                            }}
                                                                       />
-                                                                      <span className="truncate max-w-[200px]">{entry.name}</span>
+                                                                      <span className="truncate max-w-[200px]">{entry.paperTitle}</span>
                                                                  </div>
                                                             ))}
                                                        </div>
@@ -1313,35 +1327,35 @@ export default function InspectPage() {
 
                     {activeView === "query" && (
                          <div className="max-w-6xl mx-auto space-y-6">
-                              {isBusy ? (
+                              {isLoadingLibraryFolders ? (
                                    <div className="flex flex-col items-center justify-center py-12">
                                         <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
                                         <p className="text-sm text-black/60 dark:text-white/60">Loading folders...</p>
                                    </div>
-                              ) : folders.length === 0 ? (
+                              ) : libraryFolders.length === 0 ? (
                                    <div className="flex flex-col items-center justify-center py-12 text-center">
                                         <p className="text-base font-medium text-black/70 dark:text-white/70 mb-1">
-                                             No folders are registered yet
+                                             No library folders found
                                         </p>
                                         <p className="text-sm text-black/50 dark:text-white/50">
-                                             Add folders from the Sync view to start collecting embeddings.
+                                             Add folders from the Library view to start.
                                         </p>
                                    </div>
                               ) : (
                                    <>
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                             {folders.map((folder) => {
-                                                  const isSelected = querySelectedFolders.has(folder.name);
+                                             {libraryFolders.map((folder) => {
+                                                  const isSelected = querySelectedFolderIds.has(folder.id);
                                                   return (
                                                        <div
-                                                            key={folder.name}
+                                                            key={folder.id}
                                                             role="button"
                                                             tabIndex={0}
-                                                            onClick={() => handleToggleQueryFolder(folder.name)}
+                                                            onClick={() => handleToggleQueryFolder(folder.id)}
                                                             onKeyDown={(event) => {
                                                                  if (event.key === "Enter" || event.key === " ") {
                                                                       event.preventDefault();
-                                                                      handleToggleQueryFolder(folder.name);
+                                                                      handleToggleQueryFolder(folder.id);
                                                                  }
                                                             }}
                                                             className={cn(
@@ -1359,7 +1373,7 @@ export default function InspectPage() {
                                                                       type="checkbox"
                                                                       checked={isSelected}
                                                                       onChange={() =>
-                                                                           handleToggleQueryFolder(folder.name)
+                                                                           handleToggleQueryFolder(folder.id)
                                                                       }
                                                                       onClick={(e) => e.stopPropagation()}
                                                                       className="w-4 h-4 rounded border-2 border-light-200 dark:border-dark-200 text-[#F8B692] focus:ring-[#F8B692] cursor-pointer"
@@ -1368,17 +1382,6 @@ export default function InspectPage() {
                                                             <p className="text-xs text-black/60 dark:text-white/60 truncate">
                                                                  {folder.rootPath}
                                                             </p>
-                                                            <div className="flex items-center justify-between text-[10px] text-black/40 dark:text-white/40 mt-1">
-                                                                 <span>{folder.embeddingCount ?? 0} embeddings</span>
-                                                                 {folder.updatedAt && (
-                                                                      <span>
-                                                                           Updated{" "}
-                                                                           {new Date(
-                                                                                folder.updatedAt
-                                                                           ).toLocaleDateString()}
-                                                                      </span>
-                                                                 )}
-                                                            </div>
                                                             <p className="text-[11px] text-black/50 dark:text-white/50">
                                                                  {isSelected ? "Selected for query" : "Click to select"}
                                                             </p>
@@ -1390,15 +1393,15 @@ export default function InspectPage() {
                                              <button
                                                   type="button"
                                                   onClick={() => setIsQueryModalOpen(true)}
-                                                  disabled={querySelectedFolders.size === 0}
+                                                  disabled={querySelectedFolderIds.size === 0}
                                                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-black font-medium text-sm hover:bg-[#e6ad82] active:scale-95 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
                                              >
                                                   Write test query
                                              </button>
                                              <p className="text-xs text-black/50 dark:text-white/50 text-center">
-                                                  {querySelectedFolders.size === 0
+                                                  {querySelectedFolderIds.size === 0
                                                        ? "Select folders to enable query visualization"
-                                                       : `${querySelectedFolders.size} folder${querySelectedFolders.size > 1 ? "s" : ""} selected`}
+                                                       : `${querySelectedFolderIds.size} folder${querySelectedFolderIds.size > 1 ? "s" : ""} selected`}
                                              </p>
                                         </div>
                                    </>
@@ -1645,7 +1648,7 @@ export default function InspectPage() {
                                         Selected folders
                                    </p>
                                    <div className="flex flex-wrap gap-2">
-                                        {Array.from(querySelectedFolders).map((folderName) => (
+                                        {Array.from(querySelectedFolderIds).map((folderName) => (
                                              <div
                                                   key={folderName}
                                                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 text-xs text-black/70 dark:text-white/70"
@@ -1739,7 +1742,7 @@ export default function InspectPage() {
                                                        <p className="text-center text-xs text-black/50 dark:text-white/50">
                                                             {queryLoadProgress.loaded >= queryLoadProgress.total
                                                                  ? "Running UMAP dimensionality reduction..."
-                                                                 : `Fetching embeddings from ${querySelectedFolders.size} folder${querySelectedFolders.size > 1 ? "s" : ""}`}
+                                                                 : `Fetching embeddings from ${querySelectedFolderIds.size} folder${querySelectedFolderIds.size > 1 ? "s" : ""}`}
                                                        </p>
                                                   </div>
                                              ) : (
@@ -1749,15 +1752,46 @@ export default function InspectPage() {
                                              )}
                                         </div>
                                    ) : queryPlotPoints && queryPoint ? (
-                                        <div className="relative h-full w-full">
-                                             <ThreeEmbeddingViewer
-                                                  points={queryPlotPoints}
-                                                  pointSize={dotSize}
-                                                  queryPoint={queryPoint}
-                                                  nearestIndices={queryNearestIndices}
-                                             />
+                                        <div className="relative h-full w-full flex flex-col">
+                                             <div className="relative flex-grow">
+                                                  <ThreeEmbeddingViewer
+                                                       points={queryPlotPoints}
+                                                       pointSize={dotSize}
+                                                       colors={queryColors ?? undefined}
+                                                       queryPoint={queryPoint}
+                                                       nearestIndices={queryNearestIndices}
+                                                       onPointClick={handleQueryPointClick}
+                                                       onEmptyClick={() => setClickedQueryChunk(null)}
+                                                  />
+                                                  {clickedQueryChunk && (() => {
+                                                       const { title, body } = getChunkTitleAndBody(clickedQueryChunk);
+                                                       const paperName = clickedQueryChunk.title?.trim() || clickedQueryChunk.fileName.replace(/\.pdf$/i, "");
+                                                       return (
+                                                            <div 
+                                                                 className="absolute top-3 right-3 z-10 flex w-[340px] max-w-[45%] max-h-[70%] flex-col rounded-xl border border-white/10 bg-black/85 shadow-2xl backdrop-blur-sm pointer-events-auto"
+                                                            >
+                                                                 <div className="flex items-start justify-between gap-2 border-b border-white/10 px-4 py-3">
+                                                                      <div className="min-w-0">
+                                                                           <p className="text-xs font-semibold text-white leading-snug">{title}</p>
+                                                                           <p className="mt-0.5 truncate text-[10px] text-white/50">{paperName}</p>
+                                                                      </div>
+                                                                      <button
+                                                                           type="button"
+                                                                           onClick={() => setClickedQueryChunk(null)}
+                                                                           className="mt-0.5 flex-shrink-0 rounded p-0.5 text-white/50 hover:text-white transition-colors"
+                                                                           aria-label="Close"
+                                                                      >
+                                                                           <X className="h-3.5 w-3.5" />
+                                                                      </button>
+                                                                 </div>
+                                                                 <div className="overflow-y-auto px-4 py-3">
+                                                                      <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/80">{body}</p>
+                                                                 </div>
+                                                            </div>
+                                                       );
+                                                  })()}
                                              {queryNearestIndices.length > 0 && (
-                                                  <div className="absolute top-4 right-4 w-64 bg-black/80 backdrop-blur-md rounded-xl border border-white/10 p-4 shadow-xl">
+                                                  <div className="absolute top-4 left-4 w-60 bg-black/80 backdrop-blur-md rounded-xl border border-white/10 p-4 shadow-xl pointer-events-none">
                                                        <h3 className="text-xs font-semibold text-white/90 mb-3 uppercase tracking-wider">
                                                             Top Matches
                                                        </h3>
@@ -1791,6 +1825,25 @@ export default function InspectPage() {
                                                   </div>
                                              )}
                                         </div>
+                                        {queryPaperLegend.length > 0 && (
+                                             <div className="flex flex-wrap gap-2 py-3 px-4 border-t border-light-200 dark:border-dark-200 mt-2 overflow-y-auto max-h-[100px] shrink-0">
+                                                  {queryPaperLegend.map((entry) => (
+                                                       <div
+                                                            key={entry.paperId}
+                                                            className="flex items-center gap-1.5 text-[10px] text-black/70 dark:text-white/70"
+                                                       >
+                                                            <span
+                                                                 className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                                                 style={{
+                                                                      backgroundColor: `rgb(${Math.round(entry.color.r * 255)}, ${Math.round(entry.color.g * 255)}, ${Math.round(entry.color.b * 255)})`,
+                                                                 }}
+                                                            />
+                                                            <span className="truncate max-w-[150px]">{entry.paperTitle}</span>
+                                                       </div>
+                                                  ))}
+                                             </div>
+                                        )}
+                                   </div>
                                    ) : (
                                         <div className="flex items-center justify-center h-full">
                                              <p className="text-sm text-black/60 dark:text-white/60">

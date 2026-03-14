@@ -27,6 +27,8 @@ type ThreeEmbeddingViewerProps = {
      colors?: { r: number; g: number; b: number }[];
      /** Called with the index of the point that was clicked. */
      onPointClick?: (index: number) => void;
+     /** Called when the user clicks on empty space (no point hit). */
+     onEmptyClick?: () => void;
 };
 
 const clampPointSize = (value: number) => Math.min(Math.max(value, 2), 60);
@@ -79,12 +81,15 @@ export default function ThreeEmbeddingViewer({
      nearestIndices,
      colors,
      onPointClick,
+     onEmptyClick,
 }: ThreeEmbeddingViewerProps) {
      const mountRef = useRef<HTMLDivElement>(null);
      const hoverLabelRef = useRef<HTMLDivElement>(null);
      const compassRef = useRef<HTMLDivElement>(null);
      const onPointClickRef = useRef(onPointClick);
+     const onEmptyClickRef = useRef(onEmptyClick);
      useEffect(() => { onPointClickRef.current = onPointClick; }, [onPointClick]);
+     useEffect(() => { onEmptyClickRef.current = onEmptyClick; }, [onEmptyClick]);
 
      useEffect(() => {
           const mount = mountRef.current;
@@ -315,7 +320,7 @@ export default function ThreeEmbeddingViewer({
           };
 
           const handlePointerUp = (event: PointerEvent) => {
-               if (event.button !== 0 || !onPointClickRef.current) return;
+               if (event.button !== 0) return;
                const dx = event.clientX - pointerDownX;
                const dy = event.clientY - pointerDownY;
                if (dx * dx + dy * dy > 25) return; // >5 px means drag
@@ -347,7 +352,9 @@ export default function ThreeEmbeddingViewer({
                }
 
                if (clickedIndex !== null) {
-                    onPointClickRef.current(clickedIndex);
+                    onPointClickRef.current?.(clickedIndex);
+               } else {
+                    onEmptyClickRef.current?.();
                }
           };
 
@@ -445,9 +452,24 @@ export default function ThreeEmbeddingViewer({
                     : null;
           resizeObserver?.observe(mount);
 
+          // Dynamic point sizing: shrink points as camera zooms in so
+          // nearby points stay distinguishable.  A power-law with exponent
+          // < 1 means the size changes more slowly than the zoom level.
+          const baseSize = clampPointSize(pointSize) * 0.035;
+          const referenceDistance = camera.position.length(); // initial distance (~6.93)
+          const sizeExponent = 0.6; // <1 = size shrinks slower than zoom
+
           let animationFrame: number;
           const animate = () => {
                controls.update();
+
+               const distance = camera.position.length();
+               const scale = Math.pow(distance / referenceDistance, sizeExponent);
+               material.size = baseSize * scale;
+               if (queryMaterial) {
+                    queryMaterial.size = baseSize * 2 * scale;
+               }
+
                renderer.render(scene, camera);
                if (compassRenderer && compassScene && compassCamera && compassRoot) {
                     compassRoot.quaternion.copy(camera.quaternion);
@@ -501,7 +523,7 @@ export default function ThreeEmbeddingViewer({
                          </div>
                     )}
                     <div className="rounded-full bg-black/60 px-3 py-1 text-[10px] uppercase tracking-wide text-white">
-                         Drag to rotate · Scroll to zoom
+                         Drag to rotate · Scroll to zoom · Shift+Click to translate
                     </div>
                </div>
           </div>
