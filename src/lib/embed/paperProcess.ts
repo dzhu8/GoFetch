@@ -48,6 +48,59 @@ const ALLOWED_LABELS = [
 
 const CHUNK_SIZE_LINES = 1000;
 
+function isUninformativeChunk(content: string): boolean {
+     const trimmed = content.trim();
+
+     // Exclude chunks less than 100 characters
+     if (trimmed.length < 100) return true;
+
+     // Exclude chunks that are only whitespace or have no alphanumeric text
+     // This handles the "strange case where there may be many '\' type characters"
+     if (!/[a-zA-Z0-9]/.test(trimmed)) return true;
+
+     // Exclude DOI strings (heuristic: contains 'doi.org' or starts with '10.' followed by numbers/slash)
+     const doiPattern = /^(https?:\/\/)?(www\.)?doi\.org\/[^\s]+$|^10\.\d{4,9}\/[-._;()/:A-Z0-9]+$/i;
+     if (doiPattern.test(trimmed)) return true;
+
+     // Exclude boilerplate keywords
+     const boilerplateKeywords = [
+          "competing interests",
+          "acknowledgements",
+          "author contributions",
+          "check for updates",
+          "nature portfolio reporting summaries",
+          "additional references",
+          "data availability",
+          "code availability",
+          "peer review information",
+          "publisher's note",
+          "https://doi.org",
+          "should be addressed to",
+          "open access",
+          "creative commons",
+          "reporting summary"
+     ];
+     if (boilerplateKeywords.some(kw => trimmed.toLowerCase().includes(kw))) return true;
+
+     // Exclude "Published" followed by a date in any form
+     // Standard patterns: Published: Dec 2024, Published 12/20/2024, Published January 1, 2025, etc.
+     const publishedDatePattern = /published\s*[:\s]\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|[a-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+[a-z]+\s+\d{4})/i;
+     if (publishedDatePattern.test(trimmed)) return true;
+
+     // Exclude comma-separated lists containing "motifs" consisting of two-three strings and $ ^{n} $
+     // Example: "Marco Becilli, Markus Metzler, Claudia Bracaglia. ¹⁵These authors contributed equally"
+     // Or affiliations like "Dept of Hematology, Rome, Italy. ¹Department..."
+     // Pattern: look for the LaTeX-style superscript $ ^{n} $ or superscript characters
+     const superscriptMotifPattern = /([A-Z][a-z]+[^,.]+){1,3}([,.]\s*)?(\$?\s?\^\{\d+\}\s?\$?|[¹²³⁴⁵⁶⁷⁸⁹⁰]+)/;
+     if (superscriptMotifPattern.test(trimmed)) {
+          // Check if it's a list-like structure (multiple commas/periods followed by these motifs)
+          const matches = trimmed.match(new RegExp(superscriptMotifPattern, 'g'));
+          if (matches && matches.length >= 2) return true;
+     }
+
+     return false;
+}
+
 export async function processPaperOCR(paperId: number, ocrPath: string) {
      const paper = db.select().from(papers).where(eq(papers.id, paperId)).get();
      if (!paper) throw new Error(`Paper ${paperId} not found`);
@@ -86,9 +139,13 @@ export async function processPaperOCR(paperId: number, ocrPath: string) {
           const lines = section.content.split("\n");
           for (let i = 0; i < lines.length; i += CHUNK_SIZE_LINES) {
                const chunkLines = lines.slice(i, i + CHUNK_SIZE_LINES);
+               const content = chunkLines.join("\n");
+               
+               if (isUninformativeChunk(content)) continue;
+
                chunks.push({
                     sectionType: section.type,
-                    content: chunkLines.join("\n"),
+                    content,
                     chunkIndex: Math.floor(i / CHUNK_SIZE_LINES)
                });
           }
