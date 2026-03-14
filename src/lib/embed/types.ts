@@ -7,6 +7,8 @@ export interface TaskProgressState {
      processedFiles: number;
      /** Total tokens output during summarization phase */
      totalTokensOutput?: number;
+     /** Monotonically increasing counter — incremented each time a new task is queued for this folder */
+     taskEpoch?: number;
      message?: string;
      error?: string;
      startedAt: string;

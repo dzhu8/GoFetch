@@ -49,12 +49,12 @@ const getSecondaryText = (progress: TaskProgressState): string => {
           return `${progress.processedFiles} / ${progress.totalFiles} snippets summarized`;
      }
      if (progress.phase === "embedding" && progress.totalFiles > 0) {
-          return `${progress.processedFiles} / ${progress.totalFiles} chunks embedded`;
+          return `${progress.processedFiles} / ${progress.totalFiles} papers embedded`;
      }
      if (progress.phase === "completed") {
-          return progress.message || "Initial embeddings ready.";
+          return progress.message || "All papers embedded.";
      }
-     return progress.message || "Preparing project...";
+     return progress.message || "Preparing...";
 };
 
 const formatTokenCount = (tokens: number): string => {

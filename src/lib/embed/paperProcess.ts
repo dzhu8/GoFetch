@@ -167,25 +167,34 @@ export async function processPaperOCR(paperId: number, ocrPath: string) {
      return chunks;
 }
 
-// Track how many papers are pending (queued + actively embedding) per folder.
-// Only emit folder-level "completed" when this count reaches 0.
-const folderPendingCount = new Map<string, number>();
+// ---- Per-folder paper-level progress tracking ----
+// totalFiles / processedFiles represent PAPERS (not chunks).
+// Use globalThis to survive Next.js module re-instantiation.
+const GLOBAL_KEY_TOTAL = Symbol.for("gofetch.folderTotalPapers");
+const GLOBAL_KEY_PROCESSED = Symbol.for("gofetch.folderProcessedPapers");
+const GLOBAL_KEY_QUEUE = Symbol.for("gofetch.embeddingQueue");
+const GLOBAL_KEY_PROCESSING = Symbol.for("gofetch.isProcessingQueue");
 
-const embeddingQueue: { paperId: number; folderName: string; paperName: string }[] = [];
-let isProcessingQueue = false;
+const g = globalThis as Record<symbol, unknown>;
+if (!g[GLOBAL_KEY_TOTAL]) g[GLOBAL_KEY_TOTAL] = new Map<string, number>();
+if (!g[GLOBAL_KEY_PROCESSED]) g[GLOBAL_KEY_PROCESSED] = new Map<string, number>();
+if (!g[GLOBAL_KEY_QUEUE]) g[GLOBAL_KEY_QUEUE] = [] as { paperId: number; folderName: string; paperName: string }[];
+if (g[GLOBAL_KEY_PROCESSING] === undefined) g[GLOBAL_KEY_PROCESSING] = false;
+
+const folderTotalPapers = g[GLOBAL_KEY_TOTAL] as Map<string, number>;
+const folderProcessedPapers = g[GLOBAL_KEY_PROCESSED] as Map<string, number>;
+const embeddingQueue = g[GLOBAL_KEY_QUEUE] as { paperId: number; folderName: string; paperName: string }[];
 
 async function processEmbeddingQueue() {
-     if (isProcessingQueue || embeddingQueue.length === 0) return;
-     isProcessingQueue = true;
+     if (g[GLOBAL_KEY_PROCESSING] || embeddingQueue.length === 0) return;
+     g[GLOBAL_KEY_PROCESSING] = true;
 
      while (embeddingQueue.length > 0) {
           const { paperId, folderName, paperName } = embeddingQueue.shift()!;
-          let hadError = false;
 
           try {
                await embedPaperChunks(paperId, folderName, paperName);
           } catch (error) {
-               hadError = true;
                const errMsg = error instanceof Error ? error.message : String(error);
                console.error(`[embed] Failed to embed paper ${paperId}:`, error);
                updateTaskProgress(folderName, {
@@ -193,28 +202,53 @@ async function processEmbeddingQueue() {
                     error: errMsg,
                     message: `Failed to embed "${paperName}"`
                });
+               // Keep going with remaining papers — don't reset counters
+               continue;
           }
 
-          // Decrement per-folder pending count; emit folder "completed" only when all done.
-          const remaining = (folderPendingCount.get(folderName) ?? 1) - 1;
-          if (remaining <= 0) {
-               folderPendingCount.delete(folderName);
-               if (!hadError) {
-                    updateTaskProgress(folderName, {
-                         phase: "completed",
-                         message: "All papers embedded.",
-                    });
-               }
+          // Increment processed count for this folder
+          const processed = (folderProcessedPapers.get(folderName) ?? 0) + 1;
+          folderProcessedPapers.set(folderName, processed);
+          const total = folderTotalPapers.get(folderName) ?? processed;
+
+          if (processed >= total) {
+               // All papers done — emit completed and reset counters
+               folderTotalPapers.delete(folderName);
+               folderProcessedPapers.delete(folderName);
+               updateTaskProgress(folderName, {
+                    phase: "completed",
+                    totalFiles: total,
+                    processedFiles: total,
+                    message: `All ${total} paper${total !== 1 ? "s" : ""} embedded.`,
+               });
           } else {
-               folderPendingCount.set(folderName, remaining);
+               // More papers remaining
+               updateTaskProgress(folderName, {
+                    phase: "embedding",
+                    totalFiles: total,
+                    processedFiles: processed,
+                    message: `Embedded ${processed} / ${total} papers...`,
+               });
           }
      }
 
-     isProcessingQueue = false;
+     g[GLOBAL_KEY_PROCESSING] = false;
 }
 
 export function queuePaperEmbedding(paperId: number, folderName: string, paperName: string = "Unknown paper") {
-     folderPendingCount.set(folderName, (folderPendingCount.get(folderName) ?? 0) + 1);
+     // Increment total queued for this folder
+     const newTotal = (folderTotalPapers.get(folderName) ?? 0) + 1;
+     folderTotalPapers.set(folderName, newTotal);
+     const processed = folderProcessedPapers.get(folderName) ?? 0;
+
+     // Immediately update progress so any SSE that opens afterwards sees "embedding"
+     updateTaskProgress(folderName, {
+          phase: "embedding",
+          totalFiles: newTotal,
+          processedFiles: processed,
+          message: `Embedding papers (${processed}/${newTotal})...`,
+     });
+
      embeddingQueue.push({ paperId, folderName, paperName });
      processEmbeddingQueue();
 }
@@ -245,9 +279,6 @@ export async function embedPaperChunks(paperId: number, folderName: string, pape
      const model = await provider.provider.loadEmbeddingModel(preference.modelKey);
 
      updateTaskProgress(folderName, {
-          phase: "embedding",
-          totalFiles: chunks.length,
-          processedFiles: 0,
           message: `Embedding "${paperName}" (0/${chunks.length} chunks)...`
      });
 
@@ -270,7 +301,6 @@ export async function embedPaperChunks(paperId: number, folderName: string, pape
 
           const processed = i + batch.length;
           updateTaskProgress(folderName, {
-               processedFiles: processed,
                message: `Embedding "${paperName}" (${processed}/${chunks.length} chunks)...`
           });
      }
