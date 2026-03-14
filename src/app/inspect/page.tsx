@@ -99,6 +99,7 @@ type LibraryChunkRow = {
      paperId: number;
      sectionType: string;
      chunkIndex: number;
+     content: string;
      fileName: string;
      title: string | null;
      vector: number[];
@@ -110,33 +111,121 @@ type PaperLegendEntry = {
      color: { r: number; g: number; b: number };
 };
 
-const hslToRgb01 = (h: number, s: number, l: number): { r: number; g: number; b: number } => {
-     const c = (1 - Math.abs(2 * l - 1)) * s;
-     const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
-     const m = l - c / 2;
-     let r = 0,
-          g = 0,
-          b = 0;
-     if (h < 1 / 6) {
-          r = c;
-          g = x;
-     } else if (h < 2 / 6) {
-          r = x;
-          g = c;
-     } else if (h < 3 / 6) {
-          g = c;
-          b = x;
-     } else if (h < 4 / 6) {
-          g = x;
-          b = c;
-     } else if (h < 5 / 6) {
-          r = x;
-          b = c;
-     } else {
-          r = c;
-          b = x;
-     }
-     return { r: r + m, g: g + m, b: b + m };
+const godsnot_102 = [
+     "#FFFF00",
+     "#1CE6FF",
+     "#FF34FF",
+     "#FF4A46",
+     "#008941",
+     "#006FA6",
+     "#A30059",
+     "#FFDBE5",
+     "#7A4900",
+     "#0000A6",
+     "#63FFAC",
+     "#B79762",
+     "#004D43",
+     "#8FB0FF",
+     "#997D87",
+     "#5A0007",
+     "#809693",
+     "#6A3A4C",
+     "#1B4400",
+     "#4FC601",
+     "#3B5DFF",
+     "#4A3B53",
+     "#FF2F80",
+     "#61615A",
+     "#BA0900",
+     "#6B7900",
+     "#00C2A0",
+     "#FFAA92",
+     "#FF90C9",
+     "#B903AA",
+     "#D16100",
+     "#DDEFFF",
+     "#000035",
+     "#7B4F4B",
+     "#A1C299",
+     "#300018",
+     "#0AA6D8",
+     "#013349",
+     "#00846F",
+     "#372101",
+     "#FFB500",
+     "#C2FFED",
+     "#A079BF",
+     "#CC0744",
+     "#C0B9B2",
+     "#C2FF99",
+     "#001E09",
+     "#00489C",
+     "#6F0062",
+     "#0CBD66",
+     "#EEC3FF",
+     "#456D75",
+     "#B77B68",
+     "#7A87A1",
+     "#788D66",
+     "#885578",
+     "#FAD09F",
+     "#FF8A9A",
+     "#D157A0",
+     "#BEC459",
+     "#456648",
+     "#0086ED",
+     "#886F4C",
+     "#34362D",
+     "#B4A8BD",
+     "#00A6AA",
+     "#452C2C",
+     "#636375",
+     "#A3C8C9",
+     "#FF913F",
+     "#938A81",
+     "#575329",
+     "#00FECF",
+     "#B05B6F",
+     "#8CD0FF",
+     "#3B9700",
+     "#04F757",
+     "#C8A1A1",
+     "#1E6E00",
+     "#7900D7",
+     "#A77500",
+     "#6367A9",
+     "#A05837",
+     "#6B002C",
+     "#772600",
+     "#D790FF",
+     "#9B9700",
+     "#549E79",
+     "#FFF69F",
+     "#201625",
+     "#72418F",
+     "#BC23FF",
+     "#99ADC0",
+     "#3A2465",
+     "#922329",
+     "#5B4534",
+     "#FDE8DC",
+     "#404E55",
+     "#0089A3",
+     "#CB7E98",
+     "#A4E804",
+     "#324E72",
+];
+
+const hexToRgb01 = (hex: string): { r: number; g: number; b: number } => {
+     const r = parseInt(hex.slice(1, 3), 16) / 255;
+     const g = parseInt(hex.slice(3, 5), 16) / 255;
+     const b = parseInt(hex.slice(5, 7), 16) / 255;
+     return { r, g, b };
+};
+
+const getSectionColor = (index: number): { r: number; g: number; b: number } => {
+     const colorHex = godsnot_102[index % godsnot_102.length];
+     return hexToRgb01(colorHex);
 };
 
 const formatSectionLabel = (sectionType: string, n: number): string => {
@@ -154,6 +243,29 @@ const formatSectionLabel = (sectionType: string, n: number): string => {
           default:
                return `${sectionType} ${n}`;
      }
+};
+
+const getChunkTitleAndBody = (chunk: LibraryChunkRow): { title: string; body: string } => {
+     if (chunk.sectionType === "paragraph_title") {
+          const newlineIdx = chunk.content.indexOf("\n");
+          if (newlineIdx > 0) {
+               return {
+                    title: chunk.content.slice(0, newlineIdx).trim(),
+                    body: chunk.content.slice(newlineIdx + 1).trim(),
+               };
+          }
+          return { title: "Text", body: chunk.content };
+     }
+     const titleMap: Record<string, string> = {
+          abstract: "Abstract",
+          figure_title: "Figure Caption",
+          table: "Table",
+          display_formula: "Formula",
+     };
+     return {
+          title: titleMap[chunk.sectionType] ?? chunk.sectionType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+          body: chunk.content,
+     };
 };
 
 export default function InspectPage() {
@@ -205,6 +317,8 @@ export default function InspectPage() {
      const [isLoadingLibraryFolders, setIsLoadingLibraryFolders] = useState(false);
      const [selectedLibraryFolderId, setSelectedLibraryFolderId] = useState<number | null>(null);
      const [selectedLibraryFolderName, setSelectedLibraryFolderName] = useState<string | null>(null);
+     const [libraryRawChunks, setLibraryRawChunks] = useState<LibraryChunkRow[]>([]);
+     const [clickedChunk, setClickedChunk] = useState<LibraryChunkRow | null>(null);
 
      const { trackFolderTask } = useTaskProgressActions();
 
@@ -857,6 +971,8 @@ export default function InspectPage() {
                setLibraryColors(null);
                setLibraryPaperLegend([]);
                setLibraryError(null);
+               setLibraryRawChunks([]);
+               setClickedChunk(null);
           },
           []
      );
@@ -869,6 +985,8 @@ export default function InspectPage() {
           setLibraryColors(null);
           setLibraryPaperLegend([]);
           setLibraryError(null);
+          setLibraryRawChunks([]);
+          setClickedChunk(null);
      }, []);
 
      const handleLoadLibraryEmbeddings = useCallback(async (folderId: number) => {
@@ -900,14 +1018,11 @@ export default function InspectPage() {
                     return a.chunkIndex - b.chunkIndex;
                });
 
-               // Assign a distinct hue per paper
+               // Assign a distinct color per paper from godsnot_102
                const uniquePaperIds = [...new Set(chunks.map((c) => c.paperId))];
                const paperColorMap = new Map<number, { r: number; g: number; b: number }>();
                uniquePaperIds.forEach((pid, idx) => {
-                    paperColorMap.set(
-                         pid,
-                         hslToRgb01(uniquePaperIds.length > 1 ? idx / uniquePaperIds.length : 0.6, 0.7, 0.55)
-                    );
+                    paperColorMap.set(pid, getSectionColor(idx));
                });
 
                // Build legend
@@ -953,6 +1068,7 @@ export default function InspectPage() {
                setLibraryPlotPoints(payload);
                setLibraryColors(pointColors);
                setLibraryPaperLegend(legend);
+               setLibraryRawChunks(chunks);
                setLibraryLoaded(true);
                setLibraryLoadProgress(null);
           } catch (error) {
@@ -962,6 +1078,14 @@ export default function InspectPage() {
                setIsLibraryLoading(false);
           }
      }, []);
+
+     const handleLibraryPointClick = useCallback((index: number) => {
+          setClickedChunk((prev) => {
+               const chunk = libraryRawChunks[index] ?? null;
+               if (prev && chunk && prev.id === chunk.id) return null;
+               return chunk;
+          });
+     }, [libraryRawChunks]);
 
      useEffect(() => {
           if (activeView === "visualize" && selectedLibraryFolderId === null) {
@@ -1123,12 +1247,38 @@ export default function InspectPage() {
                                              </div>
                                         ) : libraryPlotPoints ? (
                                              <>
-                                                  <div className="h-[65vh] min-h-[360px]">
+                                                  <div className="relative h-[65vh] min-h-[360px]">
                                                        <ThreeEmbeddingViewer
                                                             points={libraryPlotPoints}
                                                             pointSize={dotSize}
                                                             colors={libraryColors ?? undefined}
+                                                            onPointClick={handleLibraryPointClick}
                                                        />
+                                                       {clickedChunk && (() => {
+                                                            const { title, body } = getChunkTitleAndBody(clickedChunk);
+                                                            const paperName = clickedChunk.title?.trim() || clickedChunk.fileName.replace(/\.pdf$/i, "");
+                                                            return (
+                                                                 <div className="absolute top-3 right-3 z-10 flex w-[340px] max-w-[45%] max-h-[70%] flex-col rounded-xl border border-white/10 bg-black/85 shadow-2xl backdrop-blur-sm">
+                                                                      <div className="flex items-start justify-between gap-2 border-b border-white/10 px-4 py-3">
+                                                                           <div className="min-w-0">
+                                                                                <p className="text-xs font-semibold text-white leading-snug">{title}</p>
+                                                                                <p className="mt-0.5 truncate text-[10px] text-white/50">{paperName}</p>
+                                                                           </div>
+                                                                           <button
+                                                                                type="button"
+                                                                                onClick={() => setClickedChunk(null)}
+                                                                                className="mt-0.5 flex-shrink-0 rounded p-0.5 text-white/50 hover:text-white transition-colors"
+                                                                                aria-label="Close"
+                                                                           >
+                                                                                <X className="h-3.5 w-3.5" />
+                                                                           </button>
+                                                                      </div>
+                                                                      <div className="overflow-y-auto px-4 py-3">
+                                                                           <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/80">{body}</p>
+                                                                      </div>
+                                                                 </div>
+                                                            );
+                                                       })()}
                                                   </div>
                                                   {libraryPaperLegend.length > 0 && (
                                                        <div className="flex flex-wrap gap-3 pt-1">

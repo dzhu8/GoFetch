@@ -25,6 +25,8 @@ type ThreeEmbeddingViewerProps = {
      nearestIndices?: number[];
      /** Per-point override colors (r/g/b in 0-1 range). Falls back to sequential rainbow when absent. */
      colors?: { r: number; g: number; b: number }[];
+     /** Called with the index of the point that was clicked. */
+     onPointClick?: (index: number) => void;
 };
 
 const clampPointSize = (value: number) => Math.min(Math.max(value, 2), 60);
@@ -76,10 +78,13 @@ export default function ThreeEmbeddingViewer({
      queryPoint,
      nearestIndices,
      colors,
+     onPointClick,
 }: ThreeEmbeddingViewerProps) {
      const mountRef = useRef<HTMLDivElement>(null);
      const hoverLabelRef = useRef<HTMLDivElement>(null);
      const compassRef = useRef<HTMLDivElement>(null);
+     const onPointClickRef = useRef(onPointClick);
+     useEffect(() => { onPointClickRef.current = onPointClick; }, [onPointClick]);
 
      useEffect(() => {
           const mount = mountRef.current;
@@ -301,8 +306,55 @@ export default function ThreeEmbeddingViewer({
                updateHoverLabel(null);
           };
 
+          let pointerDownX = 0;
+          let pointerDownY = 0;
+
+          const handlePointerDown = (event: PointerEvent) => {
+               pointerDownX = event.clientX;
+               pointerDownY = event.clientY;
+          };
+
+          const handlePointerUp = (event: PointerEvent) => {
+               if (event.button !== 0 || !onPointClickRef.current) return;
+               const dx = event.clientX - pointerDownX;
+               const dy = event.clientY - pointerDownY;
+               if (dx * dx + dy * dy > 25) return; // >5 px means drag
+
+               const rect = renderer.domElement.getBoundingClientRect();
+               const px = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+               const py = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+               let clickedIndex: number | null = null;
+               let closestDistSq = Infinity;
+               const threshold = 0.03;
+               const tempVec2 = new THREE.Vector3();
+
+               for (let i = 0; i < count; i += 1) {
+                    const posIndex = i * 3;
+                    tempVec2.set(
+                         positionAttribute[posIndex],
+                         positionAttribute[posIndex + 1],
+                         positionAttribute[posIndex + 2]
+                    );
+                    tempVec2.project(camera);
+                    const ddx = tempVec2.x - px;
+                    const ddy = tempVec2.y - py;
+                    const distSq = ddx * ddx + ddy * ddy;
+                    if (distSq < closestDistSq && distSq < threshold * threshold) {
+                         closestDistSq = distSq;
+                         clickedIndex = i;
+                    }
+               }
+
+               if (clickedIndex !== null) {
+                    onPointClickRef.current(clickedIndex);
+               }
+          };
+
           renderer.domElement.addEventListener("pointermove", handlePointerMove);
           renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
+          renderer.domElement.addEventListener("pointerdown", handlePointerDown);
+          renderer.domElement.addEventListener("pointerup", handlePointerUp);
 
           let compassRenderer: THREE.WebGLRenderer | null = null;
           let compassScene: THREE.Scene | null = null;
@@ -410,6 +462,8 @@ export default function ThreeEmbeddingViewer({
                resizeObserver?.disconnect();
                renderer.domElement.removeEventListener("pointermove", handlePointerMove);
                renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
+               renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
+               renderer.domElement.removeEventListener("pointerup", handlePointerUp);
                controls.dispose();
                geometry.dispose();
                material.dispose();
