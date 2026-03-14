@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
                          if (jsonDestPath) {
                               try {
                                    await processPaperOCR(paperRow.id, jsonDestPath);
-                                   queuePaperEmbedding(paperRow.id, folder.name);
+                                   queuePaperEmbedding(paperRow.id, folder.name, paperRow.fileName ?? file.name);
                               } catch (err) {
                                    console.warn("[Paper upload] Failed to process chunks or queue embedding:", err);
                               }

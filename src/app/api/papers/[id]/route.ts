@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders } from "@/server/db/schema";
+import { papers, libraryFolders, paperChunks } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import fs from "fs";
 
@@ -58,6 +58,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
           }
 
           // Delete from database
+          db.delete(paperChunks).where(eq(paperChunks.paperId, paperId)).run();
           db.delete(papers).where(eq(papers.id, paperId)).run();
 
           return NextResponse.json({ message: "Paper deleted successfully" });

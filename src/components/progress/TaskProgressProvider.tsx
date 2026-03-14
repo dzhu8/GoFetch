@@ -74,19 +74,42 @@ export function TaskProgressProvider({ children }: { children: React.ReactNode }
 
                // Create SSE connection
                const eventSource = new EventSource(`/api/folders/${encodeURIComponent(trimmedName)}/task-status`);
+               let seenActivePhase = false;
 
                eventSource.onmessage = (event) => {
                     try {
                          const progress = JSON.parse(event.data) as TaskProgressState;
+
+                         // Track whether we've seen a non-terminal phase on this connection.
+                         // This lets us distinguish stale "completed" (from a prior run) vs
+                         // a genuine completion of the task we just started tracking.
+                         if (progress.phase === "parsing" || progress.phase === "summarizing" || progress.phase === "embedding") {
+                              seenActivePhase = true;
+                         }
+
+                         if (progress.phase === "idle" && !seenActivePhase) {
+                              // No work has started yet — keep the "parsing" placeholder.
+                              return;
+                         }
+
+                         if (progress.phase === "completed" || progress.phase === "error") {
+                              if (!seenActivePhase) {
+                                   // Stale terminal state from a prior run — ignore it
+                                   // and keep the connection open for the upcoming task.
+                                   return;
+                              }
+                              setEntries((prev) => ({
+                                   ...prev,
+                                   [trimmedName]: progress,
+                              }));
+                              stopTrackingFolder(trimmedName);
+                              return;
+                         }
+
                          setEntries((prev) => ({
                               ...prev,
                               [trimmedName]: progress,
                          }));
-
-                         // Close connection when task is complete or errored
-                         if (progress.phase === "completed" || progress.phase === "error") {
-                              stopTrackingFolder(trimmedName);
-                         }
                     } catch (error) {
                          console.error("Error parsing SSE message:", error);
                     }

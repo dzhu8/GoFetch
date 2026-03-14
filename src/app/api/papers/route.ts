@@ -27,7 +27,7 @@ async function triggerPendingEmbeddings(folderId: number, folderName: string): P
           if (fs.existsSync(ocrPath)) {
                try {
                     await processPaperOCR(paper.id, ocrPath);
-                    queuePaperEmbedding(paper.id, folderName);
+                    queuePaperEmbedding(paper.id, folderName, paper.fileName);
                     triggered = true;
                } catch (err) {
                     console.warn(`[Library] Failed to process pending embedding for ${paper.fileName}:`, err);

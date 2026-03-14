@@ -5,7 +5,7 @@ import { paperChunks, papers } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import modelRegistry from "@/server/providerRegistry";
-import { updateTaskProgress, taskProgressEmitter } from "@/lib/embed/progress";
+import { updateTaskProgress } from "@/lib/embed/progress";
 import configManager from "@/server";
 import { MinimalProvider } from "@/lib/models/types";
 import { ModelPreference } from "@/lib/models/modelPreference";
@@ -110,7 +110,11 @@ export async function processPaperOCR(paperId: number, ocrPath: string) {
      return chunks;
 }
 
-const embeddingQueue: { paperId: number; folderName: string }[] = [];
+// Track how many papers are pending (queued + actively embedding) per folder.
+// Only emit folder-level "completed" when this count reaches 0.
+const folderPendingCount = new Map<string, number>();
+
+const embeddingQueue: { paperId: number; folderName: string; paperName: string }[] = [];
 let isProcessingQueue = false;
 
 async function processEmbeddingQueue() {
@@ -118,28 +122,47 @@ async function processEmbeddingQueue() {
      isProcessingQueue = true;
 
      while (embeddingQueue.length > 0) {
-          const { paperId, folderName } = embeddingQueue.shift()!;
+          const { paperId, folderName, paperName } = embeddingQueue.shift()!;
+          let hadError = false;
+
           try {
-               await embedPaperChunks(paperId, folderName);
+               await embedPaperChunks(paperId, folderName, paperName);
           } catch (error) {
+               hadError = true;
+               const errMsg = error instanceof Error ? error.message : String(error);
                console.error(`[embed] Failed to embed paper ${paperId}:`, error);
                updateTaskProgress(folderName, {
                     phase: "error",
-                    error: error instanceof Error ? error.message : String(error),
-                    message: `Failed to embed paper ${paperId}`
+                    error: errMsg,
+                    message: `Failed to embed "${paperName}"`
                });
+          }
+
+          // Decrement per-folder pending count; emit folder "completed" only when all done.
+          const remaining = (folderPendingCount.get(folderName) ?? 1) - 1;
+          if (remaining <= 0) {
+               folderPendingCount.delete(folderName);
+               if (!hadError) {
+                    updateTaskProgress(folderName, {
+                         phase: "completed",
+                         message: "All papers embedded.",
+                    });
+               }
+          } else {
+               folderPendingCount.set(folderName, remaining);
           }
      }
 
      isProcessingQueue = false;
 }
 
-export function queuePaperEmbedding(paperId: number, folderName: string) {
-     embeddingQueue.push({ paperId, folderName });
+export function queuePaperEmbedding(paperId: number, folderName: string, paperName: string = "Unknown paper") {
+     folderPendingCount.set(folderName, (folderPendingCount.get(folderName) ?? 0) + 1);
+     embeddingQueue.push({ paperId, folderName, paperName });
      processEmbeddingQueue();
 }
 
-export async function embedPaperChunks(paperId: number, folderName: string) {
+export async function embedPaperChunks(paperId: number, folderName: string, paperName: string = "Unknown paper") {
      const chunks = db.select().from(paperChunks).where(eq(paperChunks.paperId, paperId)).all();
      if (chunks.length === 0) return;
 
@@ -168,7 +191,7 @@ export async function embedPaperChunks(paperId: number, folderName: string) {
           phase: "embedding",
           totalFiles: chunks.length,
           processedFiles: 0,
-          message: `Embedding paper chunks (0/${chunks.length})...`
+          message: `Embedding "${paperName}" (0/${chunks.length} chunks)...`
      });
 
      // Embed in batches
@@ -188,14 +211,10 @@ export async function embedPaperChunks(paperId: number, folderName: string) {
                }
           });
 
+          const processed = i + batch.length;
           updateTaskProgress(folderName, {
-               processedFiles: i + batch.length,
-               message: `Embedding paper chunks (${i + batch.length}/${chunks.length})...`
+               processedFiles: processed,
+               message: `Embedding "${paperName}" (${processed}/${chunks.length} chunks)...`
           });
      }
-
-     updateTaskProgress(folderName, {
-          phase: "completed",
-          message: `Finished embedding paper with ${chunks.length} chunks.`
-     });
 }

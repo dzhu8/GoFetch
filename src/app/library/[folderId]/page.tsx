@@ -8,8 +8,10 @@ import {
      AlertCircle,
      Check,
      ClipboardCopy,
+     Database,
      FileText,
      Loader2,
+     RefreshCcw,
      Trash2,
      Upload,
      X,
@@ -53,6 +55,8 @@ export default function FolderDetailPage() {
      const [deletingId, setDeletingId] = useState<number | null>(null);
      const [viewingPaperId, setViewingPaperId] = useState<number | null>(null);
      const [copiedId, setCopiedId] = useState<number | null>(null);
+     const [recomputingId, setRecomputingId] = useState<number | null>(null);
+     const [deletingEmbedId, setDeletingEmbedId] = useState<number | null>(null);
      const fileInputRef = useRef<HTMLInputElement>(null);
      const { startParseJob } = usePdfParseActions();
      const { trackFolderTask } = useTaskProgressActions();
@@ -114,6 +118,43 @@ export default function FolderDetailPage() {
           } finally {
                setDeletingId(null);
                setConfirmDeleteId(null);
+          }
+     };
+
+     const handleRecomputeEmbeddings = async (paperId: number, folderName: string) => {
+          setRecomputingId(paperId);
+          try {
+               const res = await fetch(`/api/papers/${paperId}/embeddings`, { method: "POST" });
+               if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || "Failed to recompute embeddings");
+               }
+               trackFolderTask(folderName);
+          } catch (error) {
+               console.error("Error recomputing embeddings:", error);
+               setErrorModal(error instanceof Error ? error.message : "Failed to recompute embeddings");
+          } finally {
+               setRecomputingId(null);
+          }
+     };
+
+     const handleDeleteEmbeddings = async (paperId: number) => {
+          if (!window.confirm("Are you sure you want to delete embeddings for this paper? This will clear its visualization until embedded again.")) {
+               return;
+          }
+
+          setDeletingEmbedId(paperId);
+          try {
+               const res = await fetch(`/api/papers/${paperId}/embeddings`, { method: "DELETE" });
+               if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || "Failed to delete embeddings");
+               }
+          } catch (error) {
+               console.error("Error deleting embeddings:", error);
+               setErrorModal(error instanceof Error ? error.message : "Failed to delete embeddings");
+          } finally {
+               setDeletingEmbedId(null);
           }
      };
 
@@ -234,8 +275,12 @@ export default function FolderDetailPage() {
                                         onView={() => setViewingPaperId(paper.id)}
                                         onDelete={() => setConfirmDeleteId(paper.id)}
                                         onCopyCitation={() => handleCopyCitation(paper)}
+                                        onRecomputeEmbed={() => handleRecomputeEmbeddings(paper.id, folder?.name || folderId)}
+                                        onDeleteEmbed={() => handleDeleteEmbeddings(paper.id)}
                                         isDeleting={deletingId === paper.id}
                                         isCopied={copiedId === paper.id}
+                                        isRecomputingEmbed={recomputingId === paper.id}
+                                        isDeletingEmbed={deletingEmbedId === paper.id}
                                    />
                               ))}
                          </div>
@@ -344,15 +389,23 @@ function PaperCard({
      onView,
      onDelete,
      onCopyCitation,
+     onRecomputeEmbed,
+     onDeleteEmbed,
      isDeleting,
      isCopied,
+     isRecomputingEmbed,
+     isDeletingEmbed,
 }: {
      paper: Paper;
      onView: () => void;
      onDelete: () => void;
      onCopyCitation: () => void;
+     onRecomputeEmbed: () => void;
+     onDeleteEmbed: () => void;
      isDeleting: boolean;
      isCopied: boolean;
+     isRecomputingEmbed: boolean;
+     isDeletingEmbed: boolean;
 }) {
      const isUploading = paper.status === "uploading" || paper.status === "processing";
 
@@ -420,6 +473,40 @@ function PaperCard({
 
                     {/* Action buttons */}
                     <div className="mt-auto flex items-center justify-end gap-1 pt-2 border-t border-light-200/50 dark:border-dark-200/50">
+                         <button
+                              type="button"
+                              onClick={(e) => {
+                                   e.stopPropagation();
+                                   onRecomputeEmbed();
+                              }}
+                              disabled={isRecomputingEmbed}
+                              className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200 disabled:opacity-50"
+                              aria-label="Recompute embeddings"
+                              title="Recompute embeddings"
+                         >
+                              {isRecomputingEmbed ? (
+                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                   <RefreshCcw className="w-3.5 h-3.5" />
+                              )}
+                         </button>
+                         <button
+                              type="button"
+                              onClick={(e) => {
+                                   e.stopPropagation();
+                                   onDeleteEmbed();
+                              }}
+                              disabled={isDeletingEmbed}
+                              className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200 disabled:opacity-50"
+                              aria-label="Delete embeddings"
+                              title="Delete embeddings"
+                         >
+                              {isDeletingEmbed ? (
+                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                   <Database className="w-3.5 h-3.5" />
+                              )}
+                         </button>
                          {paper.semanticScholarCitation && (
                               <button
                                    type="button"
