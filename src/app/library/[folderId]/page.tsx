@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import GoFetchDogBox from "../../../../public/assets/GoFetch-dog-box.svg";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
+import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
 
 interface Paper {
      id: number;
@@ -54,6 +55,7 @@ export default function FolderDetailPage() {
      const [copiedId, setCopiedId] = useState<number | null>(null);
      const fileInputRef = useRef<HTMLInputElement>(null);
      const { startParseJob } = usePdfParseActions();
+     const { trackFolderTask } = useTaskProgressActions();
 
      const fetchPapers = useCallback(async () => {
           try {
@@ -71,6 +73,10 @@ export default function FolderDetailPage() {
                if (!res.ok) throw new Error("Failed to fetch papers");
                const data = await res.json();
                setPapers(data.papers || []);
+
+               if (data.embeddingTriggered && data.folderName) {
+                    trackFolderTask(data.folderName);
+               }
           } catch (error) {
                console.error("Error fetching papers:", error);
           } finally {

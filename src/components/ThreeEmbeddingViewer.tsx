@@ -23,6 +23,8 @@ type ThreeEmbeddingViewerProps = {
      pointSize: number;
      queryPoint?: QueryPoint;
      nearestIndices?: number[];
+     /** Per-point override colors (r/g/b in 0-1 range). Falls back to sequential rainbow when absent. */
+     colors?: { r: number; g: number; b: number }[];
 };
 
 const clampPointSize = (value: number) => Math.min(Math.max(value, 2), 60);
@@ -73,6 +75,7 @@ export default function ThreeEmbeddingViewer({
      pointSize,
      queryPoint,
      nearestIndices,
+     colors,
 }: ThreeEmbeddingViewerProps) {
      const mountRef = useRef<HTMLDivElement>(null);
      const hoverLabelRef = useRef<HTMLDivElement>(null);
@@ -141,7 +144,7 @@ export default function ThreeEmbeddingViewer({
                positionAttribute[posIndex + 1] = normalizeValue(yValues[i], centerY, spread);
                positionAttribute[posIndex + 2] = normalizeValue(zValues[i], centerZ, spread);
 
-               const { r, g, b } = buildColor(i, count - 1);
+               const { r, g, b } = colors?.[i] ?? buildColor(i, count - 1);
                colorAttribute[posIndex] = r;
                colorAttribute[posIndex + 1] = g;
                colorAttribute[posIndex + 2] = b;
@@ -421,7 +424,7 @@ export default function ThreeEmbeddingViewer({
                     compassRenderer.dispose();
                }
           };
-     }, [points, pointSize, queryPoint, nearestIndices]);
+     }, [points, pointSize, queryPoint, nearestIndices, colors]);
 
      return (
           <div className="relative h-full w-full">

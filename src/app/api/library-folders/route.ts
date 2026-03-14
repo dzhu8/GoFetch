@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { libraryFolders } from "@/server/db/schema";
+import { libraryFolders, papers, paperChunks } from "@/server/db/schema";
 import fs from "fs";
 import path from "path";
+import { eq, isNull } from "drizzle-orm";
+import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
 
 /** Central directory where all GoFetch-managed library folders live */
 export const LIBRARY_ROOT = path.join(process.cwd(), "data", "library");
@@ -13,11 +15,45 @@ function ensureLibraryRoot() {
      }
 }
 
+async function triggerPendingEmbeddings(folderId: number, folderName: string) {
+     const papersToEmbed = db
+          .select({ id: papers.id, fileName: papers.fileName, filePath: papers.filePath })
+          .from(papers)
+          .leftJoin(paperChunks, eq(papers.id, paperChunks.paperId))
+          .where(eq(papers.folderId, folderId))
+          .all()
+          .filter((p, i, self) => {
+               // Filter for papers that have NO chunks in paperChunks table
+               const hasChunks = db.select().from(paperChunks).where(eq(paperChunks.paperId, p.id)).limit(1).get();
+               return !hasChunks;
+          });
+
+     for (const paper of papersToEmbed) {
+          const ocrFileName = paper.fileName.replace(/\.pdf$/i, "") + ".ocr.json";
+          const ocrPath = paper.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
+
+          if (fs.existsSync(ocrPath)) {
+               try {
+                    await processPaperOCR(paper.id, ocrPath);
+                    queuePaperEmbedding(paper.id, folderName);
+               } catch (err) {
+                    console.warn(`[Library] Failed to process pending embedding for ${paper.fileName}:`, err);
+               }
+          }
+     }
+}
+
 // GET /api/library-folders — list all library folders
 export async function GET() {
      try {
           ensureLibraryRoot();
           const rows = db.select().from(libraryFolders).orderBy(libraryFolders.createdAt).all();
+
+          // Trigger background embedding checks for each folder
+          for (const folder of rows) {
+               triggerPendingEmbeddings(folder.id, folder.name).catch(console.error);
+          }
+
           return NextResponse.json({ folders: rows, libraryRoot: LIBRARY_ROOT });
      } catch (error) {
           console.error("Error fetching library folders:", error);

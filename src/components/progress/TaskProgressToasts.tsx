@@ -49,10 +49,10 @@ const getSecondaryText = (progress: TaskProgressState): string => {
           return `${progress.processedFiles} / ${progress.totalFiles} snippets summarized`;
      }
      if (progress.phase === "embedding" && progress.totalFiles > 0) {
-          return `${progress.processedFiles} / ${progress.totalFiles} documents embedded`;
+          return `${progress.processedFiles} / ${progress.totalFiles} chunks embedded`;
      }
      if (progress.phase === "completed") {
-          return "Initial embeddings ready.";
+          return progress.message || "Initial embeddings ready.";
      }
      return progress.message || "Preparing project...";
 };

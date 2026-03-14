@@ -94,6 +94,68 @@ type QueryPoint = {
      text: string;
 };
 
+type LibraryChunkRow = {
+     id: number;
+     paperId: number;
+     sectionType: string;
+     chunkIndex: number;
+     fileName: string;
+     title: string | null;
+     vector: number[];
+};
+
+type PaperLegendEntry = {
+     paperId: number;
+     name: string;
+     color: { r: number; g: number; b: number };
+};
+
+const hslToRgb01 = (h: number, s: number, l: number): { r: number; g: number; b: number } => {
+     const c = (1 - Math.abs(2 * l - 1)) * s;
+     const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
+     const m = l - c / 2;
+     let r = 0,
+          g = 0,
+          b = 0;
+     if (h < 1 / 6) {
+          r = c;
+          g = x;
+     } else if (h < 2 / 6) {
+          r = x;
+          g = c;
+     } else if (h < 3 / 6) {
+          g = c;
+          b = x;
+     } else if (h < 4 / 6) {
+          g = x;
+          b = c;
+     } else if (h < 5 / 6) {
+          r = x;
+          b = c;
+     } else {
+          r = c;
+          b = x;
+     }
+     return { r: r + m, g: g + m, b: b + m };
+};
+
+const formatSectionLabel = (sectionType: string, n: number): string => {
+     switch (sectionType) {
+          case "paragraph_title":
+               return `text ${n}`;
+          case "abstract":
+               return n === 1 ? "abstract" : `abstract ${n}`;
+          case "figure_title":
+               return `figure ${n}`;
+          case "table":
+               return `table ${n}`;
+          case "display_formula":
+               return `formula ${n}`;
+          default:
+               return `${sectionType} ${n}`;
+     }
+};
+
 export default function InspectPage() {
      const [folders, setFolders] = useState<RegisteredFolder[]>([]);
      const [loadingFolders, setLoadingFolders] = useState(true);
@@ -130,6 +192,19 @@ export default function InspectPage() {
      const [queryLoadProgress, setQueryLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
      const [queryNearestIndices, setQueryNearestIndices] = useState<number[]>([]);
      const [queryNearestScores, setQueryNearestScores] = useState<number[]>([]);
+
+     // Library tab state
+     const [libraryPlotPoints, setLibraryPlotPoints] = useState<PlotPoints | null>(null);
+     const [libraryColors, setLibraryColors] = useState<{ r: number; g: number; b: number }[] | null>(null);
+     const [libraryPaperLegend, setLibraryPaperLegend] = useState<PaperLegendEntry[]>([]);
+     const [isLibraryLoading, setIsLibraryLoading] = useState(false);
+     const [libraryError, setLibraryError] = useState<string | null>(null);
+     const [libraryLoadProgress, setLibraryLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
+     const [libraryLoaded, setLibraryLoaded] = useState(false);
+     const [libraryFolders, setLibraryFolders] = useState<{ id: number; name: string; rootPath: string }[]>([]);
+     const [isLoadingLibraryFolders, setIsLoadingLibraryFolders] = useState(false);
+     const [selectedLibraryFolderId, setSelectedLibraryFolderId] = useState<number | null>(null);
+     const [selectedLibraryFolderName, setSelectedLibraryFolderName] = useState<string | null>(null);
 
      const { trackFolderTask } = useTaskProgressActions();
 
@@ -759,6 +834,147 @@ export default function InspectPage() {
           }
      };
 
+     const fetchLibraryFolders = useCallback(async () => {
+          setIsLoadingLibraryFolders(true);
+          try {
+               const res = await fetch("/api/library-folders", { cache: "no-store" });
+               if (res.ok) {
+                    const data = await res.json();
+                    setLibraryFolders(data.folders ?? []);
+               }
+          } catch {}
+          finally {
+               setIsLoadingLibraryFolders(false);
+          }
+     }, []);
+
+     const handleSelectLibraryFolder = useCallback(
+          (id: number, name: string) => {
+               setSelectedLibraryFolderId(id);
+               setSelectedLibraryFolderName(name);
+               setLibraryLoaded(false);
+               setLibraryPlotPoints(null);
+               setLibraryColors(null);
+               setLibraryPaperLegend([]);
+               setLibraryError(null);
+          },
+          []
+     );
+
+     const handleBackToFolders = useCallback(() => {
+          setSelectedLibraryFolderId(null);
+          setSelectedLibraryFolderName(null);
+          setLibraryLoaded(false);
+          setLibraryPlotPoints(null);
+          setLibraryColors(null);
+          setLibraryPaperLegend([]);
+          setLibraryError(null);
+     }, []);
+
+     const handleLoadLibraryEmbeddings = useCallback(async (folderId: number) => {
+          setIsLibraryLoading(true);
+          setLibraryError(null);
+          setLibraryPlotPoints(null);
+          setLibraryColors(null);
+          setLibraryPaperLegend([]);
+          setLibraryLoadProgress(null);
+
+          try {
+               const res = await fetch(`/api/paper-embeddings?folderId=${folderId}&limit=5000`, { cache: "no-store" });
+               const data = (await res.json().catch(() => ({}))) as { chunks?: LibraryChunkRow[]; error?: string };
+               if (!res.ok) throw new Error(data?.error || "Failed to fetch paper embeddings");
+
+               const raw = data.chunks ?? [];
+               if (raw.length === 0) {
+                    setLibraryError(
+                         "No embedded paper chunks found. Upload papers and wait for embedding to finish."
+                    );
+                    setLibraryLoaded(true);
+                    return;
+               }
+
+               // Sort for consistent per-paper section numbering
+               const chunks = [...raw].sort((a, b) => {
+                    if (a.paperId !== b.paperId) return a.paperId - b.paperId;
+                    if (a.sectionType !== b.sectionType) return a.sectionType.localeCompare(b.sectionType);
+                    return a.chunkIndex - b.chunkIndex;
+               });
+
+               // Assign a distinct hue per paper
+               const uniquePaperIds = [...new Set(chunks.map((c) => c.paperId))];
+               const paperColorMap = new Map<number, { r: number; g: number; b: number }>();
+               uniquePaperIds.forEach((pid, idx) => {
+                    paperColorMap.set(
+                         pid,
+                         hslToRgb01(uniquePaperIds.length > 1 ? idx / uniquePaperIds.length : 0.6, 0.7, 0.55)
+                    );
+               });
+
+               // Build legend
+               const legend: PaperLegendEntry[] = uniquePaperIds.map((pid) => {
+                    const chunk = chunks.find((c) => c.paperId === pid)!;
+                    return {
+                         paperId: pid,
+                         name: chunk.title?.trim() || chunk.fileName.replace(/\.pdf$/i, ""),
+                         color: paperColorMap.get(pid)!,
+                    };
+               });
+
+               // Build per-paper section-type counters for hover labels
+               const sectionCounters = new Map<string, number>();
+               const labels = chunks.map((chunk) => {
+                    const key = `${chunk.paperId}::${chunk.sectionType}`;
+                    const n = (sectionCounters.get(key) ?? 0) + 1;
+                    sectionCounters.set(key, n);
+                    const paperName = chunk.title?.trim() || chunk.fileName.replace(/\.pdf$/i, "");
+                    return `${paperName}\n${formatSectionLabel(chunk.sectionType, n)}`;
+               });
+
+               const pointColors = chunks.map((c) => paperColorMap.get(c.paperId)!);
+
+               setLibraryLoadProgress({ loaded: chunks.length, total: chunks.length });
+
+               // Run UMAP
+               const vectors = chunks.map((c) => c.vector);
+               const nNeighbors = Math.min(15, Math.max(2, vectors.length - 1));
+               const reducer = new UMAP({ nComponents: 3, nNeighbors, minDist: 0.25 });
+               const coordinates =
+                    vectors.length > 1 ? reducer.fit(vectors) : vectors.map((v) => [v[0] ?? 0, 0, 0]);
+
+               const payload: PlotPoints = { x: [], y: [], z: [], text: [] };
+               coordinates.forEach((point, i) => {
+                    const [x = 0, y = 0, z = 0] = point || [];
+                    payload.x.push(x);
+                    payload.y.push(y);
+                    payload.z.push(z);
+                    payload.text.push(labels[i]);
+               });
+
+               setLibraryPlotPoints(payload);
+               setLibraryColors(pointColors);
+               setLibraryPaperLegend(legend);
+               setLibraryLoaded(true);
+               setLibraryLoadProgress(null);
+          } catch (error) {
+               setLibraryError(error instanceof Error ? error.message : "Failed to load library embeddings.");
+               setLibraryLoaded(true);
+          } finally {
+               setIsLibraryLoading(false);
+          }
+     }, []);
+
+     useEffect(() => {
+          if (activeView === "visualize" && selectedLibraryFolderId === null) {
+               fetchLibraryFolders();
+          }
+     }, [activeView, selectedLibraryFolderId, fetchLibraryFolders]);
+
+     useEffect(() => {
+          if (activeView === "visualize" && selectedLibraryFolderId !== null && !libraryLoaded && !isLibraryLoading) {
+               handleLoadLibraryEmbeddings(selectedLibraryFolderId);
+          }
+     }, [activeView, selectedLibraryFolderId, libraryLoaded, isLibraryLoading, handleLoadLibraryEmbeddings]);
+
      return (
           <div className="h-full flex flex-col">
                <div className="h-[30vh] flex flex-col items-center justify-center px-6 text-center gap-4">
@@ -815,91 +1031,131 @@ export default function InspectPage() {
 
                <div className="flex-1 overflow-y-auto px-6 pb-6">
                     {activeView === "visualize" && (
-                         <div className="max-w-6xl mx-auto space-y-6">
-                              {isBusy ? (
-                                   <div className="flex flex-col items-center justify-center py-12">
-                                        <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
-                                        <p className="text-sm text-black/60 dark:text-white/60">Loading folders...</p>
-                                   </div>
-                              ) : folders.length === 0 ? (
-                                   <div className="flex flex-col items-center justify-center py-12 text-center">
-                                        <p className="text-base font-medium text-black/70 dark:text-white/70 mb-1">
-                                             No folders are registered yet
-                                        </p>
-                                        <p className="text-sm text-black/50 dark:text-white/50">
-                                             Add folders on this page to start collecting embeddings.
-                                        </p>
-                                   </div>
-                              ) : (
-                                   <>
+                         <div className="max-w-6xl mx-auto space-y-4">
+                              {selectedLibraryFolderId === null ? (
+                                   // Folder picker
+                                   isLoadingLibraryFolders ? (
+                                        <div className="flex flex-col items-center justify-center py-12">
+                                             <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60 mb-3" />
+                                             <p className="text-sm text-black/60 dark:text-white/60">Loading folders…</p>
+                                        </div>
+                                   ) : libraryFolders.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-12 text-center">
+                                             <p className="text-base font-medium text-black/70 dark:text-white/70 mb-1">
+                                                  No library folders yet
+                                             </p>
+                                             <p className="text-sm text-black/50 dark:text-white/50">
+                                                  Add folders in the Library page to get started.
+                                             </p>
+                                        </div>
+                                   ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                             {folders.map((folder) => {
-                                                  const isActive = selectedFolder === folder.name;
-                                                  const isDeleting = deletingFolder === folder.name;
-                                                  return (
-                                                       <div
-                                                            key={folder.name}
-                                                            role="button"
-                                                            tabIndex={0}
-                                                            onClick={() => handleVisualizeFolder(folder)}
-                                                            onKeyDown={(event) => {
-                                                                 if (event.key === "Enter" || event.key === " ") {
-                                                                      event.preventDefault();
-                                                                      handleVisualizeFolder(folder);
-                                                                 }
-                                                            }}
-                                                            className={cn(
-                                                                 "border-2 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-3 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F8B692] cursor-pointer",
-                                                                 isActive
-                                                                      ? "border-[#F8B692]"
-                                                                      : "border-light-200 dark:border-dark-200 hover:border-[#F8B692]/70"
-                                                            )}
-                                                       >
-                                                            <div className="flex items-start justify-between gap-3">
-                                                                 <p className="text-sm font-semibold text-black dark:text-white">
-                                                                      {folder.name}
-                                                                 </p>
-                                                                 <button
-                                                                      type="button"
-                                                                      onClick={(event) => {
-                                                                           event.stopPropagation();
-                                                                           handleDeleteFolder(folder.name);
-                                                                      }}
-                                                                      disabled={isDeleting}
-                                                                      className="p-2 rounded-lg border border-light-200 dark:border-dark-200 text-black/60 dark:text-white/60 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-50"
-                                                                      title="Remove folder"
+                                             {libraryFolders.map((folder) => (
+                                                  <div
+                                                       key={folder.id}
+                                                       role="button"
+                                                       tabIndex={0}
+                                                       onClick={() => handleSelectLibraryFolder(folder.id, folder.name)}
+                                                       onKeyDown={(e) => {
+                                                            if (e.key === "Enter" || e.key === " ") {
+                                                                 e.preventDefault();
+                                                                 handleSelectLibraryFolder(folder.id, folder.name);
+                                                            }
+                                                       }}
+                                                       className="border-2 border-light-200 dark:border-dark-200 hover:border-[#F8B692]/70 rounded-2xl bg-light-primary/70 dark:bg-dark-primary/60 p-4 flex flex-col gap-2 shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#F8B692] transition"
+                                                  >
+                                                       <p className="text-sm font-semibold text-black dark:text-white">{folder.name}</p>
+                                                       <p className="text-xs text-black/50 dark:text-white/50 truncate">{folder.rootPath}</p>
+                                                       <p className="text-[11px] text-black/40 dark:text-white/40 mt-1">
+                                                            Click to visualize embeddings
+                                                       </p>
+                                                  </div>
+                                             ))}
+                                        </div>
+                                   )
+                              ) : (
+                                   // Viewer for selected folder
+                                   <>
+                                        <div className="flex items-center justify-between">
+                                             <div className="flex items-center gap-3">
+                                                  <button
+                                                       type="button"
+                                                       onClick={handleBackToFolders}
+                                                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-light-200 dark:border-dark-200 text-xs text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 transition"
+                                                  >
+                                                       ← Back
+                                                  </button>
+                                                  <div>
+                                                       <p className="text-sm font-semibold text-black dark:text-white">
+                                                            {selectedLibraryFolderName}
+                                                       </p>
+                                                       <p className="text-xs text-black/50 dark:text-white/50">
+                                                            Points colored by document · hover to see section type
+                                                       </p>
+                                                  </div>
+                                             </div>
+                                             <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                       setLibraryLoaded(false);
+                                                       handleLoadLibraryEmbeddings(selectedLibraryFolderId);
+                                                  }}
+                                                  disabled={isLibraryLoading}
+                                                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-light-200 dark:border-dark-200 text-xs text-black/70 dark:text-white/70 hover:bg-light-200/60 dark:hover:bg-dark-200/60 disabled:opacity-50"
+                                             >
+                                                  {isLibraryLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                                  Refresh
+                                             </button>
+                                        </div>
+
+                                        {isLibraryLoading ? (
+                                             <div className="flex flex-col items-center justify-center py-16 gap-4">
+                                                  <Loader2 className="w-8 h-8 animate-spin text-black/60 dark:text-white/60" />
+                                                  <p className="text-sm text-black/60 dark:text-white/60">
+                                                       {libraryLoadProgress
+                                                            ? `Running UMAP on ${libraryLoadProgress.total} chunks…`
+                                                            : "Loading paper embeddings…"}
+                                                  </p>
+                                             </div>
+                                        ) : libraryError ? (
+                                             <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+                                                  <p className="text-sm text-black/70 dark:text-white/70">{libraryError}</p>
+                                             </div>
+                                        ) : libraryPlotPoints ? (
+                                             <>
+                                                  <div className="h-[65vh] min-h-[360px]">
+                                                       <ThreeEmbeddingViewer
+                                                            points={libraryPlotPoints}
+                                                            pointSize={dotSize}
+                                                            colors={libraryColors ?? undefined}
+                                                       />
+                                                  </div>
+                                                  {libraryPaperLegend.length > 0 && (
+                                                       <div className="flex flex-wrap gap-3 pt-1">
+                                                            {libraryPaperLegend.map((entry) => (
+                                                                 <div
+                                                                      key={entry.paperId}
+                                                                      className="flex items-center gap-1.5 text-xs text-black/70 dark:text-white/70"
                                                                  >
-                                                                      {isDeleting ? (
-                                                                           <Loader2 className="w-4 h-4 animate-spin" />
-                                                                      ) : (
-                                                                           <Trash2 className="w-4 h-4" />
-                                                                      )}
-                                                                 </button>
-                                                            </div>
-                                                            <p className="text-xs text-black/60 dark:text-white/60 truncate">
-                                                                 {folder.rootPath}
-                                                            </p>
-                                                            <div className="flex items-center justify-between text-[10px] text-black/40 dark:text-white/40 mt-1">
-                                                                 <span>{folder.embeddingCount ?? 0} embeddings</span>
-                                                                 {folder.updatedAt && (
-                                                                      <span>
-                                                                           Updated{" "}
-                                                                           {new Date(
-                                                                                folder.updatedAt
-                                                                           ).toLocaleDateString()}
-                                                                      </span>
-                                                                 )}
-                                                            </div>
-                                                            <p className="text-[11px] text-black/50 dark:text-white/50">
-                                                                 Click to visualize embeddings in 3D space.
-                                                            </p>
+                                                                      <span
+                                                                           className="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                                                                           style={{
+                                                                                backgroundColor: `rgb(${Math.round(entry.color.r * 255)}, ${Math.round(entry.color.g * 255)}, ${Math.round(entry.color.b * 255)})`,
+                                                                           }}
+                                                                      />
+                                                                      <span className="truncate max-w-[200px]">{entry.name}</span>
+                                                                 </div>
+                                                            ))}
                                                        </div>
-                                                  );
-                                             })}
-                                        </div>
-                                        <div className="border-2 border-dashed border-light-200 dark:border-dark-200 rounded-2xl bg-light-primary/30 dark:bg-dark-primary/40 p-4 text-sm text-black/70 dark:text-white/70 text-center">
-                                             Click any folder to open the embedding viewer.
-                                        </div>
+                                                  )}
+                                             </>
+                                        ) : (
+                                             <div className="flex flex-col items-center justify-center py-12 text-center">
+                                                  <p className="text-sm text-black/60 dark:text-white/60">
+                                                       No embedded paper chunks found for this folder.
+                                                  </p>
+                                             </div>
+                                        )}
                                    </>
                               )}
                          </div>
@@ -1051,6 +1307,8 @@ export default function InspectPage() {
                               )}
                          </div>
                     )}
+
+
                </div>
 
                {isAddModalOpen && (

@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import { activeProcs } from "./processRegistry";
+import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
 
 export const maxDuration = 300;
 
@@ -171,12 +172,23 @@ export async function POST(req: NextRequest) {
                          });
 
                          // Save OCR result to JSON file in library folder
+                         let jsonDestPath: string | null = null;
                          try {
                               const jsonFileName = sanitizedName.replace(/\.pdf$/i, "") + ".ocr.json";
-                              const jsonDestPath = path.join(folder.rootPath, jsonFileName);
+                              jsonDestPath = path.join(folder.rootPath, jsonFileName);
                               fs.writeFileSync(jsonDestPath, JSON.stringify(ocrResult, null, 2));
                          } catch (err) {
                               console.warn("[Paper upload] Failed to save OCR JSON:", err);
+                         }
+
+                         // Decompose and queue for embedding
+                         if (jsonDestPath) {
+                              try {
+                                   await processPaperOCR(paperRow.id, jsonDestPath);
+                                   queuePaperEmbedding(paperRow.id, folder.name);
+                              } catch (err) {
+                                   console.warn("[Paper upload] Failed to process chunks or queue embedding:", err);
+                              }
                          }
 
                          // Extract DOI and title from OCR result

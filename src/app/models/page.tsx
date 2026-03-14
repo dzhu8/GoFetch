@@ -499,7 +499,7 @@ const ModelsPage = () => {
                     return;
                }
 
-               // â”€â”€ Ollama: streaming binary download â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+               // Ollama: streaming binary download
                setDownloadingMap((prev) => ({ ...prev, [key]: true }));
                setDownloadProgressMap((prev) => ({
                     ...prev,

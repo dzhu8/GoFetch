@@ -169,6 +169,20 @@ export const libraryFolders = sqliteTable(
      })
 );
 
+export const paperChunks = sqliteTable("paper_chunks", {
+     id: integer("id").primaryKey(),
+     paperId: integer("paper_id")
+          .notNull()
+          .references(() => papers.id, { onDelete: "cascade" }),
+     sectionType: text("section_type").notNull(), // e.g., "abstract", "figure_title", etc.
+     chunkIndex: integer("chunk_index").notNull(),
+     content: text("content").notNull(),
+     embedding: blob("embedding"),
+     createdAt: text("created_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});
+
 // ── Library papers ───────────────────────────────────────────────────────────
 
 const PAPER_STATUS_ENUM = ["uploading", "processing", "ready", "error"] as const;
