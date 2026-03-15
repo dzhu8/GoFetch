@@ -55,7 +55,7 @@ function collectRawBlocks(ocrResult: any): RawBlock[] {
 
           for (const block of list) {
                const label: string = block.block_label ?? block.label ?? "";
-               if (label !== "reference_content") continue;
+               if (label !== "reference_content" && label !== "reference") continue;
 
                const content: string = normalizeText(
                     block.block_content ?? block.text ?? block.content ?? block.rec_text ?? ""

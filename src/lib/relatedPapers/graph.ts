@@ -102,9 +102,13 @@ async function s2get(path: string, rl: RateLimiter): Promise<any | null> {
                headers: { Accept: "application/json" },
                signal: AbortSignal.timeout(15_000),
           });
-          if (!res.ok) return null;
+          if (!res.ok) {
+               console.warn(`[s2get] Non-OK response: ${res.status} ${res.statusText} for path: ${path}`);
+               return null;
+          }
           return await res.json();
-     } catch {
+     } catch (err) {
+          console.error(`[s2get] Error fetching path: ${path}`, err);
           return null;
      }
 }
@@ -118,9 +122,13 @@ async function s2post(path: string, body: unknown, rl: RateLimiter): Promise<any
                body: JSON.stringify(body),
                signal: AbortSignal.timeout(30_000),
           });
-          if (!res.ok) return null;
+          if (!res.ok) {
+               console.warn(`[s2post] Non-OK response: ${res.status} ${res.statusText} for path: ${path}`);
+               return null;
+          }
           return await res.json();
-     } catch {
+     } catch (err) {
+          console.error(`[s2post] Error posting to path: ${path}`, err);
           return null;
      }
 }
@@ -224,6 +232,7 @@ async function buildSnowballGraph(
      pdfDoi?: string,
      rl: RateLimiter = new RateLimiter(MAX_REQUESTS_PER_SECOND),
 ): Promise<RelatedPapersResponse> {
+     console.log(`[buildSnowballGraph] Starting for title: "${pdfTitle}", doi: ${pdfDoi ?? "none"}`);
      // ── Phase 1: Resolve seed paper ──────────────────────────────────────
      // If we have a DOI, look it up directly for a canonical paperId + clean
      // title from Semantic Scholar.  Fall back to title search when absent.
@@ -244,9 +253,12 @@ async function buildSnowballGraph(
           seedPaperId = await resolveToId(pdfTitle, false, rl);
      }
 
+     console.log(`[Phase 1] Seed paper resolved to: ${seedPaperId ?? "null"}`);
+
      // ── Phase 2: Resolve citations → R(seed) paper IDs ──────────────────
      // Process in small concurrent batches to bound simultaneous requests.
      const depth1Ids: string[] = [];
+     console.log(`[Phase 2] Resolving ${terms.length} citations...`);
      for (let i = 0; i < terms.length; i += RESOLVE_BATCH) {
           const ids = await Promise.all(
                terms
@@ -254,9 +266,11 @@ async function buildSnowballGraph(
                     .map((t, j) => resolveToId(t, isDoiFlags[i + j] ?? false, rl)),
           );
           for (const id of ids) if (id) depth1Ids.push(id);
+          console.log(`[Phase 2] Progress: ${Math.min(i + RESOLVE_BATCH, terms.length)}/${terms.length} citations resolved.`);
      }
 
      const depth1Set = new Set(depth1Ids);
+     console.log(`[Phase 2] Resolved ${depth1Ids.length}/${terms.length} citations to Semantic Scholar IDs.`);
 
      // ── Phase 3: Fetch C(seed) ────────────────────────────────────────────
      // C(seed) = set of paper IDs that cite the seed paper.  Used for the
@@ -264,6 +278,8 @@ async function buildSnowballGraph(
      const seedCits = seedPaperId
           ? await fetchEdgeIds(seedPaperId, "citations", rl)
           : new Set<string>();
+
+     console.log(`[Phase 3] Seed paper has ${seedCits.size} citations.`);
 
      // ── Phase 4: Frontier loop ────────────────────────────────────────────
      // For every depth-1 paper p, fetch:
@@ -275,6 +291,7 @@ async function buildSnowballGraph(
      const refMap = new Map<string, Set<string>>();
      const citMap = new Map<string, Set<string>>();
 
+     console.log(`[Phase 4] Building frontier for ${depth1Ids.length} papers...`);
      for (let i = 0; i < depth1Ids.length; i += FRONTIER_BATCH) {
           await Promise.all(
                depth1Ids.slice(i, i + FRONTIER_BATCH).map(async (pid) => {
@@ -284,6 +301,7 @@ async function buildSnowballGraph(
                     citMap.set(pid, cits);
                }),
           );
+          console.log(`[Phase 4] Progress: ${Math.min(i + FRONTIER_BATCH, depth1Ids.length)}/${depth1Ids.length} frontier papers fetched.`);
      }
 
      // ── Phase 5: Build candidate pool ────────────────────────────────────
@@ -298,6 +316,8 @@ async function buildSnowballGraph(
                }
           }
      }
+
+     console.log(`[Phase 5] Candidate pool size: ${candidateSet.size}`);
 
      // ── Phase 6: Score candidates ─────────────────────────────────────────
      const bcHits = new Map<string, number>();
@@ -331,7 +351,10 @@ async function buildSnowballGraph(
 
      const topK = scored.slice(0, TOP_N);
 
+     console.log(`[Phase 6] Scored candidates. Top-N length: ${topK.length}`);
+
      if (topK.length === 0) {
+          console.warn(`[buildSnowballGraph] Zero results after phase 6.`);
           return {
                pdfTitle: finalPdfTitle,
                pdfDoi,
@@ -343,15 +366,20 @@ async function buildSnowballGraph(
      }
 
      // ── Phase 7: Batch-fetch full metadata for top-N candidates ──────────
+     console.log(`[Phase 7] Fetching metadata for ${topK.length} papers...`);
      const metadata = await batchMetadata(
           topK.map((c) => c.paperId),
           rl,
      );
+     console.log(`[Phase 7] Metadata fetched for ${metadata.size} papers.`);
 
      // ── Phase 8: Build the final ranked list ─────────────────────────────
      const rankedPapers: RankedPaper[] = topK.flatMap((cand) => {
           const p = metadata.get(cand.paperId);
-          if (!p?.title) return [];
+          if (!p?.title) {
+               console.warn(`[Phase 8] No metadata/title for paper: ${cand.paperId}`);
+               return [];
+          }
           const domain = paperDomain(p);
           const url = paperUrl(p);
           return [
@@ -373,6 +401,8 @@ async function buildSnowballGraph(
                } satisfies RankedPaper,
           ];
      });
+
+     console.log(`[Phase 8] Final rankedPapers list size: ${rankedPapers.length}`);
 
      return {
           pdfTitle: finalPdfTitle,

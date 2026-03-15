@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { text, integer, sqliteTable, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { text, integer, real, sqliteTable, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { Document } from "@langchain/core/documents";
 
 export const messages = sqliteTable("messages", {
@@ -208,6 +208,26 @@ export const papers = sqliteTable("papers", {
           .notNull()
           .default(sql`CURRENT_TIMESTAMP`),
      updatedAt: text("updated_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const relatedPapers = sqliteTable("related_papers", {
+     id: integer("id").primaryKey(),
+     paperId: integer("paper_id")
+          .notNull()
+          .references(() => papers.id, { onDelete: "cascade" }),
+     title: text("title").notNull(),
+     authors: text("authors"),
+     year: integer("year"),
+     venue: text("venue"),
+     abstract: text("abstract"),
+     doi: text("doi"),
+     semanticScholarId: text("semantic_scholar_id"),
+     relevanceScore: real("relevance_score"),
+     bcScore: real("bc_score"),
+     ccScore: real("cc_score"),
+     createdAt: text("created_at")
           .notNull()
           .default(sql`CURRENT_TIMESTAMP`),
 });

@@ -15,7 +15,7 @@ const DomainBadge = ({ domain }: { domain: string }) => {
      );
 };
 
-const ScoreBadge = ({ score, label }: { score: number; label: string }) => {
+const ScoreBadge = ({ score, label, type }: { score: number; label: string, type?: "BC" | "CC" }) => {
      const pct = Math.round(score * 100);
      const colour =
           pct >= 40
@@ -25,9 +25,10 @@ const ScoreBadge = ({ score, label }: { score: number; label: string }) => {
                  : "text-black/40 dark:text-white/40 bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10";
      return (
           <span
-               className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${colour}`}
+               className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono ${colour}`}
                title={label}
           >
+               {type && <span className="opacity-50 font-bold mr-0.5">{type}</span>}
                {pct}%
           </span>
      );
@@ -49,10 +50,12 @@ const PaperCard = ({ paper, rank }: { paper: RankedPaper; rank: number }) => (
                <span className="ml-auto flex items-center gap-1">
                     <ScoreBadge
                          score={paper.bcScore}
+                         type="BC"
                          label={`Bibliographic coupling: ${Math.round(paper.bcScore * 100)}%`}
                     />
                     <ScoreBadge
                          score={paper.ccScore}
+                         type="CC"
                          label={`Co-citation: ${Math.round(paper.ccScore * 100)}%`}
                     />
                </span>

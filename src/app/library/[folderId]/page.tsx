@@ -11,6 +11,7 @@ import {
      Database,
      FileText,
      Loader2,
+     Network,
      RefreshCcw,
      Trash2,
      Upload,
@@ -56,6 +57,7 @@ export default function FolderDetailPage() {
      const [viewingPaperId, setViewingPaperId] = useState<number | null>(null);
      const [copiedId, setCopiedId] = useState<number | null>(null);
      const [recomputingId, setRecomputingId] = useState<number | null>(null);
+     const [computingRelatedId, setComputingRelatedId] = useState<number | null>(null);
      const [deletingEmbedId, setDeletingEmbedId] = useState<number | null>(null);
      const fileInputRef = useRef<HTMLInputElement>(null);
      const { startParseJob } = usePdfParseActions();
@@ -155,6 +157,35 @@ export default function FolderDetailPage() {
                setErrorModal(error instanceof Error ? error.message : "Failed to delete embeddings");
           } finally {
                setDeletingEmbedId(null);
+          }
+     };
+
+     const handleComputeRelatedPapers = async (paperId: number) => {
+          setComputingRelatedId(paperId);
+          try {
+               // Check whether related papers are already stored
+               const checkRes = await fetch(`/api/papers/${paperId}/related-papers`);
+               if (checkRes.ok) {
+                    const checkData = await checkRes.json();
+                    if (checkData.relatedPapers?.length > 0) {
+                         // Already computed — just navigate
+                         router.push(`/library/papers/${paperId}/related`);
+                         return;
+                    }
+               }
+
+               // Not yet computed — compute from existing OCR sidecar and navigate
+               const res = await fetch(`/api/papers/${paperId}/related-papers`, { method: "POST" });
+               if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || "Failed to compute related papers");
+               }
+               router.push(`/library/papers/${paperId}/related`);
+          } catch (error) {
+               console.error("Error computing related papers:", error);
+               setErrorModal(error instanceof Error ? error.message : "Failed to compute related papers");
+          } finally {
+               setComputingRelatedId(null);
           }
      };
 
@@ -277,10 +308,12 @@ export default function FolderDetailPage() {
                                         onCopyCitation={() => handleCopyCitation(paper)}
                                         onRecomputeEmbed={() => handleRecomputeEmbeddings(paper.id, folder?.name || folderId)}
                                         onDeleteEmbed={() => handleDeleteEmbeddings(paper.id)}
+                                        onComputeRelated={() => handleComputeRelatedPapers(paper.id)}
                                         isDeleting={deletingId === paper.id}
                                         isCopied={copiedId === paper.id}
                                         isRecomputingEmbed={recomputingId === paper.id}
                                         isDeletingEmbed={deletingEmbedId === paper.id}
+                                        isComputingRelated={computingRelatedId === paper.id}
                                    />
                               ))}
                          </div>
@@ -395,6 +428,8 @@ function PaperCard({
      isCopied,
      isRecomputingEmbed,
      isDeletingEmbed,
+     onComputeRelated,
+     isComputingRelated,
 }: {
      paper: Paper;
      onView: () => void;
@@ -402,10 +437,12 @@ function PaperCard({
      onCopyCitation: () => void;
      onRecomputeEmbed: () => void;
      onDeleteEmbed: () => void;
+     onComputeRelated: () => void;
      isDeleting: boolean;
      isCopied: boolean;
      isRecomputingEmbed: boolean;
      isDeletingEmbed: boolean;
+     isComputingRelated: boolean;
 }) {
      const isUploading = paper.status === "uploading" || paper.status === "processing";
 
@@ -473,6 +510,23 @@ function PaperCard({
 
                     {/* Action buttons */}
                     <div className="mt-auto flex items-center justify-end gap-1 pt-2 border-t border-light-200/50 dark:border-dark-200/50">
+                         <button
+                              type="button"
+                              onClick={(e) => {
+                                   e.stopPropagation();
+                                   onComputeRelated();
+                              }}
+                              disabled={isComputingRelated}
+                              className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200 disabled:opacity-50"
+                              aria-label="Compute related papers"
+                              title="Compute/Update related papers"
+                         >
+                              {isComputingRelated ? (
+                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                   <Network className="w-3.5 h-3.5" />
+                              )}
+                         </button>
                          <button
                               type="button"
                               onClick={(e) => {
