@@ -63,7 +63,7 @@ const PaperCard = ({ paper, rank }: { paper: RankedPaper; rank: number }) => (
 
           {/* Title */}
           <a
-               href={paper.url || (paper.paperId.startsWith("oa:") ? `https://openalex.org/${paper.paperId.slice(3)}` : `https://www.semanticscholar.org/paper/${paper.paperId}`)}
+               href={paper.url || `https://openalex.org/${paper.paperId}`}
                target="_blank"
                rel="noopener noreferrer"
                className="inline-flex items-start gap-1.5 text-sm font-medium text-[#24A0ED] hover:underline leading-snug"
@@ -100,11 +100,9 @@ const RelatedPapersPanel = ({
 }) => {
      const seedUrl = data.pdfDoi
           ? `https://doi.org/${encodeURIComponent(data.pdfDoi)}`
-          : data.seedPaperId?.startsWith("oa:")
-            ? `https://openalex.org/${data.seedPaperId.slice(3)}`
-            : data.seedPaperId
-              ? `https://www.semanticscholar.org/paper/${data.seedPaperId}`
-              : null;
+          : data.seedPaperId
+            ? `https://openalex.org/${data.seedPaperId}`
+            : null;
 
      return (
           <div className="w-full space-y-2">
@@ -161,7 +159,7 @@ const RelatedPapersPanel = ({
                     {data.rankedPapers.length === 0 ? (
                          <p className="text-sm text-black/60 dark:text-white/60 text-center py-8">
                               No related papers found. This may occur when citations could not be
-                              resolved in Semantic Scholar.
+                              resolved in OpenAlex.
                          </p>
                     ) : (
                          data.rankedPapers.map((paper, i) => (

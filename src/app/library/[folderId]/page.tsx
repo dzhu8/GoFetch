@@ -30,7 +30,7 @@ interface Paper {
      doi: string | null;
      abstract: string | null;
      semanticScholarId: string | null;
-     semanticScholarCitation: string | null;
+     citation: string | null;
      firstFigurePath: string | null;
      status: "uploading" | "processing" | "ready" | "error";
      createdAt: string;
@@ -190,9 +190,9 @@ export default function FolderDetailPage() {
      };
 
      const handleCopyCitation = async (paper: Paper) => {
-          if (!paper.semanticScholarCitation) return;
+          if (!paper.citation) return;
           try {
-               await navigator.clipboard.writeText(paper.semanticScholarCitation);
+               await navigator.clipboard.writeText(paper.citation);
                setCopiedId(paper.id);
                setTimeout(() => setCopiedId(null), 2000);
           } catch (error) {
@@ -561,7 +561,7 @@ function PaperCard({
                                    <Database className="w-3.5 h-3.5" />
                               )}
                          </button>
-                         {paper.semanticScholarCitation && (
+                         {paper.citation && (
                               <button
                                    type="button"
                                    onClick={(e) => {
@@ -570,7 +570,7 @@ function PaperCard({
                                    }}
                                    className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200"
                                    aria-label="Copy citation"
-                                   title="Copy Semantic Scholar citation"
+                                   title="Copy citation"
                               >
                                    {isCopied ? (
                                         <Check className="w-3.5 h-3.5 text-green-500" />

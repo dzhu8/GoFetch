@@ -198,7 +198,7 @@ export const papers = sqliteTable("papers", {
      doi: text("doi"),
      abstract: text("abstract"),
      semanticScholarId: text("semantic_scholar_id"),
-     semanticScholarCitation: text("semantic_scholar_citation"),
+     citation: text("citation"),
      firstFigurePath: text("first_figure_path"),
      status: text("status", { enum: PAPER_STATUS_ENUM })
           .$type<(typeof PAPER_STATUS_ENUM)[number]>()
@@ -272,6 +272,23 @@ interface AcademicSource {
           [key: string]: any;
      };
 }
+
+// ── Paper graph cache ────────────────────────────────────────────────────────
+// Caches edge data (references + citations) and metadata retrieved from
+// Semantic Scholar so subsequent runs avoid redundant API calls.
+
+export const paperEdgeCache = sqliteTable("paper_edge_cache", {
+     paperId: text("paper_id").primaryKey(),
+     referencesJson: text("references_json"),
+     citationsJson: text("citations_json"),
+     fetchedAt: integer("fetched_at").notNull(),
+});
+
+export const paperMetadataCache = sqliteTable("paper_metadata_cache", {
+     paperId: text("paper_id").primaryKey(),
+     dataJson: text("data_json").notNull(),
+     fetchedAt: integer("fetched_at").notNull(),
+});
 
 export const academicSearches = sqliteTable("academic_searches", {
      id: integer("id").primaryKey(),

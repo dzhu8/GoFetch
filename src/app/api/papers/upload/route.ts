@@ -13,9 +13,9 @@ import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
 export const maxDuration = 300;
 
 const S2_BASE = "https://api.semanticscholar.org/graph/v1";
-const S2_FIELDS = "paperId,title,abstract,externalIds,venue,year,authors,citationStyles";
+const S2_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY ?? "";
 
-/** Upload a PDF to a folder, run OCR to extract DOI/title, fetch abstract from Semantic Scholar */
+/** Upload a PDF to a folder, run OCR to extract DOI/title, fetch metadata from Semantic Scholar */
 export async function POST(req: NextRequest) {
      let tempDir: string | null = null;
 
@@ -212,22 +212,22 @@ export async function POST(req: NextRequest) {
                          let citation: string | null = null;
 
                          if (doi) {
-                              const s2paper = await fetchS2Paper(`DOI:${doi}`);
-                              if (s2paper) {
-                                   semanticScholarId = s2paper.paperId;
-                                   abstract = s2paper.abstract || null;
-                                   if (s2paper.title && !title) title = s2paper.title;
-                                   citation = formatCitation(s2paper);
+                              const s2Paper = await fetchS2PaperByDoi(doi);
+                              if (s2Paper) {
+                                   semanticScholarId = s2Paper.paperId ?? null;
+                                   abstract = s2Paper.abstract || null;
+                                   if (s2Paper.title && !title) title = s2Paper.title;
+                                   citation = formatS2Citation(s2Paper);
                               }
                          }
 
                          if (!semanticScholarId && title) {
-                              const s2paper = await searchS2ByTitle(title);
-                              if (s2paper) {
-                                   semanticScholarId = s2paper.paperId;
-                                   abstract = s2paper.abstract || null;
-                                   if (!doi && s2paper.externalIds?.DOI) doi = s2paper.externalIds.DOI;
-                                   citation = formatCitation(s2paper);
+                              const s2Paper = await searchS2ByTitle(title);
+                              if (s2Paper) {
+                                   semanticScholarId = s2Paper.paperId ?? null;
+                                   abstract = s2Paper.abstract || null;
+                                   if (!doi && s2Paper.externalIds?.DOI) doi = s2Paper.externalIds.DOI;
+                                   citation = formatS2Citation(s2Paper);
                               }
                          }
 
@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
                                    doi,
                                    abstract,
                                    semanticScholarId,
-                                   semanticScholarCitation: citation,
+                                   citation,
                                    firstFigurePath,
                                    status: "ready",
                                    updatedAt: new Date().toISOString(),
@@ -254,7 +254,7 @@ export async function POST(req: NextRequest) {
                                    doi,
                                    abstract,
                                    semanticScholarId,
-                                   semanticScholarCitation: citation,
+                                   citation,
                                    firstFigurePath,
                                    status: "ready",
                               },
@@ -323,12 +323,19 @@ for i, res in enumerate(pipeline.predict(pdf_path)):
     print(f"PROGRESS:PAGE:{i+1}", flush=True)
 `.trimStart();
 
-async function fetchS2Paper(paperId: string): Promise<any | null> {
+/** Reconstruct abstract from Semantic Scholar (abstract is plain text — passthrough). */
+function s2ExtractAbstract(abstract: string | null | undefined): string {
+     return abstract ?? "";
+}
+
+async function fetchS2PaperByDoi(doi: string): Promise<any | null> {
      try {
-          const res = await fetch(`${S2_BASE}/paper/${encodeURIComponent(paperId)}?fields=${S2_FIELDS}`, {
-               headers: { Accept: "application/json" },
-               signal: AbortSignal.timeout(15_000),
-          });
+          const headers: Record<string, string> = { Accept: "application/json" };
+          if (S2_API_KEY) headers["x-api-key"] = S2_API_KEY;
+          const res = await fetch(
+               `${S2_BASE}/paper/DOI:${encodeURIComponent(doi)}?fields=paperId,title,abstract,externalIds,year,authors,venue`,
+               { headers, signal: AbortSignal.timeout(15_000) },
+          );
           if (!res.ok) return null;
           return await res.json();
      } catch {
@@ -338,15 +345,17 @@ async function fetchS2Paper(paperId: string): Promise<any | null> {
 
 async function searchS2ByTitle(title: string): Promise<any | null> {
      try {
+          const headers: Record<string, string> = { Accept: "application/json" };
+          if (S2_API_KEY) headers["x-api-key"] = S2_API_KEY;
           const params = new URLSearchParams({
                query: title,
                limit: "1",
-               fields: S2_FIELDS,
+               fields: "paperId,title,abstract,externalIds,year,authors,venue",
           });
-          const res = await fetch(`${S2_BASE}/paper/search?${params}`, {
-               headers: { Accept: "application/json" },
-               signal: AbortSignal.timeout(15_000),
-          });
+          const res = await fetch(
+               `${S2_BASE}/paper/search?${params}`,
+               { headers, signal: AbortSignal.timeout(15_000) },
+          );
           if (!res.ok) return null;
           const data = await res.json();
           return data?.data?.[0] ?? null;
@@ -355,8 +364,8 @@ async function searchS2ByTitle(title: string): Promise<any | null> {
      }
 }
 
-function formatCitation(paper: any): string {
-     const authors = paper.authors?.map((a: any) => a.name) ?? [];
+function formatS2Citation(paper: any): string {
+     const authors = (paper.authors ?? []).map((a: any) => a.name).filter(Boolean);
      const authorStr =
           authors.length > 3
                ? `${authors.slice(0, 3).join(", ")} et al.`
@@ -364,7 +373,8 @@ function formatCitation(paper: any): string {
      const parts = [authorStr, paper.title];
      if (paper.venue) parts.push(paper.venue);
      if (paper.year) parts.push(String(paper.year));
-     if (paper.externalIds?.DOI) parts.push(`https://doi.org/${paper.externalIds.DOI}`);
+     const doi = paper.externalIds?.DOI;
+     if (doi) parts.push(`https://doi.org/${doi}`);
      return parts.filter(Boolean).join(". ") + ".";
 }
 

@@ -95,8 +95,6 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                     // Extract DOI from the URL when it's a doi.org link
                     const doiMatch = rp.url.match(/^https:\/\/doi\.org\/(.+)$/);
                     const doi = doiMatch ? decodeURIComponent(doiMatch[1]) : null;
-                    // Only store as semanticScholarId if it's a real S2 hash, not an OA id
-                    const s2Id = rp.paperId.startsWith("oa:") ? null : rp.paperId;
                     tx.insert(relatedPapers).values({
                          paperId: paperIdValue,
                          title: rp.title,
@@ -105,7 +103,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                          venue: rp.venue || null,
                          abstract: rp.snippet || null,
                          doi,
-                         semanticScholarId: s2Id,
+                         semanticScholarId: rp.paperId || null,
                          relevanceScore: rp.score,
                          bcScore: rp.bcScore,
                          ccScore: rp.ccScore,

@@ -229,7 +229,7 @@ export default function RelatedPapersPage() {
                                                             {rp.semanticScholarId && (
                                                                  <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-[#F8B692]/15 text-[#F8B692] border border-[#F8B692]/20 font-medium">
                                                                       <Globe className="w-2.5 h-2.5" />
-                                                                      Semantic Scholar
+                                                                      S2
                                                                  </span>
                                                             )}
                                                             <div className="ml-auto flex items-center gap-1">

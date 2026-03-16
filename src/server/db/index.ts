@@ -11,4 +11,20 @@ const db = drizzle(sqlite, {
      schema: schema,
 });
 
+// Ensure cache tables exist — these are created inline rather than via a
+// migration so they are available immediately without running drizzle-kit.
+sqlite.exec(`
+     CREATE TABLE IF NOT EXISTS paper_edge_cache (
+          paper_id TEXT PRIMARY KEY NOT NULL,
+          references_json TEXT,
+          citations_json TEXT,
+          fetched_at INTEGER NOT NULL
+     );
+     CREATE TABLE IF NOT EXISTS paper_metadata_cache (
+          paper_id TEXT PRIMARY KEY NOT NULL,
+          data_json TEXT NOT NULL,
+          fetched_at INTEGER NOT NULL
+     );
+`);
+
 export default db;
