@@ -1,9 +1,13 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 const BASE = "https://api.semanticscholar.org/graph/v1";
-const MAX_REQUESTS_PER_SECOND = 1000;
-const TOP_N = 50;
-const RESOLVE_BATCH = 5;  // concurrent citation resolutions
-const FRONTIER_BATCH = 3; // concurrent depth-1 neighbour fetches
+const S2_API_KEY = process.env.S2_API_KEY;
+
+// Public tier: ~1 req/sec. API Key tier: ~100 req/sec (adjust based on your plan)
+const MAX_REQUESTS_PER_SECOND = S2_API_KEY ? 80 : 1;
+
+const TOP_N_DEFAULT = 50;
+const DEPTH_DEFAULT = 1;
+const FRONTIER_BATCH = S2_API_KEY ? 5 : 1; // concurrent neighbour fetches
 const MAX_EDGES = 500;    // cap refs/cits per paper (first page of API)
 
 const ACADEMIC_DOMAINS = [
@@ -34,6 +38,44 @@ const ACADEMIC_DOMAINS = [
 
 const METADATA_FIELDS = "paperId,title,abstract,url,externalIds,venue,year,authors";
 
+const OA_BASE = "https://api.openalex.org";
+const OA_EMAIL = process.env.OPENALEX_EMAIL; // optional — polite pool (higher rate limit)
+// Reduce slightly to avoid burst-limit rejection on long crawls.
+const OA_REQUESTS_PER_SECOND = OA_EMAIL ? 9 : 4;
+
+// Track S2 failures so we can fall back to OpenAlex automatically.
+let _s2unavailableUntil = 0;
+
+// Suppressed 429 count for OA — printed once at the end of each run.
+let _oa429Count = 0;
+const S2_BACKOFF_MS = 90_000; // 90 s back-off after a 429 / persistent 403
+
+// Disable the API key in-memory once it produces a 403 to prevent every
+// subsequent request burning two slots (keyed attempt + keyless retry).
+let _s2KeyDisabled = false;
+
+function disableS2Key(): void {
+     if (!_s2KeyDisabled) {
+          _s2KeyDisabled = true;
+          console.warn("[S2] API key disabled for this session (403 received) — falling back to public tier (1 req/s).");
+     }
+}
+
+function markS2Unavailable(): void {
+     if (_s2unavailableUntil > Date.now()) return; // already marked — don't spam / reset timer
+     _s2unavailableUntil = Date.now() + S2_BACKOFF_MS;
+     console.warn(`[S2] Marked unavailable — switching to OpenAlex for ${S2_BACKOFF_MS / 1000}s.`);
+}
+
+function s2IsAvailable(): boolean {
+     if (_s2unavailableUntil > Date.now()) return false;
+     if (_s2unavailableUntil > 0) {
+          console.log(`[S2] Back-off expired — S2 available again.`);
+          _s2unavailableUntil = 0;
+     }
+     return true;
+}
+
 // ── Public types ─────────────────────────────────────────────────────────────
 
 export enum GraphConstructionMethod {
@@ -63,10 +105,18 @@ export interface RelatedPapersResponse {
      pdfDoi?: string;
      seedPaperId?: string;
      rankedPapers: RankedPaper[];
-     /** Total papers in the candidate pool before top-N pruning */
+     /** Total papers in the candidate pool before any pruning */
      totalCandidates: number;
      /** Number of cited papers successfully resolved to Semantic Scholar IDs */
      resolvedCitations: number;
+}
+
+/** Configuration for snowball search algorithm. */
+export interface SnowballConfig {
+     depth?: number;
+     maxPapers?: number;
+     bcThreshold?: number;
+     ccThreshold?: number;
 }
 
 // ── Rate limiter ─────────────────────────────────────────────────────────────
@@ -93,15 +143,52 @@ class RateLimiter {
      }
 }
 
+// A secondary rate limiter enforcing public-tier speed (1 req/s).
+// Used after the API key is disabled so we don't blast the public tier
+// at the authenticated-tier rate (80 req/s).
+const _publicTierRl = new RateLimiter(1);
+
 // ── Semantic Scholar helpers ──────────────────────────────────────────────────
 
+if (S2_API_KEY) {
+     console.log(`[S2] API key loaded — using authenticated tier (${MAX_REQUESTS_PER_SECOND} req/s).`);
+} else {
+     console.log(`[S2] No API key found — using public tier (${MAX_REQUESTS_PER_SECOND} req/s).`);
+}
+
 async function s2get(path: string, rl: RateLimiter): Promise<any | null> {
-     await rl.throttle();
+     if (!s2IsAvailable()) return null;
+     const effectiveRl = _s2KeyDisabled ? _publicTierRl : rl;
+     await effectiveRl.throttle();
      try {
+          const headers: Record<string, string> = { Accept: "application/json" };
+          if (S2_API_KEY && !_s2KeyDisabled) headers["x-api-key"] = S2_API_KEY;
+
           const res = await fetch(`${BASE}${path}`, {
-               headers: { Accept: "application/json" },
+               headers,
                signal: AbortSignal.timeout(15_000),
           });
+
+          if (res.status === 429) {
+               markS2Unavailable();
+               return null;
+          }
+
+          if (res.status === 403 && S2_API_KEY && !_s2KeyDisabled) {
+               disableS2Key();
+               await _publicTierRl.throttle();
+               const fallback = await fetch(`${BASE}${path}`, {
+                    headers: { Accept: "application/json" },
+                    signal: AbortSignal.timeout(15_000),
+               });
+               if (!fallback.ok) {
+                    if (fallback.status === 403 || fallback.status === 429) markS2Unavailable();
+                    console.warn(`[s2get] Fallback Non-OK response: ${fallback.status} ${fallback.statusText} for path: ${path}`);
+                    return null;
+               }
+               return await fallback.json();
+          }
+
           if (!res.ok) {
                console.warn(`[s2get] Non-OK response: ${res.status} ${res.statusText} for path: ${path}`);
                return null;
@@ -114,14 +201,45 @@ async function s2get(path: string, rl: RateLimiter): Promise<any | null> {
 }
 
 async function s2post(path: string, body: unknown, rl: RateLimiter): Promise<any | null> {
-     await rl.throttle();
+     if (!s2IsAvailable()) return null;
+     const effectiveRl = _s2KeyDisabled ? _publicTierRl : rl;
+     await effectiveRl.throttle();
      try {
+          const headers: Record<string, string> = {
+               Accept: "application/json",
+               "Content-Type": "application/json",
+          };
+          if (S2_API_KEY && !_s2KeyDisabled) headers["x-api-key"] = S2_API_KEY;
+
           const res = await fetch(`${BASE}${path}`, {
                method: "POST",
-               headers: { Accept: "application/json", "Content-Type": "application/json" },
+               headers,
                body: JSON.stringify(body),
                signal: AbortSignal.timeout(30_000),
           });
+
+          if (res.status === 429) {
+               markS2Unavailable();
+               return null;
+          }
+
+          if (res.status === 403 && S2_API_KEY && !_s2KeyDisabled) {
+               disableS2Key();
+               await _publicTierRl.throttle();
+               const fallback = await fetch(`${BASE}${path}`, {
+                    method: "POST",
+                    headers: { Accept: "application/json", "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                    signal: AbortSignal.timeout(30_000),
+               });
+               if (!fallback.ok) {
+                    if (fallback.status === 403 || fallback.status === 429) markS2Unavailable();
+                    console.warn(`[s2post] Fallback Non-OK response: ${fallback.status} ${fallback.statusText} for path: ${path}`);
+                    return null;
+               }
+               return await fallback.json();
+          }
+
           if (!res.ok) {
                console.warn(`[s2post] Non-OK response: ${res.status} ${res.statusText} for path: ${path}`);
                return null;
@@ -166,17 +284,18 @@ async function resolveToId(term: string, isDoi: boolean, rl: RateLimiter): Promi
  *   references → papers this paper cites      (citedPaper field)
  *   citations  → papers that cite this paper  (citingPaper field)
  */
-async function fetchEdgeIds(
+async function s2FetchEdgeIds(
      paperId: string,
      edge: "references" | "citations",
      rl: RateLimiter,
-): Promise<Set<string>> {
+): Promise<Set<string> | null> {
      const ids = new Set<string>();
      const key = edge === "references" ? "citedPaper" : "citingPaper";
      const d = await s2get(
           `/paper/${encodeURIComponent(paperId)}/${edge}?fields=paperId&limit=${MAX_EDGES}`,
           rl,
      );
+     if (d === null) return null;
      for (const item of d?.data ?? []) {
           const id: string | undefined = item[key]?.paperId;
           if (id) ids.add(id);
@@ -192,6 +311,157 @@ async function batchMetadata(ids: string[], rl: RateLimiter): Promise<Map<string
           const data = await s2post(`/paper/batch?fields=${METADATA_FIELDS}`, { ids: batch }, rl);
           for (const p of data ?? []) {
                if (p?.paperId) result.set(p.paperId, p);
+          }
+     }
+     return result;
+}
+
+// ── OpenAlex helpers ─────────────────────────────────────────────────────────
+
+async function oaGet(path: string, rl: RateLimiter): Promise<any | null> {
+     await rl.throttle();
+     try {
+          const sep = path.includes("?") ? "&" : "?";
+          const url = OA_EMAIL
+               ? `${OA_BASE}${path}${sep}mailto=${encodeURIComponent(OA_EMAIL)}`
+               : `${OA_BASE}${path}`;
+          const res = await fetch(url, {
+               headers: { Accept: "application/json" },
+               signal: AbortSignal.timeout(15_000),
+          });
+          if (res.status === 429) {
+               _oa429Count++;
+               return null;
+          }
+          if (!res.ok) {
+               console.warn(`[oaGet] Non-OK response: ${res.status} for path: ${path}`);
+               return null;
+          }
+          return await res.json();
+     } catch (err) {
+          console.error(`[oaGet] Error for path: ${path}`, err);
+          return null;
+     }
+}
+
+/** Reconstruct abstract text from OpenAlex's inverted-index format. */
+function oaReconstructAbstract(inv: Record<string, number[]> | null | undefined): string {
+     if (!inv) return "";
+     const entries: [number, string][] = [];
+     for (const [word, positions] of Object.entries(inv)) {
+          for (const pos of positions) entries.push([pos, word]);
+     }
+     entries.sort((a, b) => a[0] - b[0]);
+     return entries.map(([, w]) => w).join(" ");
+}
+
+/** Normalise an OpenAlex work object to the same shape expected by the presentation helpers. */
+function oaNormalise(work: any, rawId: string): any {
+     const doi = work.doi?.replace("https://doi.org/", "");
+     const arxiv = work.ids?.arxiv
+          ? (work.ids.arxiv as string).replace("https://arxiv.org/abs/", "")
+          : undefined;
+     const pmid = work.ids?.pmid
+          ? String(work.ids.pmid).replace(/^https?:\/\/pubmed\.ncbi\.nlm\.nih\.gov\//, "")
+          : undefined;
+     return {
+          paperId: `oa:${rawId}`,
+          title: work.title,
+          abstract: oaReconstructAbstract(work.abstract_inverted_index),
+          url: work.primary_location?.landing_page_url ?? work.doi ?? "",
+          externalIds: {
+               ...(doi ? { DOI: doi } : {}),
+               ...(arxiv ? { ArXiv: arxiv } : {}),
+               ...(pmid ? { PubMed: pmid } : {}),
+          },
+          venue: work.primary_location?.source?.display_name,
+          year: work.publication_year,
+          authors: work.authorships?.map((a: any) => ({ name: a.author?.display_name ?? "" })) ?? [],
+     };
+}
+
+/** Resolve a DOI or title against OpenAlex. Returns the raw OA ID (e.g. "W2741809807"). */
+async function oaResolveSeed(
+     doi: string | undefined,
+     title: string,
+     rl: RateLimiter,
+): Promise<{ id: string; title?: string } | null> {
+     if (doi) {
+          const d = await oaGet(`/works/doi:${encodeURIComponent(doi)}?select=id,title`, rl);
+          if (d?.id) {
+               return {
+                    id: (d.id as string).replace("https://openalex.org/", ""),
+                    title: d.title,
+               };
+          }
+     }
+     const params = new URLSearchParams({ search: title, per_page: "3", select: "id,title" });
+     const d = await oaGet(`/works?${params}`, rl);
+     const results: any[] = d?.results ?? [];
+     if (!results.length) return null;
+     return {
+          id: (results[0].id as string).replace("https://openalex.org/", ""),
+          title: results[0].title,
+     };
+}
+
+async function oaFetchEdgeIds(
+     oaId: string, // raw OA ID without "oa:" prefix, e.g. "W2741809807"
+     edge: "references" | "citations",
+     rl: RateLimiter,
+): Promise<Set<string> | null> {
+     const ids = new Set<string>();
+     if (edge === "references") {
+          // referenced_works is embedded in the work object — single call
+          const d = await oaGet(`/works/${oaId}?select=referenced_works`, rl);
+          if (d === null) return null;
+          for (const ref of d?.referenced_works ?? []) {
+               const id = (ref as string).replace("https://openalex.org/", "");
+               if (id) ids.add(`oa:${id}`);
+          }
+     } else {
+          // Citations need cursor-based pagination
+          let cursor: string | undefined = "*";
+          let firstCall = true;
+          while (ids.size < MAX_EDGES && cursor) {
+               const params = new URLSearchParams({
+                    filter: `cites:${oaId}`,
+                    select: "id",
+                    per_page: "200",
+                    cursor,
+               });
+               const d = await oaGet(`/works?${params}`, rl);
+               if (d === null) {
+                    if (firstCall) return null;
+                    break; // keep partial results
+               }
+               firstCall = false;
+               for (const work of d?.results ?? []) {
+                    const id = (work.id as string).replace("https://openalex.org/", "");
+                    if (id) ids.add(`oa:${id}`);
+               }
+               cursor = d?.meta?.next_cursor ?? undefined;
+               if (!d?.results?.length) break;
+          }
+     }
+     return ids;
+}
+
+async function oaBatchMetadata(ids: string[], rl: RateLimiter): Promise<Map<string, any>> {
+     const result = new Map<string, any>();
+     const rawIds = ids.map((id) => id.replace(/^oa:/, ""));
+     for (let i = 0; i < rawIds.length; i += 200) {
+          const batch = rawIds.slice(i, i + 200);
+          const params = new URLSearchParams({
+               filter: `openalex:${batch.join("|")}`
+               , per_page: "200",
+               select: "id,title,abstract_inverted_index,doi,publication_year,primary_location,authorships,ids",
+          });
+          const d = await oaGet(`/works?${params}`, rl);
+          for (const work of d?.results ?? []) {
+               if (!work?.id) continue;
+               const rawId = (work.id as string).replace("https://openalex.org/", "");
+               result.set(`oa:${rawId}`, oaNormalise(work, rawId));
           }
      }
      return result;
@@ -226,151 +496,275 @@ function paperAuthors(p: any): string | undefined {
 // ── Core algorithm ────────────────────────────────────────────────────────────
 
 async function buildSnowballGraph(
-     terms: string[],
-     isDoiFlags: boolean[],
      pdfTitle: string,
      pdfDoi?: string,
-     rl: RateLimiter = new RateLimiter(MAX_REQUESTS_PER_SECOND),
+     config?: SnowballConfig,
+     s2Rl: RateLimiter = new RateLimiter(MAX_REQUESTS_PER_SECOND),
 ): Promise<RelatedPapersResponse> {
-     console.log(`[buildSnowballGraph] Starting for title: "${pdfTitle}", doi: ${pdfDoi ?? "none"}`);
+     const depth = config?.depth ?? DEPTH_DEFAULT;
+     const maxPapers = config?.maxPapers ?? TOP_N_DEFAULT;
+     const bcThreshold = config?.bcThreshold ?? 0;
+     const ccThreshold = config?.ccThreshold ?? 0;
+     const oaRl = new RateLimiter(OA_REQUESTS_PER_SECOND);
+
+     _oa429Count = 0; // reset per-run counter
+     console.log(`[buildSnowballGraph] Starting for title: "${pdfTitle}", depth: ${depth}, max: ${maxPapers}`);
+
      // ── Phase 1: Resolve seed paper ──────────────────────────────────────
-     // If we have a DOI, look it up directly for a canonical paperId + clean
-     // title from Semantic Scholar.  Fall back to title search when absent.
-     let seedPaperId: string | null = null;
+     // Try Semantic Scholar first (DOI then title). Fall back to OpenAlex if
+     // S2 is unavailable or returns no result.
+     let seedId: string | null = null; // either an S2 hash or "oa:Wxxx"
      let finalPdfTitle = pdfTitle;
 
-     if (pdfDoi) {
-          const seed = await s2get(
-               `/paper/DOI:${encodeURIComponent(pdfDoi)}?fields=paperId,title`,
-               rl,
-          );
-          if (seed?.paperId) {
-               seedPaperId = seed.paperId;
-               if (seed.title) finalPdfTitle = seed.title;
-          }
-     }
-     if (!seedPaperId) {
-          seedPaperId = await resolveToId(pdfTitle, false, rl);
-     }
-
-     console.log(`[Phase 1] Seed paper resolved to: ${seedPaperId ?? "null"}`);
-
-     // ── Phase 2: Resolve citations → R(seed) paper IDs ──────────────────
-     // Process in small concurrent batches to bound simultaneous requests.
-     const depth1Ids: string[] = [];
-     console.log(`[Phase 2] Resolving ${terms.length} citations...`);
-     for (let i = 0; i < terms.length; i += RESOLVE_BATCH) {
-          const ids = await Promise.all(
-               terms
-                    .slice(i, i + RESOLVE_BATCH)
-                    .map((t, j) => resolveToId(t, isDoiFlags[i + j] ?? false, rl)),
-          );
-          for (const id of ids) if (id) depth1Ids.push(id);
-          console.log(`[Phase 2] Progress: ${Math.min(i + RESOLVE_BATCH, terms.length)}/${terms.length} citations resolved.`);
-     }
-
-     const depth1Set = new Set(depth1Ids);
-     console.log(`[Phase 2] Resolved ${depth1Ids.length}/${terms.length} citations to Semantic Scholar IDs.`);
-
-     // ── Phase 3: Fetch C(seed) ────────────────────────────────────────────
-     // C(seed) = set of paper IDs that cite the seed paper.  Used for the
-     // co-citation scoring component.
-     const seedCits = seedPaperId
-          ? await fetchEdgeIds(seedPaperId, "citations", rl)
-          : new Set<string>();
-
-     console.log(`[Phase 3] Seed paper has ${seedCits.size} citations.`);
-
-     // ── Phase 4: Frontier loop ────────────────────────────────────────────
-     // For every depth-1 paper p, fetch:
-     //   refMap[p]  = R(p)  papers that p cites        (backward edges)
-     //   citMap[p]  = C(p)  papers that cite p         (forward edges)
-     // Each paper does two sequential API calls; up to FRONTIER_BATCH papers
-     // run concurrently, so the rate limiter slots 2×FRONTIER_BATCH calls
-     // per iteration.
-     const refMap = new Map<string, Set<string>>();
-     const citMap = new Map<string, Set<string>>();
-
-     console.log(`[Phase 4] Building frontier for ${depth1Ids.length} papers...`);
-     for (let i = 0; i < depth1Ids.length; i += FRONTIER_BATCH) {
-          await Promise.all(
-               depth1Ids.slice(i, i + FRONTIER_BATCH).map(async (pid) => {
-                    const refs = await fetchEdgeIds(pid, "references", rl);
-                    const cits = await fetchEdgeIds(pid, "citations", rl);
-                    refMap.set(pid, refs);
-                    citMap.set(pid, cits);
-               }),
-          );
-          console.log(`[Phase 4] Progress: ${Math.min(i + FRONTIER_BATCH, depth1Ids.length)}/${depth1Ids.length} frontier papers fetched.`);
-     }
-
-     // ── Phase 5: Build candidate pool ────────────────────────────────────
-     // Candidates = ∪ R(p) ∪ C(p) for p ∈ depth-1, minus depth-1 and seed.
-     const candidateSet = new Set<string>();
-     for (const map of [refMap, citMap]) {
-          for (const ids of map.values()) {
-               for (const id of ids) {
-                    if (!depth1Set.has(id) && id !== seedPaperId) {
-                         candidateSet.add(id);
-                    }
+     if (s2IsAvailable()) {
+          if (pdfDoi) {
+               const seed = await s2get(`/paper/DOI:${encodeURIComponent(pdfDoi)}?fields=paperId,title`, s2Rl);
+               if (seed?.paperId) {
+                    seedId = seed.paperId;
+                    if (seed.title) finalPdfTitle = seed.title;
                }
           }
+          if (!seedId) seedId = await resolveToId(pdfTitle, false, s2Rl);
+          if (seedId) console.log(`[Phase 1] Seed resolved via Semantic Scholar: ${seedId}`);
      }
+
+     if (!seedId) {
+          console.log(`[Phase 1] S2 unavailable or no result — trying OpenAlex...`);
+          const oa = await oaResolveSeed(pdfDoi, pdfTitle, oaRl);
+          if (oa) {
+               seedId = `oa:${oa.id}`;
+               finalPdfTitle = oa.title ?? pdfTitle;
+               console.log(`[Phase 1] Seed resolved via OpenAlex: ${seedId}`);
+          }
+     }
+
+     if (!seedId) {
+          console.warn(`[buildSnowballGraph] Could not resolve seed paper on S2 or OpenAlex.`);
+          return {
+               pdfTitle: finalPdfTitle,
+               pdfDoi,
+               seedPaperId: undefined,
+               rankedPapers: [],
+               totalCandidates: 0,
+               resolvedCitations: 0,
+          } satisfies RelatedPapersResponse;
+     }
+
+     // Provider-dispatched edge fetch: routes to the correct API based on ID prefix.
+     const fetchEdge = (id: string, edge: "references" | "citations") =>
+          id.startsWith("oa:")
+               ? oaFetchEdgeIds(id.slice(3), edge, oaRl)
+               : s2FetchEdgeIds(id, edge, s2Rl);
+
+     // ── Phase 2: Fetch R(seed) ────────────────────────────────────────────
+     console.log(`[Phase 2] Fetching references for seed ${seedId}...`);
+     const initialSet = await fetchEdge(seedId, "references") ?? new Set<string>();
+     const initialIds = Array.from(initialSet);
+     console.log(`[Phase 2] Found ${initialIds.length} references.`);
+
+     // ── Phase 3: Fetch C(seed) ────────────────────────────────────────────
+     const seedCits = await fetchEdge(seedId, "citations") ?? new Set<string>();
+     console.log(`[Phase 3] Seed paper has ${seedCits.size} citations.`);
+
+     // ── Phase 4: Frontier expansion ──────────────────────────────────────
+     //
+     // The candidate pool grows layer by layer outward from the seed:
+     //   depth=1 → A∪B (direct refs and citers of seed)
+     //   depth=2 → A∪B∪AA∪AB∪BA∪BB, etc.
+     //
+     // For each candidate layer we crawl their refs+cits so we can compute:
+     //   BC(X) = |refs(X) ∩ A|        (bibliographic coupling with seed)
+     //   CC(X) = |citers(X) ∩ B|      (co-citation with seed)
+     //
+     // Layer 0 = {seed}. Layer 1 = A∪B. The loop adds one layer per depth step.
+     let currentLayer = new Set([...initialIds, ...Array.from(seedCits)]);
+     currentLayer.delete(seedId);
+     const visited = new Set<string>();
+     const refMap = new Map<string, Set<string>>();
+     const citMap = new Map<string, Set<string>>();
+     const failedEdges = new Map<string, Set<"references" | "citations">>();
+     const MAX_EDGE_RETRIES = 3;
+
+     // BC/CC normalisers are fixed (depend only on A and B, not the crawl depth).
+     const bcNorm = Math.max(initialSet.size, 1);
+     const ccNorm = Math.max(seedCits.size, 1);
+
+     // Scores accumulated one layer at a time so that depth-1 results are
+     // locked in before the depth-2 crawl starts. A paper's BC/CC depends
+     // only on A and B (both fixed after Phases 2-3), so scores are final
+     // as soon as that paper's own edges are known — scoring layer-by-layer
+     // is mathematically equivalent to scoring everything at the end, but
+     // prevents transient API failures in later layers from silently zeroing
+     // out scores for depth-1 winners.
+     const allScored: Array<{ paperId: string; bcScore: number; ccScore: number; score: number }> = [];
+     const scoredSet = new Set<string>(); // guards against cross-layer duplicates
+
+     for (let d = 0; d < depth; d++) {
+          console.log(`[Phase 4] Crawling layer ${d + 1}/${depth} (${currentLayer.size} papers)...`);
+          const toFetch = Array.from(currentLayer).filter((id) => !visited.has(id));
+          for (let i = 0; i < toFetch.length; i += FRONTIER_BATCH) {
+               await Promise.all(
+                    toFetch.slice(i, i + FRONTIER_BATCH).map(async (pid) => {
+                         const refs = await fetchEdge(pid, "references");
+                         const cits = await fetchEdge(pid, "citations");
+                         if (refs !== null) refMap.set(pid, refs);
+                         if (cits !== null) citMap.set(pid, cits);
+                         if (refs === null || cits === null) {
+                              const failed = new Set<"references" | "citations">();
+                              if (refs === null) failed.add("references");
+                              if (cits === null) failed.add("citations");
+                              failedEdges.set(pid, failed);
+                         }
+                         visited.add(pid);
+                    }),
+               );
+          }
+
+          // Retry failed edge fetches before scoring or expanding to the next layer.
+          // This ensures retries happen while results are still fresh and before
+          // depth-1 scores are committed.
+          for (let attempt = 1; attempt <= MAX_EDGE_RETRIES && failedEdges.size > 0; attempt++) {
+               // If S2 is in backoff, wait for it to expire rather than burning retries immediately.
+               if (_s2unavailableUntil > Date.now()) {
+                    const waitMs = _s2unavailableUntil - Date.now();
+                    console.log(`[Phase 4] S2 backoff active — waiting ${Math.ceil(waitMs / 1000)}s before retry ${attempt}/${MAX_EDGE_RETRIES}...`);
+                    await new Promise((r) => setTimeout(r, waitMs));
+                    _s2unavailableUntil = 0;
+               } else {
+                    // Brief pause for transient errors (network hiccup, OA throttle, etc.)
+                    await new Promise((r) => setTimeout(r, 5_000));
+               }
+               console.log(`[Phase 4] Retry ${attempt}/${MAX_EDGE_RETRIES}: ${failedEdges.size} papers with failed edges...`);
+               const retryEntries = Array.from(failedEdges.entries());
+               for (let j = 0; j < retryEntries.length; j += FRONTIER_BATCH) {
+                    await Promise.all(
+                         retryEntries.slice(j, j + FRONTIER_BATCH).map(async ([pid, edges]) => {
+                              if (edges.has("references")) {
+                                   const r = await fetchEdge(pid, "references");
+                                   if (r !== null) { refMap.set(pid, r); edges.delete("references"); }
+                              }
+                              if (edges.has("citations")) {
+                                   const c = await fetchEdge(pid, "citations");
+                                   if (c !== null) { citMap.set(pid, c); edges.delete("citations"); }
+                              }
+                              if (edges.size === 0) failedEdges.delete(pid);
+                         }),
+                    );
+               }
+          }
+
+          // Remove fully-failed papers (no edges resolved at all) from visited.
+          let removedCount = 0;
+          for (const [pid] of Array.from(failedEdges.entries())) {
+               if (!refMap.has(pid) && !citMap.has(pid)) {
+                    visited.delete(pid);
+                    failedEdges.delete(pid);
+                    removedCount++;
+               }
+          }
+          if (removedCount > 0) {
+               console.warn(`[Phase 4] Layer ${d + 1}: ${removedCount} fully-failed papers excluded from candidates.`);
+          }
+          if (failedEdges.size > 0) {
+               console.warn(`[Phase 4] Layer ${d + 1}: ${failedEdges.size} papers with partial edge failures (scored conservatively with 0 for missing component).`);
+          }
+
+          // ── Score this layer immediately ──────────────────────────────────
+          let layerScoredCount = 0;
+          for (const c of currentLayer) {
+               if (!visited.has(c) || scoredSet.has(c) || c === seedId) continue;
+               const refs = refMap.get(c);
+               let bcOverlap = 0;
+               if (refs) {
+                    for (const r of refs) {
+                         if (initialSet.has(r)) bcOverlap++;
+                    }
+               }
+               const cits = citMap.get(c);
+               let ccOverlap = 0;
+               if (cits) {
+                    for (const ci of cits) {
+                         if (seedCits.has(ci)) ccOverlap++;
+                    }
+               }
+               const bcScore = bcOverlap / bcNorm;
+               const ccScore = ccOverlap / ccNorm;
+               allScored.push({ paperId: c, bcScore, ccScore, score: 0.5 * bcScore + 0.5 * ccScore });
+               scoredSet.add(c);
+               layerScoredCount++;
+          }
+          console.log(`[Phase 4] Layer ${d + 1} scored ${layerScoredCount} candidates (running total: ${allScored.length}).`);
+
+          if (d < depth - 1) {
+               // Expand to the next layer: everything discovered so far not yet visited.
+               const nextLayer = new Set<string>();
+               for (const pid of currentLayer) {
+                    refMap.get(pid)?.forEach((id) => nextLayer.add(id));
+                    citMap.get(pid)?.forEach((id) => nextLayer.add(id));
+               }
+               visited.forEach((id) => nextLayer.delete(id));
+               nextLayer.delete(seedId);
+               currentLayer = nextLayer;
+               if (currentLayer.size === 0) break;
+          }
+     }
+
+     // ── Phase 5: Candidate pool size ──────────────────────────────────────
+     const candidateSet = scoredSet;
 
      console.log(`[Phase 5] Candidate pool size: ${candidateSet.size}`);
 
-     // ── Phase 6: Score candidates ─────────────────────────────────────────
-     const bcHits = new Map<string, number>();
-     const ccHits = new Map<string, number>();
-
-     for (const cits of citMap.values()) {
-          for (const c of cits) {
-               if (candidateSet.has(c)) bcHits.set(c, (bcHits.get(c) ?? 0) + 1);
-          }
-     }
-     for (const refs of refMap.values()) {
-          for (const c of refs) {
-               if (candidateSet.has(c)) ccHits.set(c, (ccHits.get(c) ?? 0) + 1);
-          }
-     }
-
-     const rSeedSize = Math.max(depth1Ids.length, 1); // guard against /0
-
-     const scored = Array.from(candidateSet)
-          .map((c) => {
-               const bcOverlap = bcHits.get(c) ?? 0;
-               const ccOverlap = Math.min(
-                    (ccHits.get(c) ?? 0) + (seedCits.has(c) ? 1 : 0),
-                    rSeedSize, // clamp so a single paper cannot dominate
-               );
-               const bcScore = bcOverlap / rSeedSize;
-               const ccScore = ccOverlap / rSeedSize;
-               return { paperId: c, bcScore, ccScore, score: 0.5 * bcScore + 0.5 * ccScore };
-          })
+     // ── Phase 6: Filter, sort and take top-K ──────────────────────────────
+     //
+     // BC(X) = |refs(X) ∩ A| / |A|.  CC(X) = |citers(X) ∩ B| / |B|.
+     // Scores were committed per-layer above; we only need to filter and rank.
+     const scored = allScored
+          .filter((s) => s.bcScore >= bcThreshold && s.ccScore >= ccThreshold)
           .sort((a, b) => b.score - a.score);
 
-     const topK = scored.slice(0, TOP_N);
+     const topK = scored.slice(0, maxPapers);
 
-     console.log(`[Phase 6] Scored candidates. Top-N length: ${topK.length}`);
+     console.log(`[Phase 6] Scored candidates. Filtered: ${scored.length}, Top-K: ${topK.length}`);
 
      if (topK.length === 0) {
           console.warn(`[buildSnowballGraph] Zero results after phase 6.`);
           return {
                pdfTitle: finalPdfTitle,
                pdfDoi,
-               seedPaperId: seedPaperId ?? undefined,
+               seedPaperId: seedId,
                rankedPapers: [],
                totalCandidates: candidateSet.size,
-               resolvedCitations: depth1Ids.length,
+               resolvedCitations: initialIds.length,
           } satisfies RelatedPapersResponse;
      }
 
-     // ── Phase 7: Batch-fetch full metadata for top-N candidates ──────────
-     console.log(`[Phase 7] Fetching metadata for ${topK.length} papers...`);
-     const metadata = await batchMetadata(
-          topK.map((c) => c.paperId),
-          rl,
-     );
+     // ── Phase 7: Batch-fetch full metadata ────────────────────────────────
+     // IDs can be a mix of S2 hashes and "oa:xxx" strings — route each batch
+     // to its own API.
+     const topKIds = topK.map((c) => c.paperId);
+     const s2BatchIds = topKIds.filter((id) => !id.startsWith("oa:"));
+     const oaBatchIds = topKIds.filter((id) => id.startsWith("oa:"));
+
+     // If S2 is currently in backoff (e.g. from Phase 4 rate-limiting), wait
+     // for the timer to expire before attempting the metadata batch call.
+     if (s2BatchIds.length && !s2IsAvailable()) {
+          const waitMs = Math.max(0, _s2unavailableUntil - Date.now());
+          if (waitMs > 0) {
+               console.log(`[Phase 7] S2 in backoff — waiting ${Math.ceil(waitMs / 1000)}s before metadata fetch...`);
+               await new Promise<void>((r) => setTimeout(r, waitMs));
+               // Reset so s2IsAvailable() returns true
+               _s2unavailableUntil = 0;
+          }
+     }
+
+     console.log(`[Phase 7] Fetching metadata: ${s2BatchIds.length} via S2, ${oaBatchIds.length} via OpenAlex...`);
+
+     const [s2Meta, oaMeta] = await Promise.all([
+          s2BatchIds.length ? batchMetadata(s2BatchIds, s2Rl) : Promise.resolve(new Map<string, any>()),
+          oaBatchIds.length ? oaBatchMetadata(oaBatchIds, oaRl) : Promise.resolve(new Map<string, any>()),
+     ]);
+
+     const metadata = new Map<string, any>([...s2Meta, ...oaMeta]);
      console.log(`[Phase 7] Metadata fetched for ${metadata.size} papers.`);
 
      // ── Phase 8: Build the final ranked list ─────────────────────────────
@@ -402,15 +796,18 @@ async function buildSnowballGraph(
           ];
      });
 
+     if (_oa429Count > 0) {
+          console.warn(`[OpenAlex] ${_oa429Count} request(s) returned 429 (rate-limited) during this run.`);
+     }
      console.log(`[Phase 8] Final rankedPapers list size: ${rankedPapers.length}`);
 
      return {
           pdfTitle: finalPdfTitle,
           pdfDoi,
-          seedPaperId: seedPaperId ?? undefined,
+          seedPaperId: seedId,
           rankedPapers,
           totalCandidates: candidateSet.size,
-          resolvedCitations: depth1Ids.length,
+          resolvedCitations: initialIds.length,
      } satisfies RelatedPapersResponse;
 }
 
@@ -422,14 +819,13 @@ async function buildSnowballGraph(
  */
 export async function buildRelatedPapersGraph(
      method: GraphConstructionMethod,
-     terms: string[],
-     isDoiFlags: boolean[],
      pdfTitle: string,
      pdfDoi?: string,
+     config?: SnowballConfig,
 ): Promise<RelatedPapersResponse> {
      switch (method) {
           case GraphConstructionMethod.Snowball:
           default:
-               return buildSnowballGraph(terms, isDoiFlags, pdfTitle, pdfDoi);
+               return buildSnowballGraph(pdfTitle, pdfDoi, config);
      }
 }

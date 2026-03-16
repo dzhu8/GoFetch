@@ -63,7 +63,7 @@ const PaperCard = ({ paper, rank }: { paper: RankedPaper; rank: number }) => (
 
           {/* Title */}
           <a
-               href={paper.url || `https://www.semanticscholar.org/paper/${paper.paperId}`}
+               href={paper.url || (paper.paperId.startsWith("oa:") ? `https://openalex.org/${paper.paperId.slice(3)}` : `https://www.semanticscholar.org/paper/${paper.paperId}`)}
                target="_blank"
                rel="noopener noreferrer"
                className="inline-flex items-start gap-1.5 text-sm font-medium text-[#24A0ED] hover:underline leading-snug"
@@ -100,9 +100,11 @@ const RelatedPapersPanel = ({
 }) => {
      const seedUrl = data.pdfDoi
           ? `https://doi.org/${encodeURIComponent(data.pdfDoi)}`
-          : data.seedPaperId
-            ? `https://www.semanticscholar.org/paper/${data.seedPaperId}`
-            : null;
+          : data.seedPaperId?.startsWith("oa:")
+            ? `https://openalex.org/${data.seedPaperId.slice(3)}`
+            : data.seedPaperId
+              ? `https://www.semanticscholar.org/paper/${data.seedPaperId}`
+              : null;
 
      return (
           <div className="w-full space-y-2">

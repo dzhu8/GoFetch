@@ -3,7 +3,7 @@ import db from "@/server/db";
 import { papers, relatedPapers } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import fs from "fs";
-import { parseReferences, extractDocumentMetadata } from "@/lib/citations/parseReferences";
+import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import configManager from "@/server";
 import { buildRelatedPapersGraph, GraphConstructionMethod } from "@/lib/relatedPapers/graph";
 
@@ -67,29 +67,24 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
           const pdfTitle = meta.title ?? paper.title ?? paper.fileName;
           const pdfDoi = meta.doi ?? paper.doi ?? undefined;
 
-          const refs = parseReferences(ocrResult);
-          const terms = refs.map((r) => r.searchTerm);
-          const isDoiFlags = refs.map((r) => r.isDoi);
-
-          if (!terms.length) {
-               return NextResponse.json(
-                    { error: "No references found in paper OCR. Cannot build related-papers graph." },
-                    { status: 422 }
-               );
-          }
-
           // 3. Build the graph
           const method = configManager.getConfig(
                "personalization.graphConstructionMethod",
                GraphConstructionMethod.Snowball
           );
 
+          const snowballConfig = {
+               depth: configManager.getConfig("personalization.snowballDepth"),
+               maxPapers: configManager.getConfig("personalization.snowballMaxPapers"),
+               bcThreshold: configManager.getConfig("personalization.snowballBcThreshold"),
+               ccThreshold: configManager.getConfig("personalization.snowballCcThreshold"),
+          };
+
           const response = await buildRelatedPapersGraph(
                method,
-               terms,
-               isDoiFlags,
                pdfTitle,
-               pdfDoi
+               pdfDoi,
+               snowballConfig
           );
 
           // 4. Save to database (refreshing existing ones)
@@ -97,6 +92,11 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                tx.delete(relatedPapers).where(eq(relatedPapers.paperId, paperIdValue)).run();
 
                for (const rp of response.rankedPapers) {
+                    // Extract DOI from the URL when it's a doi.org link
+                    const doiMatch = rp.url.match(/^https:\/\/doi\.org\/(.+)$/);
+                    const doi = doiMatch ? decodeURIComponent(doiMatch[1]) : null;
+                    // Only store as semanticScholarId if it's a real S2 hash, not an OA id
+                    const s2Id = rp.paperId.startsWith("oa:") ? null : rp.paperId;
                     tx.insert(relatedPapers).values({
                          paperId: paperIdValue,
                          title: rp.title,
@@ -104,8 +104,8 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                          year: rp.year || null,
                          venue: rp.venue || null,
                          abstract: rp.snippet || null,
-                         doi: rp.domain === "doi.org" ? rp.paperId : null,
-                         semanticScholarId: rp.paperId,
+                         doi,
+                         semanticScholarId: s2Id,
                          relevanceScore: rp.score,
                          bcScore: rp.bcScore,
                          ccScore: rp.ccScore,

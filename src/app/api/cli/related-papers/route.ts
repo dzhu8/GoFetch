@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import configManager from "@/server";
 import { buildRelatedPapersGraph, GraphConstructionMethod } from "@/lib/relatedPapers/graph";
-import { parseReferences, extractDocumentMetadata } from "@/lib/citations/parseReferences";
+import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 
 // Allow enough time for OCR on large documents
 export const maxDuration = 1200;
@@ -154,17 +154,6 @@ export async function POST(req: NextRequest) {
           const pdfTitle = title ?? path.basename(pdfPath, ".pdf");
           const pdfDoi = doi ?? undefined;
 
-          const refs = parseReferences(ocrResult);
-          const terms = refs.map((r) => r.searchTerm);
-          const isDoiFlags = refs.map((r) => r.isDoi);
-
-          if (!terms.length) {
-               return NextResponse.json(
-                    { error: "No references found in the PDF. Cannot build related-papers graph." },
-                    { status: 422 },
-               );
-          }
-
           const activeMethod =
                method ??
                configManager.getConfig(
@@ -172,12 +161,18 @@ export async function POST(req: NextRequest) {
                     GraphConstructionMethod.Snowball,
                );
 
+          const snowballConfig = {
+               depth: configManager.getConfig("personalization.snowballDepth"),
+               maxPapers: configManager.getConfig("personalization.snowballMaxPapers"),
+               bcThreshold: configManager.getConfig("personalization.snowballBcThreshold"),
+               ccThreshold: configManager.getConfig("personalization.snowballCcThreshold"),
+          };
+
           const response = await buildRelatedPapersGraph(
                activeMethod,
-               terms,
-               isDoiFlags,
                pdfTitle,
                pdfDoi,
+               snowballConfig,
           );
 
           return NextResponse.json(response);

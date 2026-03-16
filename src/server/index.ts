@@ -36,6 +36,10 @@ class ConfigManager {
           },
           personalization: {
                graphConstructionMethod: "snowball",
+               snowballDepth: 2,
+               snowballMaxPapers: 50,
+               snowballBcThreshold: 0,
+               snowballCcThreshold: 0,
           },
           modelProviders: [],
           ollama: {
@@ -177,6 +181,56 @@ class ConfigManager {
                     description:
                          "Select the algorithm used to discover and rank related papers based on citations. Snowball uses depth-1 references and citations to build a candidate pool and ranks by bibliographic coupling and co-citation.",
                     default: "snowball",
+                    scope: "server",
+               },
+               {
+                    name: "Snowball Search Depth",
+                    key: "snowballDepth",
+                    type: "number",
+                    required: false,
+                    description: "Number of hops to follow in the citation graph. 1: direct refs/cits; 2: refs of refs, etc.",
+                    default: 2,
+                    min: 1,
+                    max: 3,
+                    placeholder: "2",
+                    scope: "server",
+               },
+               {
+                    name: "Max Related Papers",
+                    key: "snowballMaxPapers",
+                    type: "number",
+                    required: false,
+                    description: "Maximum number of related papers to return in total.",
+                    default: 50,
+                    min: 1,
+                    max: 200,
+                    placeholder: "50",
+                    scope: "server",
+               },
+               {
+                    name: "Bibliographic Coupling (BC) Threshold",
+                    key: "snowballBcThreshold",
+                    type: "number",
+                    required: false,
+                    description: "Minimum normalized BC score (0-1) for a paper to be included. 0 means no threshold.",
+                    default: 0,
+                    min: 0,
+                    max: 1,
+                    step: 0.01,
+                    placeholder: "0",
+                    scope: "server",
+               },
+               {
+                    name: "Co-Citation (CC) Threshold",
+                    key: "snowballCcThreshold",
+                    type: "number",
+                    required: false,
+                    description: "Minimum normalized CC score (0-1) for a paper to be included. 0 means no threshold.",
+                    default: 0,
+                    min: 0,
+                    max: 1,
+                    step: 0.01,
+                    placeholder: "0",
                     scope: "server",
                },
                {
@@ -360,6 +414,18 @@ class ConfigManager {
           }
           if (this.currentConfig.personalization.graphConstructionMethod === undefined) {
                this.currentConfig.personalization.graphConstructionMethod = "snowball";
+          }
+          if (this.currentConfig.personalization.snowballDepth === undefined) {
+               this.currentConfig.personalization.snowballDepth = 2;
+          }
+          if (this.currentConfig.personalization.snowballMaxPapers === undefined) {
+               this.currentConfig.personalization.snowballMaxPapers = 50;
+          }
+          if (this.currentConfig.personalization.snowballBcThreshold === undefined) {
+               this.currentConfig.personalization.snowballBcThreshold = 0;
+          }
+          if (this.currentConfig.personalization.snowballCcThreshold === undefined) {
+               this.currentConfig.personalization.snowballCcThreshold = 0;
           }
           if (this.currentConfig.preferences.cliFolderWatcher === undefined) {
                this.currentConfig.preferences.cliFolderWatcher = false;

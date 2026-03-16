@@ -4,7 +4,7 @@ import { useRef, useState, Fragment } from "react";
 import { FileText, Loader2, X, AlertCircle } from "lucide-react";
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import { toast } from "sonner";
-import { parseReferences, extractDocumentMetadata } from "@/lib/citations/parseReferences";
+import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import { useChat } from "@/lib/chat/Chat";
 import { sendSystemNotification } from "@/lib/utils";
 
@@ -101,25 +101,13 @@ const GetRelatedPapers = () => {
                // Use only first 7 words for notification title to fit comfortably
                const shortTitle = pdfTitle.split(/\s+/).slice(0, 7).join(" ") + (pdfTitle.split(/\s+/).length > 7 ? "..." : "");
 
-               //  Parse references from the OCR output 
-               setStatusMessage("Parsing citations");
-               const references = parseReferences(ocrResult);
-
-               if (references.length === 0) {
-                    toast.info("No citations (reference_content blocks) found in this PDF.");
-                    return;
-               }
-
-               const terms = references.map((r) => r.searchTerm);
-               const isDoiFlags = references.map((r) => r.isDoi);
-
-               //  Search for related papers 
-               setStatusMessage(`Searching ${terms.length} citation terms`);
+               //  Search for related papers via Semantic Scholar 
+               setStatusMessage("Searching for related papers");
 
                const searchRes = await fetch("/api/related-papers", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ terms, isDoiFlags, pdfTitle, pdfDoi }),
+                    body: JSON.stringify({ pdfTitle, pdfDoi }),
                });
 
                if (!searchRes.ok) {
@@ -130,11 +118,12 @@ const GetRelatedPapers = () => {
                const searchData = await searchRes.json();
 
                //  Add results to chat and navigate 
+               const paperCount = searchData.rankedPapers?.length ?? 0;
                addRelatedPapers(searchData);
                window.history.replaceState(null, "", `/c/${chatId}`);
-               toast.success(`Found related papers for ${references.length} citations`);
+               toast.success(`Found ${paperCount} related paper${paperCount === 1 ? "" : "s"}`);
                sendSystemNotification(`PDF ${shortTitle} has been successfully uploaded.`, {
-                    body: `Found ${references.length} related citation${references.length === 1 ? "" : "s"}.`,
+                    body: `Found ${paperCount} related paper${paperCount === 1 ? "" : "s"}.`,
                });
           } catch (err) {
                const msg = err instanceof Error ? err.message : "Related papers extraction failed";

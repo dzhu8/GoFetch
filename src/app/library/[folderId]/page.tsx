@@ -519,7 +519,7 @@ function PaperCard({
                               disabled={isComputingRelated}
                               className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200 disabled:opacity-50"
                               aria-label="Compute related papers"
-                              title="Compute/Update related papers"
+                              title="Related papers"
                          >
                               {isComputingRelated ? (
                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
