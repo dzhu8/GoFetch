@@ -58,6 +58,7 @@ export default function RelatedPapersPage() {
 
      const [paper, setPaper] = useState<PaperInfo | null>(null);
      const [relatedPapers, setRelatedPapers] = useState<RelatedPaper[]>([]);
+     const [rankMethod, setRankMethod] = useState<string>("bibliographic");
      const [isLoading, setIsLoading] = useState(true);
      const [isComputing, setIsComputing] = useState(false);
      const [error, setError] = useState<string | null>(null);
@@ -79,6 +80,7 @@ export default function RelatedPapersPage() {
                if (!rpRes.ok) throw new Error("Failed to fetch related papers");
                const rpData = await rpRes.json();
                setRelatedPapers(rpData.relatedPapers ?? []);
+               setRankMethod(rpData.rankMethod ?? "bibliographic");
           } catch (err) {
                setError(err instanceof Error ? err.message : "Failed to load related papers");
           } finally {
@@ -210,8 +212,14 @@ export default function RelatedPapersPage() {
                                         {relatedPapers.length} related paper{relatedPapers.length !== 1 ? "s" : ""}
                                    </p>
                                    <p className="text-[10px] text-black/40 dark:text-white/40 mb-3 ml-0.5">
-                                        Scores: <span className="font-mono">BC</span> = bibliographic coupling &nbsp;·&nbsp;{" "}
-                                        <span className="font-mono">CC</span> = co-citation
+                                        {rankMethod === "embedding" ? (
+                                             <span className="font-mono text-[#F8B692]">Ranked by Semantic Similarity</span>
+                                        ) : (
+                                             <>
+                                                  Scores: <span className="font-mono">BC</span> = bibliographic coupling &nbsp;·&nbsp;{" "}
+                                                  <span className="font-mono">CC</span> = co-citation
+                                             </>
+                                        )}
                                    </p>
                                    <div className="rounded-2xl border border-light-200 dark:border-dark-200 divide-y divide-light-200/60 dark:divide-dark-200/60 bg-light-secondary dark:bg-dark-secondary overflow-hidden">
                                         {relatedPapers.map((rp, i) => {
@@ -233,19 +241,23 @@ export default function RelatedPapersPage() {
                                                                  </span>
                                                             )}
                                                             <div className="ml-auto flex items-center gap-1">
-                                                                 {rp.bcScore != null && (
-                                                                      <ScoreBadge
-                                                                           score={rp.bcScore}
-                                                                           type="BC"
-                                                                           label={`Bibliographic coupling: ${Math.round(rp.bcScore * 100)}%`}
-                                                                      />
-                                                                 )}
-                                                                 {rp.ccScore != null && (
-                                                                      <ScoreBadge
-                                                                           score={rp.ccScore}
-                                                                           type="CC"
-                                                                           label={`Co-citation: ${Math.round(rp.ccScore * 100)}%`}
-                                                                      />
+                                                                 {rankMethod !== "embedding" && (
+                                                                      <>
+                                                                           {rp.bcScore != null && (
+                                                                                <ScoreBadge
+                                                                                     score={rp.bcScore}
+                                                                                     type="BC"
+                                                                                     label={`Bibliographic coupling: ${Math.round(rp.bcScore * 100)}%`}
+                                                                                />
+                                                                           )}
+                                                                           {rp.ccScore != null && (
+                                                                                <ScoreBadge
+                                                                                     score={rp.ccScore}
+                                                                                     type="CC"
+                                                                                     label={`Co-citation: ${Math.round(rp.ccScore * 100)}%`}
+                                                                                />
+                                                                           )}
+                                                                      </>
                                                                  )}
                                                             </div>
                                                        </div>

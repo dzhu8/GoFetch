@@ -1,6 +1,10 @@
 import db from "@/server/db";
 import { paperEdgeCache, paperMetadataCache } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
+import configManager from "@/server/index";
+import modelRegistry from "@/server/providerRegistry";
+import { Buffer } from "node:buffer";
+import { getEmbeddings, cosineSimilarity } from "./abstractEmbedding";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const S2_BASE = "https://api.semanticscholar.org/graph/v1";
@@ -84,16 +88,41 @@ function metaCacheGet(paperId: string): any | null {
      try {
           const row = db.select().from(paperMetadataCache).where(eq(paperMetadataCache.paperId, paperId)).get();
           if (!row || Date.now() - row.fetchedAt > CACHE_TTL_MS) return null;
-          return JSON.parse(row.dataJson);
+          const data = JSON.parse(row.dataJson);
+          // Attach cached embedding if available and from the correct model
+          const defaultModel = configManager.getConfig("preferences.defaultEmbeddingModel");
+          const modelKey = typeof defaultModel === "object" ? defaultModel?.modelKey : null;
+          if (row.embedding && row.embeddingModel === modelKey) {
+               data._cachedEmbedding = Array.from(new Float32Array((row.embedding as Buffer).buffer, (row.embedding as Buffer).byteOffset, (row.embedding as Buffer).byteLength / 4));
+          }
+          return data;
      } catch { return null; }
 }
 
 function metaCacheSet(paperId: string, data: any): void {
      try {
           const now = Date.now();
+          const defaultModel = configManager.getConfig("preferences.defaultEmbeddingModel");
+          const modelKey = typeof defaultModel === "object" ? defaultModel?.modelKey : null;
+
+          const values: any = {
+               paperId,
+               dataJson: JSON.stringify(data),
+               abstract: data.abstract || null,
+               fetchedAt: now,
+          };
+
+          if (data._cachedEmbedding && modelKey) {
+               values.embedding = Buffer.from(new Float32Array(data._cachedEmbedding).buffer);
+               values.embeddingModel = modelKey;
+          }
+
           db.insert(paperMetadataCache)
-               .values({ paperId, dataJson: JSON.stringify(data), fetchedAt: now })
-               .onConflictDoUpdate({ target: paperMetadataCache.paperId, set: { dataJson: JSON.stringify(data), fetchedAt: now } })
+               .values(values)
+               .onConflictDoUpdate({
+                    target: paperMetadataCache.paperId,
+                    set: values,
+               })
                .run();
      } catch { /* non-fatal */ }
 }
@@ -237,16 +266,16 @@ async function s2ResolveSeed(
      doi: string | undefined,
      title: string,
      rl: RateLimiter,
-): Promise<{ id: string; title?: string } | null> {
+): Promise<{ id: string; title?: string; abstract?: string } | null> {
      if (doi) {
-          const d = await s2Get(`/paper/DOI:${encodeURIComponent(doi)}?fields=paperId,title`, rl);
-          if (d?.paperId) return { id: d.paperId, title: d.title };
+          const d = await s2Get(`/paper/DOI:${encodeURIComponent(doi)}?fields=paperId,title,abstract`, rl);
+          if (d?.paperId) return { id: d.paperId, title: d.title, abstract: d.abstract };
      }
-     const params = new URLSearchParams({ query: title, limit: "3", fields: "paperId,title" });
+     const params = new URLSearchParams({ query: title, limit: "3", fields: "paperId,title,abstract" });
      const d = await s2Get(`/paper/search/match?${params}`, rl);
      const results: any[] = d?.data ?? [];
      if (!results.length) return null;
-     return { id: results[0].paperId, title: results[0].title };
+     return { id: results[0].paperId, title: results[0].title, abstract: results[0].abstract };
 }
 
 async function s2FetchEdgeIds(
@@ -513,12 +542,17 @@ async function buildSnowballGraph(
      console.log(`[Phase 5] Candidate pool size: ${candidateSet.size}`);
 
      // ── Phase 6: Filter, sort and take top-K ──────────────────────────────
+     const rankMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
+     // If embedding, we take a larger pool (1000) to find best semantic matches.
+     // Otherwise, we take the final maxPapers (default 50).
+     const initialLimit = rankMethod === "embedding" ? 1000 : maxPapers;
+
      const scored = allScored
           .filter((s) => s.bcScore >= bcThreshold && s.ccScore >= ccThreshold)
           .sort((a, b) => b.score - a.score);
 
-     const topK = scored.slice(0, maxPapers);
-     console.log(`[Phase 6] Scored candidates. Filtered: ${scored.length}, Top-K: ${topK.length}`);
+     const topK = scored.slice(0, initialLimit);
+     console.log(`[Phase 6] Scored candidates. Filtered: ${scored.length}, Initial Slice: ${topK.length} (Method: ${rankMethod})`);
 
      if (topK.length === 0) {
           console.warn(`[buildSnowballGraph] Zero results after phase 6.`);
@@ -546,7 +580,7 @@ async function buildSnowballGraph(
      );
 
      // ── Phase 8: Build the final ranked list ─────────────────────────────
-     const rankedPapers: RankedPaper[] = topK.flatMap((cand) => {
+     let rankedPapers: RankedPaper[] = topK.flatMap((cand) => {
           const p = metadata.get(cand.paperId);
           if (!p?.title) {
                console.warn(`[Phase 8] No metadata/title for paper: ${cand.paperId}`);
@@ -574,10 +608,95 @@ async function buildSnowballGraph(
           ];
      });
 
+     // ── Optional Phase 9: Embedding-based ranking ────────────────────────
+     if (rankMethod === "embedding") {
+          console.log(`[Phase 9] Re-ranking ${rankedPapers.length} candidates using embeddings...`);
+          const seedPaper = await s2ResolveSeed(pdfDoi, pdfTitle, s2Rl);
+          const seedAbstract = seedPaper?.abstract;
+
+          if (seedAbstract) {
+               // 1. Get seed embedding
+               const seedEmbedResult = await getEmbeddings([seedAbstract]);
+               if (seedEmbedResult) {
+                    const seedVector = seedEmbedResult[0];
+
+                    // 2. Identify abstracts needing embedding
+                    const toEmbedIndices: number[] = [];
+                    const abstracts: string[] = [];
+
+                    for (let i = 0; i < rankedPapers.length; i++) {
+                         const rp = rankedPapers[i];
+                         const meta = metadata.get(rp.paperId);
+                         if (meta?._cachedEmbedding) {
+                              rp.score = cosineSimilarity(seedVector, meta._cachedEmbedding);
+                         } else if (meta?.abstract) {
+                              toEmbedIndices.push(i);
+                              abstracts.push(meta.abstract);
+                         } else {
+                              rp.score = 0; // No abstract = no similarity
+                         }
+                    }
+
+                    // 3. Batch embed missing ones
+                    if (abstracts.length > 0) {
+                         const batchResults = await getEmbeddings(abstracts);
+                         if (batchResults) {
+                              for (let i = 0; i < batchResults.length; i++) {
+                                   const rpIndex = toEmbedIndices[i];
+                                   const vector = batchResults[i];
+                                   const score = cosineSimilarity(seedVector, vector);
+                                   rankedPapers[rpIndex].score = score;
+
+                                   // Update cache with these new embeddings
+                                   const rpId = rankedPapers[rpIndex].paperId;
+                                   const meta = metadata.get(rpId);
+                                   if (meta) {
+                                        meta._cachedEmbedding = vector;
+                                        metaCacheSet(rpId, meta);
+                                   }
+                              }
+                         }
+                    }
+
+                    // 4. Filter by threshold (using normalized similarity for filtering)
+                    // and sort by embedding score
+                    const embedThreshold = configManager.getConfig("personalization.snowballEmbeddingThreshold") || 0;
+                    
+                    // Re-sort by embedding score first to get the true strongest semantic matches
+                    rankedPapers = rankedPapers.sort((a, b) => b.score - a.score);
+
+                    // 5. Normalize scores: [lowest_sim, highest_sim] -> [0, 1]
+                    const similarities = rankedPapers.map(p => p.score);
+                    const minSim = Math.min(...similarities);
+                    const maxSim = Math.max(...similarities);
+                    const range = maxSim - minSim;
+
+                    if (range > 0) {
+                         for (const rp of rankedPapers) {
+                              rp.score = (rp.score - minSim) / range;
+                         }
+                    }
+
+                    // Final filter by threshold and slice to user's maxPapers
+                    rankedPapers = rankedPapers
+                         .filter(p => p.score >= embedThreshold)
+                         .slice(0, maxPapers);
+                    
+                    // Since the user wants to remove BC/CC from display when using embeddings,
+                    // we can zero them out here so the API doesn't return them as meaningful values.
+                    // (They will be hidden in the UI anyway based on the next change).
+                    for (const rp of rankedPapers) {
+                        rp.bcScore = 0;
+                        rp.ccScore = 0;
+                    }
+               }
+          }
+     }
+
      if (_s2429Count > 0) {
           console.warn(`[S2] ${_s2429Count} request(s) returned 429 (rate-limited) during this run.`);
      }
-     console.log(`[Phase 8] Final rankedPapers list size: ${rankedPapers.length}`);
+     console.log(`[Phase 8/9] Final rankedPapers list size: ${rankedPapers.length}`);
 
      return {
           pdfTitle: finalPdfTitle,

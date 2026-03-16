@@ -287,6 +287,9 @@ export const paperEdgeCache = sqliteTable("paper_edge_cache", {
 export const paperMetadataCache = sqliteTable("paper_metadata_cache", {
      paperId: text("paper_id").primaryKey(),
      dataJson: text("data_json").notNull(),
+     abstract: text("abstract"), // Explicit abstract field for embedding cache
+     embedding: blob("embedding"), // Store the abstract embedding vector
+     embeddingModel: text("embedding_model"), // Track which model generated the vector
      fetchedAt: integer("fetched_at").notNull(),
 });
 

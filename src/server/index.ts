@@ -36,10 +36,12 @@ class ConfigManager {
           },
           personalization: {
                graphConstructionMethod: "snowball",
+               graphRankMethod: "bibliographic",
                snowballDepth: 2,
                snowballMaxPapers: 50,
                snowballBcThreshold: 0,
                snowballCcThreshold: 0,
+               snowballEmbeddingThreshold: 0,
           },
           modelProviders: [],
           ollama: {
@@ -184,6 +186,20 @@ class ConfigManager {
                     scope: "server",
                },
                {
+                    name: "Related Papers Ranking Method",
+                    key: "graphRankMethod",
+                    type: "select",
+                    options: [
+                         { name: "Bibliographic (BC/CC)", value: "bibliographic" },
+                         { name: "Embedding Score", value: "embedding" },
+                    ],
+                    required: false,
+                    description:
+                         "Choose how to rank the discovered related papers. Bibliographic uses citations; Embedding Score uses semantic similarity between abstracts.",
+                    default: "bibliographic",
+                    scope: "server",
+               },
+               {
                     name: "Snowball Search Depth",
                     key: "snowballDepth",
                     type: "number",
@@ -226,6 +242,19 @@ class ConfigManager {
                     type: "number",
                     required: false,
                     description: "Minimum normalized CC score (0-1) for a paper to be included. 0 means no threshold.",
+                    default: 0,
+                    min: 0,
+                    max: 1,
+                    step: 0.01,
+                    placeholder: "0",
+                    scope: "server",
+               },
+               {
+                    name: "Embedding Score Threshold",
+                    key: "snowballEmbeddingThreshold",
+                    type: "number",
+                    required: false,
+                    description: "Minimum normalized embedding similarity score (0-1) for a paper to be included. 0 means no threshold.",
                     default: 0,
                     min: 0,
                     max: 1,

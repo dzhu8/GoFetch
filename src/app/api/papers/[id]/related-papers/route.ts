@@ -27,7 +27,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                .where(eq(relatedPapers.paperId, paperId))
                .all();
 
-          return NextResponse.json({ relatedPapers: results });
+          const rankMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
+
+          return NextResponse.json({ 
+               relatedPapers: results,
+               rankMethod 
+          });
      } catch (error) {
           console.error("Error fetching related papers:", error);
           return NextResponse.json({ error: "Failed to fetch related papers" }, { status: 500 });
