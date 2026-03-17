@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePdfParseActions, usePdfParseJobs, PdfParseJob } from "./PdfParseProvider";
-import { FileText, Loader2, CheckCircle2, AlertCircle, X, ChevronDown, Ban } from "lucide-react";
+import { FileText, Loader2, CheckCircle2, AlertCircle, X, ChevronDown, Ban, CopyCheck, FolderSymlink } from "lucide-react";
 
 const MAX_VISIBLE = 5;
 
@@ -13,6 +13,10 @@ function getStatusIcon(status: PdfParseJob["status"]) {
                return <Loader2 className="w-4 h-4 animate-spin text-[#F8B692]" />;
           case "complete":
                return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+          case "duplicate":
+               return <FolderSymlink className="w-4 h-4 text-blue-500" />;
+          case "duplicate_same_folder":
+               return <CopyCheck className="w-4 h-4 text-amber-500" />;
           case "error":
                return <AlertCircle className="w-4 h-4 text-red-500" />;
           default:
@@ -28,6 +32,10 @@ function getLabel(status: PdfParseJob["status"]) {
                return "Running OCR";
           case "complete":
                return "Complete";
+          case "duplicate":
+               return "Already Processed";
+          case "duplicate_same_folder":
+               return "Already in Folder";
           case "error":
                return "Error";
           default:
@@ -83,6 +91,29 @@ export default function PdfParseToasts() {
                          <p className="mt-2 text-xs text-black/60 dark:text-white/60 truncate" title={job.message}>
                               {job.message}
                          </p>
+
+                         {/* Duplicate detail: show previous folder and title */}
+                         {job.status === "duplicate" && job.duplicateFolderName && (
+                              <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-2.5 py-1.5">
+                                   <FolderSymlink size={11} className="mt-0.5 shrink-0 text-blue-500" />
+                                   <p className="text-[11px] text-blue-600 dark:text-blue-400 leading-snug">
+                                        Previously in{" "}
+                                        <span className="font-semibold">&ldquo;{job.duplicateFolderName}&rdquo;</span>
+                                        {job.duplicateTitle && (
+                                             <> &mdash; <span className="italic">{job.duplicateTitle.length > 60 ? job.duplicateTitle.slice(0, 57) + "…" : job.duplicateTitle}</span></>
+                                        )}
+                                   </p>
+                              </div>
+                         )}
+
+                         {job.status === "duplicate_same_folder" && (
+                              <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2.5 py-1.5">
+                                   <CopyCheck size={11} className="mt-0.5 shrink-0 text-amber-500" />
+                                   <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
+                                        This paper is already in this folder. No changes were made.
+                                   </p>
+                              </div>
+                         )}
 
                          <div className="mt-2 flex items-center justify-between">
                               <p className="text-[10px] text-black/40 dark:text-white/40">

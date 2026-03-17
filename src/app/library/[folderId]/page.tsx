@@ -113,7 +113,7 @@ export default function FolderDetailPage() {
      const handleDelete = async (paperId: number) => {
           setDeletingId(paperId);
           try {
-               const res = await fetch(`/api/papers/${paperId}`, { method: "DELETE" });
+               const res = await fetch(`/api/papers/${paperId}?folderId=${folderId}`, { method: "DELETE" });
                if (!res.ok) throw new Error("Failed to delete paper");
                setPapers((prev) => prev.filter((p) => p.id !== paperId));
           } catch (error) {

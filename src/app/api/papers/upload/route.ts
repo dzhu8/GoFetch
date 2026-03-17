@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
+import { papers, libraryFolders, paperFolderLinks } from "@/server/db/schema";
+import { and, eq } from "drizzle-orm";
 import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -47,40 +47,71 @@ export async function POST(req: NextRequest) {
                return NextResponse.json({ error: "Folder not found" }, { status: 404 });
           }
 
-          // Save PDF to the folder's root path
           const sanitizedName = pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-          const pdfDestPath = path.join(folder.rootPath, sanitizedName);
           const pdfBuffer = Buffer.from(await pdf.arrayBuffer());
-          fs.writeFileSync(pdfDestPath, pdfBuffer);
 
-          // Create paper record with "uploading" status
-          const paperRow = db
-               .insert(papers)
-               .values({
-                    folderId,
-                    fileName: sanitizedName,
-                    filePath: pdfDestPath,
-                    status: "uploading",
-               })
-               .returning()
-               .get();
+          // Build the Python env (CUDA DLL path) once for reuse
+          const env = { ...process.env };
+          const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
+          const cudaPath = process.env.CUDA_PATH;
+          if (cudaPath) {
+               const cudaBin = path.join(cudaPath, "bin");
+               env[pathKey] = `${cudaBin}${path.delimiter}${env[pathKey] ?? ""}`;
+          }
 
-          // Return the paper ID immediately, process in background via streaming
+          // ── Pre-OCR: extract PDF metadata title via fitz (no model loading) ─────
+          const metadataTitle = await extractPdfMetadataTitle(pdfBuffer, env);
+
+          if (metadataTitle) {
+               const match = findExistingPaper(metadataTitle, null, folderId);
+               if (match) {
+                    if (match.isInSameFolder) {
+                         return makeDuplicateSameFolderResponse(match.paper.title ?? pdf.name);
+                    }
+                    // Link paper to the new folder without saving the file or running OCR
+                    db.insert(paperFolderLinks)
+                         .values({ paperId: match.paper.id, folderId })
+                         .onConflictDoNothing()
+                         .run();
+                    return makeDuplicateResponse(match.paper.id, match.paper.title ?? pdf.name, match.folder.name);
+               }
+          }
+
+          // ── Start streaming response ──────────────────────────────────────────
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
                async start(controller) {
-                    const safeEnqueue = (data: any) => {
+                    const safeEnqueue = (data: object) => {
                          try {
                               controller.enqueue(encoder.encode(JSON.stringify(data) + "\n"));
-                         } catch (e) {
-                              // Stream closed or aborted, ignore
+                         } catch {
+                              // Stream closed or aborted
                          }
                     };
 
+                    let paperRow: typeof papers.$inferSelect | null = null;
+                    let pdfDestPath: string | null = null;
+
                     try {
+                         safeEnqueue({ type: "status", message: "Scanning first page for cached results..." });
+
+                         // ── Post-metadata checkpoint: run full OCR, but check page 0 early ────
+                         pdfDestPath = path.join(folder.rootPath, sanitizedName);
+                         fs.writeFileSync(pdfDestPath, pdfBuffer);
+
+                         paperRow = db
+                              .insert(papers)
+                              .values({
+                                   folderId,
+                                   fileName: sanitizedName,
+                                   filePath: pdfDestPath,
+                                   status: "uploading",
+                              })
+                              .returning()
+                              .get();
+
                          safeEnqueue({ type: "created", paperId: paperRow.id });
 
-                         // Update to processing
                          db.update(papers)
                               .set({ status: "processing" })
                               .where(eq(papers.id, paperRow.id))
@@ -88,7 +119,6 @@ export async function POST(req: NextRequest) {
 
                          safeEnqueue({ type: "status", message: "Running OCR..." });
 
-                         // Run PaddleOCR extraction
                          tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-paper-ocr-"));
                          const tempPdfPath = path.join(tempDir, "input.pdf");
                          const scriptPath = path.join(tempDir, "run.py");
@@ -96,33 +126,72 @@ export async function POST(req: NextRequest) {
                          fs.copyFileSync(pdfDestPath, tempPdfPath);
                          fs.writeFileSync(scriptPath, PYTHON_SCRIPT);
 
-                         const env = { ...process.env };
-                         const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
-                         const cudaPath = process.env.CUDA_PATH;
-                         if (cudaPath) {
-                              const cudaBin = path.join(cudaPath, "bin");
-                              env[pathKey] = `${cudaBin}${path.delimiter}${env[pathKey] ?? ""}`;
-                         }
+                         // Tracks whether we performed + acted on the page-0 duplicate check
+                         let page0CheckDone = false;
+                         let earlyKillReason: {
+                              type: "duplicate" | "duplicate_same_folder";
+                              paperId?: number;
+                              title: string;
+                              folderName?: string;
+                         } | null = null;
 
-                         const ocrResult = await new Promise<any>((resolve, reject) => {
+                         const ocrResult = await new Promise<object | null>((resolve, reject) => {
                               const proc = spawn("python", [scriptPath, tempPdfPath], {
                                    cwd: tempDir!,
                                    env,
                               });
 
-                              // Register process so the cancel endpoint can SIGTERM it
-                              activeProcs.set(paperRow.id, { proc, tempDir: tempDir! });
+                              activeProcs.set(paperRow!.id, { proc, tempDir: tempDir! });
 
                               let stderrAccum = "";
 
                               proc.stdout?.on("data", (d: Buffer) => {
+                                   if (earlyKillReason) return;
                                    const lines = d.toString().split("\n");
                                    for (const line of lines) {
                                         const trimmed = line.trim();
                                         if (trimmed.startsWith("PROGRESS:")) {
                                              const parts = trimmed.split(":");
                                              if (parts[1] === "PAGE") {
-                                                  safeEnqueue({ type: "progress", page: parseInt(parts[2]) });
+                                                  const pageNum = parseInt(parts[2], 10);
+                                                  safeEnqueue({ type: "progress", page: pageNum });
+
+                                                  // ── Page-0 checkpoint: run after first page is written ──
+                                                  if (pageNum === 1 && !page0CheckDone) {
+                                                       page0CheckDone = true;
+                                                       try {
+                                                            const page0File = path.join(tempDir!, "page_0.json");
+                                                            if (fs.existsSync(page0File)) {
+                                                                 const raw = fs.readFileSync(page0File, "utf-8");
+                                                                 const page0Data = JSON.parse(raw);
+                                                                 const meta = extractDocumentMetadata({
+                                                                      pages: [{ page: 0, data: page0Data }],
+                                                                 });
+                                                                 const match = findExistingPaper(
+                                                                      meta.title,
+                                                                      meta.doi,
+                                                                      folderId,
+                                                                      paperRow!.id,
+                                                                 );
+                                                                 if (match) {
+                                                                      earlyKillReason = match.isInSameFolder
+                                                                           ? {
+                                                                                  type: "duplicate_same_folder",
+                                                                                  title: match.paper.title ?? pdf.name,
+                                                                             }
+                                                                           : {
+                                                                                  type: "duplicate",
+                                                                                  paperId: match.paper.id,
+                                                                                  title: match.paper.title ?? pdf.name,
+                                                                                  folderName: match.folder.name,
+                                                                             };
+                                                                      proc.kill();
+                                                                 }
+                                                            }
+                                                       } catch {
+                                                            // If we fail to read page_0.json, continue with full OCR
+                                                       }
+                                                  }
                                              }
                                         }
                                    }
@@ -133,11 +202,15 @@ export async function POST(req: NextRequest) {
                               });
 
                               proc.on("close", (code) => {
-                                   activeProcs.delete(paperRow.id);
+                                   activeProcs.delete(paperRow!.id);
+                                   // A kill() from the page-0 check causes non-zero exit — treat it as expected
+                                   if (earlyKillReason) {
+                                        resolve(null);
+                                        return;
+                                   }
                                    if (code !== 0) {
                                         reject(new Error(`PaddleOCR exited with code ${code}: ${stderrAccum.slice(0, 500)}`));
                                    } else {
-                                        // Collect page JSONs
                                         const pageFiles = fs
                                              .readdirSync(tempDir!)
                                              .filter((f) => /^page_\d+\.json$/.test(f))
@@ -166,12 +239,46 @@ export async function POST(req: NextRequest) {
                               });
 
                               proc.on("error", (err) => {
-                                   activeProcs.delete(paperRow.id);
+                                   activeProcs.delete(paperRow!.id);
                                    reject(err);
                               });
                          });
 
-                         // Save OCR result to JSON file in library folder
+                         // ── Handle early duplicate termination ────────────────────────────
+                         if (earlyKillReason) {
+                              // Rollback: remove the paper record and PDF we just saved
+                              try {
+                                   db.delete(papers).where(eq(papers.id, paperRow!.id)).run();
+                              } catch { /* ignore */ }
+                              try {
+                                   if (pdfDestPath && fs.existsSync(pdfDestPath)) fs.unlinkSync(pdfDestPath);
+                              } catch { /* ignore */ }
+
+                              if (earlyKillReason.type === "duplicate_same_folder") {
+                                   safeEnqueue({
+                                        type: "duplicate_same_folder",
+                                        title: earlyKillReason.title,
+                                        message: `"${earlyKillReason.title}" is already in this folder.`,
+                                   });
+                              } else {
+                                   // Link existing paper to the new folder
+                                   db.insert(paperFolderLinks)
+                                        .values({ paperId: earlyKillReason.paperId!, folderId })
+                                        .onConflictDoNothing()
+                                        .run();
+                                   safeEnqueue({
+                                        type: "duplicate",
+                                        paperId: earlyKillReason.paperId,
+                                        title: earlyKillReason.title,
+                                        folderName: earlyKillReason.folderName,
+                                        message: `"${earlyKillReason.title}" was previously processed in folder "${earlyKillReason.folderName}". Reusing cached OCR result.`,
+                                   });
+                              }
+                              controller.close();
+                              return;
+                         }
+
+                         // ── Normal path: full OCR completed, continue processing ─────────
                          let jsonDestPath: string | null = null;
                          try {
                               const jsonFileName = sanitizedName.replace(/\.pdf$/i, "") + ".ocr.json";
@@ -181,32 +288,28 @@ export async function POST(req: NextRequest) {
                               console.warn("[Paper upload] Failed to save OCR JSON:", err);
                          }
 
-                         // Decompose and queue for embedding
                          if (jsonDestPath) {
                               try {
                                    await processPaperOCR(paperRow.id, jsonDestPath);
-                                   queuePaperEmbedding(paperRow.id, folder.name, paperRow.fileName ?? file.name);
+                                   queuePaperEmbedding(paperRow.id, folder.name, paperRow.fileName ?? pdf.name);
                               } catch (err) {
                                    console.warn("[Paper upload] Failed to process chunks or queue embedding:", err);
                               }
                          }
 
-                         // Extract DOI and title from OCR result
                          const metadata = extractDocumentMetadata(ocrResult);
                          let title = metadata.title;
                          let doi = metadata.doi;
 
                          safeEnqueue({ type: "status", message: "Searching Semantic Scholar..." });
 
-                         // Try to extract the first figure from OCR pages
                          let firstFigurePath: string | null = null;
                          try {
-                              firstFigurePath = await extractFirstFigure(ocrResult, pdfDestPath, folder.rootPath, sanitizedName);
+                              firstFigurePath = await extractFirstFigure(ocrResult, pdfDestPath!, folder.rootPath, sanitizedName);
                          } catch (e) {
                               console.warn("[Paper upload] Could not extract first figure:", e);
                          }
 
-                         // Search Semantic Scholar
                          let abstract: string | null = null;
                          let semanticScholarId: string | null = null;
                          let citation: string | null = null;
@@ -231,7 +334,6 @@ export async function POST(req: NextRequest) {
                               }
                          }
 
-                         // Update paper record
                          db.update(papers)
                               .set({
                                    title: title || sanitizedName.replace(/\.pdf$/i, ""),
@@ -264,10 +366,12 @@ export async function POST(req: NextRequest) {
                          const msg = err instanceof Error ? err.message : "Upload processing failed";
                          console.error("[Paper upload] Error:", err);
 
-                         db.update(papers)
-                              .set({ status: "error", updatedAt: new Date().toISOString() })
-                              .where(eq(papers.id, paperRow.id))
-                              .run();
+                         if (paperRow) {
+                              db.update(papers)
+                                   .set({ status: "error", updatedAt: new Date().toISOString() })
+                                   .where(eq(papers.id, paperRow.id))
+                                   .run();
+                         }
 
                          safeEnqueue({ type: "error", message: msg });
                          controller.close();
@@ -289,6 +393,165 @@ export async function POST(req: NextRequest) {
           const msg = err instanceof Error ? err.message : "Upload failed";
           return NextResponse.json({ error: msg }, { status: 500 });
      }
+}
+
+// ── Duplicate-detection helpers ───────────────────────────────────────────────
+
+/** Strip everything but lowercase letters and digits for a loose title match. */
+function normalizeTitleForMatch(title: string): string {
+     return title.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Returns true when both titles normalise to the same string and are long
+ * enough that the match is meaningful (≥ 10 characters after normalisation).
+ */
+function titlesMatch(a: string, b: string): boolean {
+     const na = normalizeTitleForMatch(a);
+     const nb = normalizeTitleForMatch(b);
+     return na.length >= 10 && nb.length >= 10 && na === nb;
+}
+
+interface ExistingPaperMatch {
+     paper: typeof papers.$inferSelect;
+     folder: typeof libraryFolders.$inferSelect;
+     isInSameFolder: boolean;
+}
+
+/**
+ * Search all existing papers for one whose title or DOI matches the supplied
+ * values.  Excludes `skipPaperId` (used to avoid self-matching when the new
+ * paper record has already been inserted).
+ */
+function findExistingPaper(
+     title: string | null,
+     doi: string | null,
+     targetFolderId: number,
+     skipPaperId?: number,
+): ExistingPaperMatch | null {
+     const allPapers = db.select().from(papers).all();
+
+     for (const paper of allPapers) {
+          if (skipPaperId !== undefined && paper.id === skipPaperId) continue;
+
+          const matchesDoi =
+               doi && paper.doi && doi.toLowerCase().trim() === paper.doi.toLowerCase().trim();
+          const matchesTitle = title && paper.title && titlesMatch(title, paper.title);
+
+          if (!matchesDoi && !matchesTitle) continue;
+
+          // Found a matching paper — check whether it is already in the target folder
+          const isCanonicalFolder = paper.folderId === targetFolderId;
+          const hasSecondaryLink =
+               db
+                    .select()
+                    .from(paperFolderLinks)
+                    .where(and(eq(paperFolderLinks.paperId, paper.id), eq(paperFolderLinks.folderId, targetFolderId)))
+                    .get() !== undefined;
+
+          const canonicalFolder = db
+               .select()
+               .from(libraryFolders)
+               .where(eq(libraryFolders.id, paper.folderId))
+               .get();
+
+          if (!canonicalFolder) continue;
+
+          return {
+               paper,
+               folder: canonicalFolder,
+               isInSameFolder: isCanonicalFolder || hasSecondaryLink,
+          };
+     }
+
+     return null;
+}
+
+/** Python script that extracts only the PDF document metadata (no OCR). */
+const PDF_METADATA_SCRIPT = `
+import sys, json, fitz
+doc = fitz.open(sys.argv[1])
+meta = doc.metadata or {}
+doc.close()
+print(json.dumps({
+    "title": (meta.get("title") or meta.get("Title") or "").strip(),
+    "author": (meta.get("author") or meta.get("Author") or "").strip(),
+}))
+`.trimStart();
+
+/**
+ * Extract the document title from PDF metadata using PyMuPDF (fitz).
+ * Returns `null` when the metadata contains no usable title.
+ */
+async function extractPdfMetadataTitle(
+     pdfBuffer: Buffer,
+     env: Record<string, string | undefined>,
+): Promise<string | null> {
+     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-pdfmeta-"));
+     try {
+          const tmpPdf = path.join(tmpDir, "input.pdf");
+          const tmpScript = path.join(tmpDir, "meta.py");
+          fs.writeFileSync(tmpPdf, pdfBuffer);
+          fs.writeFileSync(tmpScript, PDF_METADATA_SCRIPT);
+
+          const raw = await new Promise<string>((resolve) => {
+               let out = "";
+               const proc = spawn("python", [tmpScript, tmpPdf], { env });
+               proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+               proc.on("close", () => resolve(out));
+               proc.on("error", () => resolve(""));
+          });
+
+          const parsed = JSON.parse(raw.trim() || "{}") as { title?: string };
+          const t = (parsed.title ?? "").trim();
+          return t.length >= 5 ? t : null;
+     } catch {
+          return null;
+     } finally {
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+     }
+}
+
+/** Return a streaming NDJSON response carrying a single `duplicate_same_folder` event. */
+function makeDuplicateSameFolderResponse(title: string): Response {
+     const encoder = new TextEncoder();
+     const stream = new ReadableStream({
+          start(controller) {
+               controller.enqueue(
+                    encoder.encode(
+                         JSON.stringify({
+                              type: "duplicate_same_folder",
+                              title,
+                              message: `"${title}" is already in this folder.`,
+                         }) + "\n",
+                    ),
+               );
+               controller.close();
+          },
+     });
+     return new Response(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+}
+
+/** Return a streaming NDJSON response carrying a single `duplicate` event. */
+function makeDuplicateResponse(paperId: number, title: string, folderName: string): Response {
+     const encoder = new TextEncoder();
+     const stream = new ReadableStream({
+          start(controller) {
+               controller.enqueue(
+                    encoder.encode(
+                         JSON.stringify({
+                              type: "duplicate",
+                              paperId,
+                              title,
+                              folderName,
+                              message: `"${title}" was previously processed in folder "${folderName}". Reusing cached OCR result.`,
+                         }) + "\n",
+                    ),
+               );
+               controller.close();
+          },
+     });
+     return new Response(stream, { headers: { "Content-Type": "application/x-ndjson" } });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -7,11 +7,15 @@ export interface PdfParseJob {
      id: string;
      fileName: string;
      folderName: string;
-     status: "queued" | "uploading" | "processing" | "complete" | "error";
+     status: "queued" | "uploading" | "processing" | "complete" | "error" | "duplicate" | "duplicate_same_folder";
      message: string;
      startedAt: string;
      /** Server-side paper DB id — available after the first "created" stream event. */
      paperId?: number;
+     /** For `duplicate` status: the folder where the paper was previously uploaded. */
+     duplicateFolderName?: string;
+     /** For `duplicate` status: the resolved title of the existing paper. */
+     duplicateTitle?: string;
 }
 
 interface QueueEntry {
@@ -109,6 +113,19 @@ export function PdfParseProvider({ children }: { children: React.ReactNode }) {
                                                   updateJob(id, {
                                                        status: "complete",
                                                        message: `"${title}" saved to library.`,
+                                                  });
+                                             } else if (event.type === "duplicate") {
+                                                  updateJob(id, {
+                                                       status: "duplicate",
+                                                       message: event.message ?? `Already processed in "${event.folderName}".`,
+                                                       duplicateFolderName: event.folderName,
+                                                       duplicateTitle: event.title,
+                                                  });
+                                             } else if (event.type === "duplicate_same_folder") {
+                                                  updateJob(id, {
+                                                       status: "duplicate_same_folder",
+                                                       message: event.message ?? `Already in this folder.`,
+                                                       duplicateTitle: event.title,
                                                   });
                                              } else if (event.type === "error") {
                                                   throw new Error(event.message || "Processing failed");

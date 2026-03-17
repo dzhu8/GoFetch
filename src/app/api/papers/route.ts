@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders, paperChunks } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
+import { papers, libraryFolders, paperChunks, paperFolderLinks } from "@/server/db/schema";
+import { eq, inArray, or } from "drizzle-orm";
 import fs from "fs";
 import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
 
@@ -37,7 +37,7 @@ async function triggerPendingEmbeddings(folderId: number, folderName: string): P
      return triggered;
 }
 
-// GET /api/papers?folderId=123 — list papers in a folder
+// GET /api/papers?folderId=123 — list papers in a folder (includes secondary links)
 export async function GET(req: NextRequest) {
      try {
           const folderIdParam = req.nextUrl.searchParams.get("folderId");
@@ -46,14 +46,30 @@ export async function GET(req: NextRequest) {
           }
 
           const folderId = parseInt(folderIdParam, 10);
-          const rows = db
-               .select()
-               .from(papers)
-               .where(eq(papers.folderId, folderId))
-               .orderBy(papers.createdAt)
-               .all();
 
-          // Also trigger background embedding check for this specific folder
+          // Collect paper IDs that appear in this folder via secondary links
+          const secondaryLinks = db
+               .select({ paperId: paperFolderLinks.paperId })
+               .from(paperFolderLinks)
+               .where(eq(paperFolderLinks.folderId, folderId))
+               .all();
+          const secondaryIds = secondaryLinks.map((l) => l.paperId);
+
+          const rows =
+               secondaryIds.length > 0
+                    ? db
+                           .select()
+                           .from(papers)
+                           .where(or(eq(papers.folderId, folderId), inArray(papers.id, secondaryIds)))
+                           .orderBy(papers.createdAt)
+                           .all()
+                    : db
+                           .select()
+                           .from(papers)
+                           .where(eq(papers.folderId, folderId))
+                           .orderBy(papers.createdAt)
+                           .all();
+
           const folder = db.select().from(libraryFolders).where(eq(libraryFolders.id, folderId)).get();
           let embeddingTriggered = false;
           if (folder) {

@@ -212,6 +212,27 @@ export const papers = sqliteTable("papers", {
           .default(sql`CURRENT_TIMESTAMP`),
 });
 
+// ── Paper ↔ folder many-to-many (secondary / cross-folder links) ─────────────
+// The canonical folder is still stored on papers.folderId.  Entries here
+// represent additional folders that the same paper should also appear in.
+export const paperFolderLinks = sqliteTable(
+     "paper_folder_links",
+     {
+          paperId: integer("paper_id")
+               .notNull()
+               .references(() => papers.id, { onDelete: "cascade" }),
+          folderId: integer("folder_id")
+               .notNull()
+               .references(() => libraryFolders.id, { onDelete: "cascade" }),
+          createdAt: text("created_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+     },
+     (table) => ({
+          pk: primaryKey({ columns: [table.paperId, table.folderId] }),
+     })
+);
+
 export const relatedPapers = sqliteTable(
      "related_papers",
      {
