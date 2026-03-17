@@ -368,6 +368,26 @@ export const paperAbstractEmbeddings = sqliteTable(
      })
 );
 
+/**
+ * Per-chunk, per-model embedding cache.
+ * Stores one embedding vector per (chunk ID, embedding model key) pair so that
+ * different models can be compared without re-embedding the same chunks.
+ */
+export const paperChunkEmbeddings = sqliteTable(
+     "paper_chunk_embeddings",
+     {
+          chunkId: integer("chunk_id")
+               .notNull()
+               .references(() => paperChunks.id, { onDelete: "cascade" }),
+          modelKey: text("model_key").notNull(),
+          embedding: blob("embedding").notNull(),
+          createdAt: integer("created_at").notNull(),
+     },
+     (table) => ({
+          pk: primaryKey({ columns: [table.chunkId, table.modelKey] }),
+     })
+);
+
 export const academicSearches = sqliteTable("academic_searches", {
      id: integer("id").primaryKey(),
      chatId: text("chat_id").notNull(),

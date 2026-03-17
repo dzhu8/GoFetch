@@ -14,10 +14,12 @@ import {
      Loader2,
      Network,
      RefreshCcw,
+     Search,
      Trash2,
      Upload,
      X,
 } from "lucide-react";
+import LibrarySearchModal from "@/components/LibrarySearchModal";
 import GoFetchDogBox from "../../../../public/assets/GoFetch-dog-box.svg";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
 import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
@@ -60,6 +62,7 @@ export default function FolderDetailPage() {
      const [recomputingId, setRecomputingId] = useState<number | null>(null);
      const [computingRelatedId, setComputingRelatedId] = useState<number | null>(null);
      const [deletingEmbedId, setDeletingEmbedId] = useState<number | null>(null);
+     const [searchOpen, setSearchOpen] = useState(false);
      const fileInputRef = useRef<HTMLInputElement>(null);
      const { startParseJob } = usePdfParseActions();
      const { trackFolderTask } = useTaskProgressActions();
@@ -265,13 +268,22 @@ export default function FolderDetailPage() {
                          <ArrowLeft className="w-4 h-4" />
                          Back to Library
                     </button>
-                    <button
-                         onClick={handleUploadClick}
-                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-white text-sm font-medium hover:bg-[#F8B692]/80 active:scale-95 transition-all duration-200"
-                    >
-                         <Upload className="w-4 h-4" />
-                         Upload PDF
-                    </button>
+                    <div className="flex items-center gap-2">
+                         <button
+                              onClick={() => setSearchOpen(true)}
+                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 text-black/70 dark:text-white/70 text-sm font-medium hover:border-[#F8B692]/50 hover:text-[#F8B692] active:scale-95 transition-all duration-200"
+                         >
+                              <Search className="w-4 h-4" />
+                              Quick Search
+                         </button>
+                         <button
+                              onClick={handleUploadClick}
+                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-white text-sm font-medium hover:bg-[#F8B692]/80 active:scale-95 transition-all duration-200"
+                         >
+                              <Upload className="w-4 h-4" />
+                              Upload PDF
+                         </button>
+                    </div>
                     <input
                          type="file"
                          accept=".pdf,application/pdf"
@@ -393,6 +405,15 @@ export default function FolderDetailPage() {
                               </div>
                          </div>
                     </div>
+               )}
+
+               {/* Library Quick Search Modal */}
+               {searchOpen && (
+                    <LibrarySearchModal
+                         currentFolderId={parseInt(folderId, 10)}
+                         currentFolderName={folder?.name ?? folderId}
+                         onClose={() => setSearchOpen(false)}
+                    />
                )}
 
                {/* Error Modal */}
