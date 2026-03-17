@@ -332,19 +332,58 @@ const DOI_PATTERNS = [
 const TRAILING_PUNCT = /[.,;:)\]}"']+$/;
 
 function extractDoi(text: string): string | null {
+     const matches: string[] = [];
+     
+     // 1. Check existing DOI patterns (DOI itself, or labels)
      for (const re of DOI_PATTERNS) {
           const m = re.exec(text);
           if (m) {
                let doi = m[1];
+               // Verify this isn't part of a non-doi.org URL (heuristic)
+               const startIdx = m.index;
+               const before = text.slice(Math.max(0, startIdx - 20), startIdx);
+               if (before.includes("http") && !before.includes("doi.org")) {
+                    continue; 
+               }
+
                let prev = "";
                while (doi !== prev) {
                     prev = doi;
                     doi = doi.replace(TRAILING_PUNCT, "");
                }
-               return doi;
+               matches.push(doi);
           }
      }
-     return null;
+
+     // 2. Additional check for doi.org links specifically
+     const doiOrgRegex = /https?:\/\/doi\.org\/(10\.\d{4,}\/[^\s?#]+)/gi;
+     let m;
+     while ((m = doiOrgRegex.exec(text)) !== null) {
+          let doi = m[1];
+          let prev = "";
+          while (doi !== prev) {
+               prev = doi;
+               doi = doi.replace(TRAILING_PUNCT, "");
+          }
+          matches.push(doi);
+     }
+
+     // 3. Fallback for raw "doi:" prefix with specific delimiters
+     const rawDoiRegex = /\bdoi:\s*(10\.\d{4,}\/[^\s?#]+)/gi;
+     while ((m = rawDoiRegex.exec(text)) !== null) {
+          let doi = m[1];
+          let prev = "";
+          while (doi !== prev) {
+               prev = doi;
+               doi = doi.replace(TRAILING_PUNCT, "");
+          }
+          matches.push(doi);
+     }
+
+     if (matches.length === 0) return null;
+     
+     // Return the shortest match (heuristic: the real DOI is likely shorter than complex URLs)
+     return matches.sort((a, b) => a.length - b.length)[0];
 }
 
 // ---------------------------------------------------------------------------

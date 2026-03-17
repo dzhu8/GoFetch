@@ -19,7 +19,7 @@ import {
      Upload,
      X,
 } from "lucide-react";
-import LibrarySearchModal from "@/components/LibrarySearchModal";
+import LibrarySearchModal from "@/components/LibraryEmbeddingSearchModal";
 import GoFetchDogBox from "../../../../public/assets/GoFetch-dog-box.svg";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
 import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
