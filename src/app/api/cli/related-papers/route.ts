@@ -107,18 +107,64 @@ async function runOcr(pdfPath: string): Promise<any> {
 /**
  * POST /api/cli/related-papers
  *
- * Body: { pdfPath: string, method?: GraphConstructionMethod }
- *
  * Accepts an absolute path to a local PDF file.  If a `.ocr.json` sidecar
  * already exists alongside the PDF it is reused; otherwise PaddleOCR-VL is
  * invoked and the result is saved as `<name>.ocr.json` next to the PDF.
  *
  * Returns the same RelatedPapersResponse shape as /api/related-papers.
+ *
+ * ── Request body fields ────────────────────────────────────────────────────
+ * Required:
+ *   pdfPath          string   Absolute path to the PDF file.
+ *
+ * Optional:
+ *   method           string   Graph construction strategy.
+ *                             Values: "snowball" (default)
+ *   rankMethod       string   How candidates are scored after graph construction.
+ *                             Values:
+ *                               "bibliographic" — rank by BC + CC overlap (default)
+ *                               "embedding"     — re-rank by abstract embedding similarity
+ *   depth            number   Snowball crawl depth (default: config value / 1).
+ *   maxPapers        number   Maximum results to return (default: config value / 50).
+ *   bcThreshold      number   Minimum bibliographic-coupling score [0, 1] (default: 0).
+ *   ccThreshold      number   Minimum co-citation score [0, 1] (default: 0).
+ *   embeddingThreshold number Minimum embedding similarity score [0, 1] (default: 0).
+ *                             Only applied when rankMethod === "embedding".
+ *
+ * ── Example cURL commands ──────────────────────────────────────────────────
+ *
+ * 1. Bibliographic ranking (BC + CC, fast, no embedding model required):
+ *    curl -X POST http://localhost:3000/api/cli/related-papers \
+ *      -H "Content-Type: application/json" \
+ *      -d '{ "pdfPath": "/data/library/paper.pdf", "method": "snowball", "rankMethod": "bibliographic", "depth": 2, "maxPapers": 50 }'
+ *
+ * 2. Embedding ranking (semantic similarity, requires a configured embedding model):
+ *    curl -X POST http://localhost:3000/api/cli/related-papers \
+ *      -H "Content-Type: application/json" \
+ *      -d '{ "pdfPath": "/data/library/paper.pdf", "method": "snowball", "rankMethod": "embedding", "maxPapers": 50, "embeddingThreshold": 0.3 }'
  */
 export async function POST(req: NextRequest) {
      try {
           const body = await req.json();
-          const { pdfPath, method } = body as { pdfPath?: string; method?: GraphConstructionMethod };
+          const {
+               pdfPath,
+               method,
+               rankMethod,
+               depth,
+               maxPapers,
+               bcThreshold,
+               ccThreshold,
+               embeddingThreshold,
+          } = body as {
+               pdfPath?: string;
+               method?: GraphConstructionMethod;
+               rankMethod?: "bibliographic" | "embedding";
+               depth?: number;
+               maxPapers?: number;
+               bcThreshold?: number;
+               ccThreshold?: number;
+               embeddingThreshold?: number;
+          };
 
           if (!pdfPath || typeof pdfPath !== "string") {
                return NextResponse.json({ error: "pdfPath is required." }, { status: 400 });
@@ -162,10 +208,12 @@ export async function POST(req: NextRequest) {
                );
 
           const snowballConfig = {
-               depth: configManager.getConfig("personalization.snowballDepth"),
-               maxPapers: configManager.getConfig("personalization.snowballMaxPapers"),
-               bcThreshold: configManager.getConfig("personalization.snowballBcThreshold"),
-               ccThreshold: configManager.getConfig("personalization.snowballCcThreshold"),
+               depth: depth ?? configManager.getConfig("personalization.snowballDepth"),
+               maxPapers: maxPapers ?? configManager.getConfig("personalization.snowballMaxPapers"),
+               bcThreshold: bcThreshold ?? configManager.getConfig("personalization.snowballBcThreshold"),
+               ccThreshold: ccThreshold ?? configManager.getConfig("personalization.snowballCcThreshold"),
+               rankMethod,
+               embeddingThreshold,
           };
 
           const response = await buildRelatedPapersGraph(

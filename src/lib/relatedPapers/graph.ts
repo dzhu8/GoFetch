@@ -193,6 +193,21 @@ export interface SnowballConfig {
      bcThreshold?: number;
      ccThreshold?: number;
      /**
+      * Override the ranking strategy for this run.
+      * - `"bibliographic"` (default) — rank by bibliographic-coupling + co-citation scores.
+      * - `"embedding"` — re-rank using cosine similarity between the seed abstract and
+      *   each candidate abstract via the configured embedding model.
+      * When omitted the value from `personalization.graphRankMethod` in config is used.
+      */
+     rankMethod?: "bibliographic" | "embedding";
+     /**
+      * Minimum normalised embedding similarity score [0, 1] required to include a paper
+      * in the final list when `rankMethod === "embedding"`.
+      * When omitted the value from `personalization.snowballEmbeddingThreshold` in config
+      * is used (defaults to 0 — no filtering).
+      */
+     embeddingThreshold?: number;
+     /**
       * Known Semantic Scholar paper ID for the source paper.
       * When provided, Phase 1 (seed resolution via API) is skipped entirely.
       * The route handler should populate this from `papers.semanticScholarId`.
@@ -487,7 +502,10 @@ async function buildSnowballGraph(
      const maxPapers = config?.maxPapers ?? TOP_N_DEFAULT;
      const bcThreshold = config?.bcThreshold ?? 0;
      const ccThreshold = config?.ccThreshold ?? 0;
-     const rankMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
+     const rankMethod =
+          config?.rankMethod ??
+          configManager.getConfig("personalization.graphRankMethod") ??
+          "bibliographic";
      const s2Rl = new RateLimiter(S2_REQUESTS_PER_SECOND);
 
      _s2429Count = 0;
@@ -749,7 +767,10 @@ async function buildSnowballGraph(
 
                     // 4. Filter by threshold (using normalized similarity for filtering)
                     // and sort by embedding score
-                    const embedThreshold = configManager.getConfig("personalization.snowballEmbeddingThreshold") || 0;
+                    const embedThreshold =
+                         config?.embeddingThreshold ??
+                         configManager.getConfig("personalization.snowballEmbeddingThreshold") ??
+                         0;
                     
                     // Re-sort by embedding score first to get the true strongest semantic matches
                     rankedPapers = rankedPapers.sort((a, b) => b.score - a.score);
