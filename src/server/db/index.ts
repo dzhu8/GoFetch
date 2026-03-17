@@ -32,6 +32,18 @@ sqlite.exec(`
           created_at INTEGER NOT NULL,
           PRIMARY KEY (paper_id, model_key)
      );
+     CREATE TABLE IF NOT EXISTS paper_source_links (
+          s2_paper_id    TEXT    NOT NULL,
+          source_paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+          depth          INTEGER NOT NULL,
+          PRIMARY KEY (s2_paper_id, source_paper_id)
+     );
 `);
+
+// Add depth column to related_papers if it doesn't exist yet (idempotent).
+const relatedPapersCols = sqlite.pragma("table_info(related_papers)") as Array<{ name: string }>;
+if (!relatedPapersCols.some((c) => c.name === "depth")) {
+     sqlite.exec("ALTER TABLE related_papers ADD COLUMN depth integer;");
+}
 
 export default db;

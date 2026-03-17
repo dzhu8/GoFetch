@@ -254,6 +254,8 @@ export const relatedPapers = sqliteTable(
           rankMethod: text("rank_method").notNull().default("bibliographic"),
           /** The embedding model key used (null for bibliographic method) */
           embeddingModel: text("embedding_model"),
+          /** Snowball graph depth at which this paper was discovered (1 = direct ref/citation of seed, 2 = one step further, etc.) */
+          depth: integer("depth"),
           createdAt: text("created_at")
                .notNull()
                .default(sql`CURRENT_TIMESTAMP`),
@@ -308,6 +310,24 @@ interface AcademicSource {
           [key: string]: any;
      };
 }
+
+// ── S2 metadata-cache ↔ uploaded-paper source-depth links ──────────────────
+// Associates each cached Semantic Scholar paper with the uploaded papers that
+// discovered it, and the minimum graph depth at which it was found.
+// Depth 0 = the seed (uploaded paper itself); 1 = direct ref/citation; etc.
+export const paperSourceLinks = sqliteTable(
+     "paper_source_links",
+     {
+          s2PaperId: text("s2_paper_id").notNull(),
+          sourcePaperId: integer("source_paper_id")
+               .notNull()
+               .references(() => papers.id, { onDelete: "cascade" }),
+          depth: integer("depth").notNull(),
+     },
+     (table) => ({
+          pk: primaryKey({ columns: [table.s2PaperId, table.sourcePaperId] }),
+     })
+);
 
 // ── Paper graph cache ────────────────────────────────────────────────────────
 // Caches edge data (references + citations) and metadata retrieved from

@@ -9,8 +9,10 @@ import { getEmbeddings, cosineSimilarity } from "./abstractEmbedding";
 // ── Constants ────────────────────────────────────────────────────────────────
 const S2_BASE = "https://api.semanticscholar.org/graph/v1";
 const S2_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
-// Conservative: 1 req/s without key, 9 req/s with key (S2 limit is 10/s)
-const S2_REQUESTS_PER_SECOND = S2_API_KEY ? 9 : 1;
+// Conservative: ~0.65 req/s without key, 9 req/s with key (S2 limit is 10/s).
+// The anonymous tier officially allows 1 req/s, but timing jitter often causes
+// 429s at exactly 1000 ms intervals — 1500 ms gives comfortable headroom.
+const S2_REQUESTS_PER_SECOND = S2_API_KEY ? 9 : 0.65;
 
 const TOP_N_DEFAULT = 50;
 const DEPTH_DEFAULT = 1;
@@ -165,6 +167,8 @@ export interface RankedPaper {
      bcScore: number;
      /** Co-citation proxy component */
      ccScore: number;
+     /** Snowball graph depth: 1 = direct ref/citation of seed, 2 = one step further, etc. */
+     depth: number;
 }
 
 export interface RelatedPapersResponse {
@@ -222,51 +226,80 @@ if (S2_API_KEY) {
      console.log(`[S2] No API key configured — anonymous tier (${S2_REQUESTS_PER_SECOND} req/s).`);
 }
 
+const S2_MAX_RETRIES = 3;
+const S2_BACKOFF_BASE_MS = 2_000;
+
 async function s2Get(path: string, rl: RateLimiter): Promise<any | null> {
-     await rl.throttle();
-     try {
-          const headers: Record<string, string> = { Accept: "application/json" };
-          if (S2_API_KEY) headers["x-api-key"] = S2_API_KEY;
-          const res = await fetch(`${S2_BASE}${path}`, {
-               headers,
-               signal: AbortSignal.timeout(15_000),
-          });
-          if (res.status === 429) { _s2429Count++; return null; }
-          if (!res.ok) {
-               console.warn(`[s2Get] Non-OK response: ${res.status} for path: ${path}`);
+     for (let attempt = 0; attempt <= S2_MAX_RETRIES; attempt++) {
+          await rl.throttle();
+          try {
+               const headers: Record<string, string> = { Accept: "application/json" };
+               if (S2_API_KEY) headers["x-api-key"] = S2_API_KEY;
+               const res = await fetch(`${S2_BASE}${path}`, {
+                    headers,
+                    signal: AbortSignal.timeout(15_000),
+               });
+               if (res.status === 429) {
+                    _s2429Count++;
+                    if (attempt < S2_MAX_RETRIES) {
+                         const delay = S2_BACKOFF_BASE_MS * 2 ** attempt;
+                         console.warn(`[s2Get] 429 — retry ${attempt + 1}/${S2_MAX_RETRIES} in ${delay}ms for: ${path}`);
+                         await new Promise(r => setTimeout(r, delay));
+                         continue;
+                    }
+                    console.warn(`[s2Get] 429 — retries exhausted for: ${path}`);
+                    return null;
+               }
+               if (!res.ok) {
+                    console.warn(`[s2Get] Non-OK response: ${res.status} for path: ${path}`);
+                    return null;
+               }
+               return await res.json();
+          } catch (err) {
+               console.error(`[s2Get] Error for path: ${path}`, err);
                return null;
           }
-          return await res.json();
-     } catch (err) {
-          console.error(`[s2Get] Error for path: ${path}`, err);
-          return null;
      }
+     return null;
 }
 
 async function s2Post(path: string, body: unknown, rl: RateLimiter): Promise<any | null> {
-     await rl.throttle();
-     try {
-          const headers: Record<string, string> = {
-               Accept: "application/json",
-               "Content-Type": "application/json",
-          };
-          if (S2_API_KEY) headers["x-api-key"] = S2_API_KEY;
-          const res = await fetch(`${S2_BASE}${path}`, {
-               method: "POST",
-               headers,
-               body: JSON.stringify(body),
-               signal: AbortSignal.timeout(30_000),
-          });
-          if (res.status === 429) { _s2429Count++; return null; }
-          if (!res.ok) {
-               console.warn(`[s2Post] Non-OK response: ${res.status} for path: ${path}`);
+     for (let attempt = 0; attempt <= S2_MAX_RETRIES; attempt++) {
+          await rl.throttle();
+          try {
+               const headers: Record<string, string> = {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+               };
+               if (S2_API_KEY) headers["x-api-key"] = S2_API_KEY;
+               const res = await fetch(`${S2_BASE}${path}`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(body),
+                    signal: AbortSignal.timeout(30_000),
+               });
+               if (res.status === 429) {
+                    _s2429Count++;
+                    if (attempt < S2_MAX_RETRIES) {
+                         const delay = S2_BACKOFF_BASE_MS * 2 ** attempt;
+                         console.warn(`[s2Post] 429 — retry ${attempt + 1}/${S2_MAX_RETRIES} in ${delay}ms`);
+                         await new Promise(r => setTimeout(r, delay));
+                         continue;
+                    }
+                    console.warn(`[s2Post] 429 — retries exhausted`);
+                    return null;
+               }
+               if (!res.ok) {
+                    console.warn(`[s2Post] Non-OK response: ${res.status} for path: ${path}`);
+                    return null;
+               }
+               return await res.json();
+          } catch (err) {
+               console.error(`[s2Post] Error for path: ${path}`, err);
                return null;
           }
-          return await res.json();
-     } catch (err) {
-          console.error(`[s2Post] Error for path: ${path}`, err);
-          return null;
      }
+     return null;
 }
 
 /** Normalise a Semantic Scholar paper object to the shape expected by the presentation helpers. */
@@ -524,7 +557,7 @@ async function buildSnowballGraph(
      const bcNorm = Math.max(initialSet.size, 1);
      const ccNorm = Math.max(seedCits.size, 1);
 
-     const allScored: Array<{ paperId: string; bcScore: number; ccScore: number; score: number }> = [];
+     const allScored: Array<{ paperId: string; bcScore: number; ccScore: number; score: number; depth: number }> = [];
      const scoredSet = new Set<string>();
 
      for (let d = 0; d < depth; d++) {
@@ -558,7 +591,7 @@ async function buildSnowballGraph(
                }
                const bcScore = bcOverlap / bcNorm;
                const ccScore = ccOverlap / ccNorm;
-               allScored.push({ paperId: c, bcScore, ccScore, score: 0.5 * bcScore + 0.5 * ccScore });
+               allScored.push({ paperId: c, bcScore, ccScore, score: 0.5 * bcScore + 0.5 * ccScore, depth: d + 1 });
                scoredSet.add(c);
                layerScoredCount++;
           }
@@ -619,6 +652,13 @@ async function buildSnowballGraph(
           `[Phase 4] Edge data: ${_edgeApiCalls} papers fetched via API, ${_edgeCacheHits} from archive.`,
      );
 
+     // Brief cooldown after the metadata batch to let the S2 rate-limit window reset
+     // before any further API calls (e.g. Phase 9 embedding requests).
+     if (!S2_API_KEY) {
+          console.log('[Phase 7→8] Pausing 3 s to let S2 rate-limit window reset...');
+          await new Promise<void>(r => setTimeout(r, 3000));
+     }
+
      // ── Phase 8: Build the final ranked list ─────────────────────────────
      let rankedPapers: RankedPaper[] = topK.flatMap((cand) => {
           const p = metadata.get(cand.paperId);
@@ -643,8 +683,7 @@ async function buildSnowballGraph(
                     isAcademic: ACADEMIC_DOMAINS.some((d) => domain.includes(d) || url.includes(d)),
                     score: cand.score,
                     bcScore: cand.bcScore,
-                    ccScore: cand.ccScore,
-               } satisfies RankedPaper,
+                    ccScore: cand.ccScore,                    depth: cand.depth,               } satisfies RankedPaper,
           ];
      });
 

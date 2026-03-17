@@ -28,6 +28,7 @@ interface RelatedPaper {
      ccScore: number | null;
      rankMethod: string;
      embeddingModel: string | null;
+     depth: number | null;
      createdAt: string;
 }
 
@@ -329,7 +330,8 @@ export default function RelatedPapersPage() {
                                              <span className="font-mono text-[#F8B692]">Ranked by Semantic Similarity</span>
                                         ) : (
                                              <>
-                                                  Scores: <span className="font-mono">BC</span> = bibliographic coupling &nbsp;·&nbsp;{" "}
+                                                  Scores: <span className="font-mono">D#</span> = discovery depth &nbsp;·&nbsp;{" "}
+                                                  <span className="font-mono">BC</span> = bibliographic coupling &nbsp;·&nbsp;{" "}
                                                   <span className="font-mono">CC</span> = co-citation
                                              </>
                                         )}
@@ -356,6 +358,14 @@ export default function RelatedPapersPage() {
                                                             <div className="ml-auto flex items-center gap-1">
                                                                  {rankMethod !== "embedding" && (
                                                                       <>
+                                                                           {rp.depth != null && (
+                                                                                <span
+                                                                                     className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-mono text-black/40 dark:text-white/40 bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10"
+                                                                                     title={`Discovery depth: ${rp.depth} (${rp.depth === 1 ? "direct reference or citation" : `${rp.depth} hops from source`})`}
+                                                                                >
+                                                                                     D{rp.depth}
+                                                                                </span>
+                                                                           )}
                                                                            {rp.bcScore != null && (
                                                                                 <ScoreBadge
                                                                                      score={rp.bcScore}

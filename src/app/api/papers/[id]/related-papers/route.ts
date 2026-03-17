@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, relatedPapers } from "@/server/db/schema";
+import { papers, relatedPapers, paperSourceLinks } from "@/server/db/schema";
 import { and, eq } from "drizzle-orm";
 import fs from "fs";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
@@ -130,6 +130,22 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                     .where(and(eq(relatedPapers.paperId, paperIdValue), eq(relatedPapers.rankMethod, response.rankMethod)))
                     .run();
 
+               // Refresh source-depth links when recomputing bibliographic results (depth is a
+               // graph-structure concept; embedding ranking does not produce meaningful depths).
+               if (response.rankMethod !== "embedding") {
+                    tx.delete(paperSourceLinks)
+                         .where(eq(paperSourceLinks.sourcePaperId, paperIdValue))
+                         .run();
+
+                    // Record the seed paper itself at depth 0.
+                    if (response.seedPaperId) {
+                         tx.insert(paperSourceLinks)
+                              .values({ s2PaperId: response.seedPaperId, sourcePaperId: paperIdValue, depth: 0 })
+                              .onConflictDoNothing()
+                              .run();
+                    }
+               }
+
                for (const rp of response.rankedPapers) {
                     // Extract DOI from the URL when it's a doi.org link
                     const doiMatch = rp.url.match(/^https:\/\/doi\.org\/(.+)$/);
@@ -148,7 +164,16 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                          ccScore: rp.ccScore,
                          rankMethod: response.rankMethod,
                          embeddingModel: response.embeddingModel ?? null,
+                         depth: rp.depth ?? null,
                     }).run();
+
+                    // Record source-depth link for bibliographic results.
+                    if (response.rankMethod !== "embedding" && rp.paperId) {
+                         tx.insert(paperSourceLinks)
+                              .values({ s2PaperId: rp.paperId, sourcePaperId: paperIdValue, depth: rp.depth })
+                              .onConflictDoNothing()
+                              .run();
+                    }
                }
           });
 
