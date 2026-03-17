@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
 import { papers, relatedPapers } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import fs from "fs";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import configManager from "@/server";
@@ -10,10 +10,11 @@ import { buildRelatedPapersGraph, GraphConstructionMethod } from "@/lib/relatedP
 type RouteParams = { params: Promise<{ id: string }> };
 
 /**
- * GET /api/papers/[id]/related-papers
- * Fetch saved related papers from the database.
+ * GET /api/papers/[id]/related-papers?method=bibliographic|embedding
+ * Fetch saved related papers for the given method (defaults to current config).
+ * Also returns which methods have cached results so the UI can show stale indicators.
  */
-export async function GET(_req: NextRequest, { params }: RouteParams) {
+export async function GET(req: NextRequest, { params }: RouteParams) {
      try {
           const { id } = await params;
           const paperId = parseInt(id, 10);
@@ -21,17 +22,37 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                return NextResponse.json({ error: "Invalid paper ID" }, { status: 400 });
           }
 
+          const configuredMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
+          const requestedMethod = req.nextUrl.searchParams.get("method") || configuredMethod;
+
+          // Fetch results for the requested method
           const results = db
                .select()
+               .from(relatedPapers)
+               .where(and(eq(relatedPapers.paperId, paperId), eq(relatedPapers.rankMethod, requestedMethod)))
+               .all();
+
+          // Check which methods have cached results
+          const allResults = db
+               .select({ rankMethod: relatedPapers.rankMethod, embeddingModel: relatedPapers.embeddingModel })
                .from(relatedPapers)
                .where(eq(relatedPapers.paperId, paperId))
                .all();
 
-          const rankMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
+          const cachedMethods = new Set(allResults.map((r) => r.rankMethod));
+          const cachedEmbeddingModel = allResults.find((r) => r.rankMethod === "embedding")?.embeddingModel ?? null;
 
-          return NextResponse.json({ 
+          // Check if the cached embedding results were produced by the current model
+          const currentModel = configManager.getConfig("preferences.defaultEmbeddingModel");
+          const currentModelKey = typeof currentModel === "object" ? currentModel?.modelKey : null;
+          const embeddingResultsStale = cachedMethods.has("embedding") && cachedEmbeddingModel !== currentModelKey;
+
+          return NextResponse.json({
                relatedPapers: results,
-               rankMethod 
+               rankMethod: requestedMethod,
+               configuredMethod,
+               cachedMethods: Array.from(cachedMethods),
+               embeddingResultsStale,
           });
      } catch (error) {
           console.error("Error fetching related papers:", error);
@@ -83,6 +104,8 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                maxPapers: configManager.getConfig("personalization.snowballMaxPapers"),
                bcThreshold: configManager.getConfig("personalization.snowballBcThreshold"),
                ccThreshold: configManager.getConfig("personalization.snowballCcThreshold"),
+               // Pass the known S2 ID so Phase 1 (API seed lookup) can be skipped.
+               seedPaperS2Id: paper.semanticScholarId ?? undefined,
           };
 
           const response = await buildRelatedPapersGraph(
@@ -92,9 +115,20 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                snowballConfig
           );
 
-          // 4. Save to database (refreshing existing ones)
+          // Persist a newly resolved S2 ID back to the papers table so future runs skip Phase 1.
+          if (response.seedPaperId && !paper.semanticScholarId) {
+               db.update(papers)
+                    .set({ semanticScholarId: response.seedPaperId })
+                    .where(eq(papers.id, paperIdValue))
+                    .run();
+               console.log(`[POST] Saved seed S2 ID ${response.seedPaperId} for paper #${paperIdValue}`);
+          }
+
+          // 4. Save to database — replace only rows for this rank method, preserving the other method's results
           db.transaction((tx) => {
-               tx.delete(relatedPapers).where(eq(relatedPapers.paperId, paperIdValue)).run();
+               tx.delete(relatedPapers)
+                    .where(and(eq(relatedPapers.paperId, paperIdValue), eq(relatedPapers.rankMethod, response.rankMethod)))
+                    .run();
 
                for (const rp of response.rankedPapers) {
                     // Extract DOI from the URL when it's a doi.org link
@@ -112,6 +146,8 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                          relevanceScore: rp.score,
                          bcScore: rp.bcScore,
                          ccScore: rp.ccScore,
+                         rankMethod: response.rankMethod,
+                         embeddingModel: response.embeddingModel ?? null,
                     }).run();
                }
           });

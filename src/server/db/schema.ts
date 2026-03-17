@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { text, integer, real, sqliteTable, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { text, integer, real, sqliteTable, blob, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
 import { Document } from "@langchain/core/documents";
 
 export const messages = sqliteTable("messages", {
@@ -212,25 +212,40 @@ export const papers = sqliteTable("papers", {
           .default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const relatedPapers = sqliteTable("related_papers", {
-     id: integer("id").primaryKey(),
-     paperId: integer("paper_id")
-          .notNull()
-          .references(() => papers.id, { onDelete: "cascade" }),
-     title: text("title").notNull(),
-     authors: text("authors"),
-     year: integer("year"),
-     venue: text("venue"),
-     abstract: text("abstract"),
-     doi: text("doi"),
-     semanticScholarId: text("semantic_scholar_id"),
-     relevanceScore: real("relevance_score"),
-     bcScore: real("bc_score"),
-     ccScore: real("cc_score"),
-     createdAt: text("created_at")
-          .notNull()
-          .default(sql`CURRENT_TIMESTAMP`),
-});
+export const relatedPapers = sqliteTable(
+     "related_papers",
+     {
+          id: integer("id").primaryKey(),
+          paperId: integer("paper_id")
+               .notNull()
+               .references(() => papers.id, { onDelete: "cascade" }),
+          title: text("title").notNull(),
+          authors: text("authors"),
+          year: integer("year"),
+          venue: text("venue"),
+          abstract: text("abstract"),
+          doi: text("doi"),
+          semanticScholarId: text("semantic_scholar_id"),
+          relevanceScore: real("relevance_score"),
+          bcScore: real("bc_score"),
+          ccScore: real("cc_score"),
+          /** Which ranking method produced this row: "bibliographic" | "embedding" */
+          rankMethod: text("rank_method").notNull().default("bibliographic"),
+          /** The embedding model key used (null for bibliographic method) */
+          embeddingModel: text("embedding_model"),
+          createdAt: text("created_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+     },
+     (table) => ({
+          // Allows both result sets (bibliographic + embedding) to coexist per source paper
+          uniqIdx: uniqueIndex("related_papers_paper_s2_method_idx").on(
+               table.paperId,
+               table.semanticScholarId,
+               table.rankMethod,
+          ),
+     })
+);
 
 const TEXT_FORMAT_ENUM = ["markdown", "text", "json", "yaml", "toml", "xml", "csv", "ini", "log", "env"] as const;
 
@@ -287,11 +302,30 @@ export const paperEdgeCache = sqliteTable("paper_edge_cache", {
 export const paperMetadataCache = sqliteTable("paper_metadata_cache", {
      paperId: text("paper_id").primaryKey(),
      dataJson: text("data_json").notNull(),
+     title: text("title"), // Explicit title field for quick lookup
      abstract: text("abstract"), // Explicit abstract field for embedding cache
-     embedding: blob("embedding"), // Store the abstract embedding vector
-     embeddingModel: text("embedding_model"), // Track which model generated the vector
+     embedding: blob("embedding"), // Legacy single-model embedding (superseded by paperAbstractEmbeddings)
+     embeddingModel: text("embedding_model"), // Legacy — tracks which model generated the vector above
      fetchedAt: integer("fetched_at").notNull(),
 });
+
+/**
+ * Per-paper, per-model abstract embedding cache.
+ * Stores one embedding vector per (S2 paper ID, embedding model key) pair so that
+ * switching or comparing models never requires re-embedding already-seen papers.
+ */
+export const paperAbstractEmbeddings = sqliteTable(
+     "paper_abstract_embeddings",
+     {
+          paperId: text("paper_id").notNull(),
+          modelKey: text("model_key").notNull(),
+          embedding: blob("embedding").notNull(),
+          createdAt: integer("created_at").notNull(),
+     },
+     (table) => ({
+          pk: primaryKey({ columns: [table.paperId, table.modelKey] }),
+     })
+);
 
 export const academicSearches = sqliteTable("academic_searches", {
      id: integer("id").primaryKey(),

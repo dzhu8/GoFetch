@@ -1,6 +1,6 @@
 import db from "@/server/db";
-import { paperEdgeCache, paperMetadataCache } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
+import { paperEdgeCache, paperMetadataCache, paperAbstractEmbeddings } from "@/server/db/schema";
+import { and, eq } from "drizzle-orm";
 import configManager from "@/server/index";
 import modelRegistry from "@/server/providerRegistry";
 import { Buffer } from "node:buffer";
@@ -88,40 +88,56 @@ function metaCacheGet(paperId: string): any | null {
      try {
           const row = db.select().from(paperMetadataCache).where(eq(paperMetadataCache.paperId, paperId)).get();
           if (!row || Date.now() - row.fetchedAt > CACHE_TTL_MS) return null;
-          const data = JSON.parse(row.dataJson);
-          // Attach cached embedding if available and from the correct model
-          const defaultModel = configManager.getConfig("preferences.defaultEmbeddingModel");
-          const modelKey = typeof defaultModel === "object" ? defaultModel?.modelKey : null;
-          if (row.embedding && row.embeddingModel === modelKey) {
-               data._cachedEmbedding = Array.from(new Float32Array((row.embedding as Buffer).buffer, (row.embedding as Buffer).byteOffset, (row.embedding as Buffer).byteLength / 4));
-          }
-          return data;
+          return JSON.parse(row.dataJson);
      } catch { return null; }
 }
 
 function metaCacheSet(paperId: string, data: any): void {
      try {
           const now = Date.now();
-          const defaultModel = configManager.getConfig("preferences.defaultEmbeddingModel");
-          const modelKey = typeof defaultModel === "object" ? defaultModel?.modelKey : null;
-
-          const values: any = {
+          const values = {
                paperId,
                dataJson: JSON.stringify(data),
+               title: data.title || null,
                abstract: data.abstract || null,
                fetchedAt: now,
           };
-
-          if (data._cachedEmbedding && modelKey) {
-               values.embedding = Buffer.from(new Float32Array(data._cachedEmbedding).buffer);
-               values.embeddingModel = modelKey;
-          }
-
           db.insert(paperMetadataCache)
                .values(values)
                .onConflictDoUpdate({
                     target: paperMetadataCache.paperId,
                     set: values,
+               })
+               .run();
+     } catch { /* non-fatal */ }
+}
+
+// ── Per-model abstract embedding cache ───────────────────────────────────────
+// Stores one embedding vector per (S2 paper ID, model key) pair — survives model
+// switching so previously embedded papers never need to be re-embedded.
+
+function embCacheGet(paperId: string, modelKey: string): number[] | null {
+     try {
+          const row = db
+               .select()
+               .from(paperAbstractEmbeddings)
+               .where(and(eq(paperAbstractEmbeddings.paperId, paperId), eq(paperAbstractEmbeddings.modelKey, modelKey)))
+               .get();
+          if (!row) return null;
+          const buf = row.embedding as Buffer;
+          return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+     } catch { return null; }
+}
+
+function embCacheSet(paperId: string, modelKey: string, vector: number[]): void {
+     try {
+          const buf = Buffer.from(new Float32Array(vector).buffer);
+          const now = Date.now();
+          db.insert(paperAbstractEmbeddings)
+               .values({ paperId, modelKey, embedding: buf, createdAt: now })
+               .onConflictDoUpdate({
+                    target: [paperAbstractEmbeddings.paperId, paperAbstractEmbeddings.modelKey],
+                    set: { embedding: buf, createdAt: now },
                })
                .run();
      } catch { /* non-fatal */ }
@@ -160,6 +176,10 @@ export interface RelatedPapersResponse {
      totalCandidates: number;
      /** Number of cited papers successfully resolved */
      resolvedCitations: number;
+     /** The ranking method used for this run */
+     rankMethod: string;
+     /** The embedding model key used (only set when rankMethod === "embedding") */
+     embeddingModel?: string;
 }
 
 /** Configuration for snowball search algorithm. */
@@ -168,6 +188,12 @@ export interface SnowballConfig {
      maxPapers?: number;
      bcThreshold?: number;
      ccThreshold?: number;
+     /**
+      * Known Semantic Scholar paper ID for the source paper.
+      * When provided, Phase 1 (seed resolution via API) is skipped entirely.
+      * The route handler should populate this from `papers.semanticScholarId`.
+      */
+     seedPaperS2Id?: string;
 }
 
 // ── Rate limiter ─────────────────────────────────────────────────────────────
@@ -428,6 +454,7 @@ async function buildSnowballGraph(
      const maxPapers = config?.maxPapers ?? TOP_N_DEFAULT;
      const bcThreshold = config?.bcThreshold ?? 0;
      const ccThreshold = config?.ccThreshold ?? 0;
+     const rankMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
      const s2Rl = new RateLimiter(S2_REQUESTS_PER_SECOND);
 
      _s2429Count = 0;
@@ -438,18 +465,30 @@ async function buildSnowballGraph(
      console.log(`[buildSnowballGraph] Starting for title: "${pdfTitle}", depth: ${depth}, max: ${maxPapers}`);
 
      // ── Phase 1: Resolve seed paper via Semantic Scholar ────────────────
-     let seedId: string | null = null;
+     // If the route already knows the seed's S2 ID (stored in papers.semanticScholarId),
+     // skip the external API lookup entirely and use what's cached.
+     let seedId: string | null = config?.seedPaperS2Id ?? null;
      let finalPdfTitle = pdfTitle;
+     let seedAbstract: string | undefined;
 
-     console.log(`[Phase 1] Resolving seed — title: "${pdfTitle.slice(0, 80)}"`);
-
-     const s2 = await s2ResolveSeed(pdfDoi, pdfTitle, s2Rl);
-     if (s2) {
-          seedId = s2.id;
-          finalPdfTitle = s2.title ?? pdfTitle;
-          console.log(`[Phase 1] Seed resolved via Semantic Scholar: ${seedId}`);
+     if (seedId) {
+          // Fast path: S2 ID already known from previous run.
+          console.log(`[Phase 1] Using cached S2 seed ID: ${seedId}`);
+          const cachedSeedMeta = metaCacheGet(seedId);
+          if (cachedSeedMeta?.title) finalPdfTitle = cachedSeedMeta.title;
+          if (cachedSeedMeta?.abstract) seedAbstract = cachedSeedMeta.abstract;
      } else {
-          console.warn(`[Phase 1] Semantic Scholar returned no result.`);
+          // Slow path: resolve via Semantic Scholar API.
+          console.log(`[Phase 1] Resolving seed — title: "${pdfTitle.slice(0, 80)}"`);
+          const s2 = await s2ResolveSeed(pdfDoi, pdfTitle, s2Rl);
+          if (s2) {
+               seedId = s2.id;
+               finalPdfTitle = s2.title ?? pdfTitle;
+               seedAbstract = s2.abstract ?? undefined;
+               console.log(`[Phase 1] Seed resolved via Semantic Scholar: ${seedId}`);
+          } else {
+               console.warn(`[Phase 1] Semantic Scholar returned no result.`);
+          }
      }
 
      if (!seedId) {
@@ -461,6 +500,7 @@ async function buildSnowballGraph(
                rankedPapers: [],
                totalCandidates: 0,
                resolvedCitations: 0,
+               rankMethod,
           } satisfies RelatedPapersResponse;
      }
 
@@ -542,7 +582,6 @@ async function buildSnowballGraph(
      console.log(`[Phase 5] Candidate pool size: ${candidateSet.size}`);
 
      // ── Phase 6: Filter, sort and take top-K ──────────────────────────────
-     const rankMethod = configManager.getConfig("personalization.graphRankMethod") || "bibliographic";
      // If embedding, we take a larger pool (1000) to find best semantic matches.
      // Otherwise, we take the final maxPapers (default 50).
      const initialLimit = rankMethod === "embedding" ? 1000 : maxPapers;
@@ -563,6 +602,7 @@ async function buildSnowballGraph(
                rankedPapers: [],
                totalCandidates: candidateSet.size,
                resolvedCitations: initialIds.length,
+               rankMethod,
           } satisfies RelatedPapersResponse;
      }
 
@@ -611,49 +651,59 @@ async function buildSnowballGraph(
      // ── Optional Phase 9: Embedding-based ranking ────────────────────────
      if (rankMethod === "embedding") {
           console.log(`[Phase 9] Re-ranking ${rankedPapers.length} candidates using embeddings...`);
-          const seedPaper = await s2ResolveSeed(pdfDoi, pdfTitle, s2Rl);
-          const seedAbstract = seedPaper?.abstract;
+          const defaultModel = configManager.getConfig("preferences.defaultEmbeddingModel");
+          const modelKey = typeof defaultModel === "object" ? defaultModel?.modelKey : null;
 
-          if (seedAbstract) {
-               // 1. Get seed embedding
-               const seedEmbedResult = await getEmbeddings([seedAbstract]);
-               if (seedEmbedResult) {
-                    const seedVector = seedEmbedResult[0];
+          // Resolve seed abstract: use value already captured in Phase 1 (avoids a second API call),
+          // or fall back to the metadata cache if Phase 1 was skipped and the abstract wasn't stored.
+          let effectiveSeedAbstract = seedAbstract;
+          if (!effectiveSeedAbstract && seedId) {
+               const cachedSeedMeta = metaCacheGet(seedId);
+               if (cachedSeedMeta?.abstract) effectiveSeedAbstract = cachedSeedMeta.abstract;
+          }
 
-                    // 2. Identify abstracts needing embedding
+          if (!effectiveSeedAbstract) {
+               console.warn("[Phase 9] No seed abstract available — skipping embedding re-ranking.");
+          } else {
+               // 1. Get seed embedding — check per-model cache before calling the embedding API.
+               let seedVector: number[] | null = seedId && modelKey ? embCacheGet(seedId, modelKey) : null;
+               if (!seedVector) {
+                    const seedEmbedResult = await getEmbeddings([effectiveSeedAbstract]);
+                    if (seedEmbedResult) {
+                         seedVector = seedEmbedResult[0];
+                         if (seedId && modelKey) embCacheSet(seedId, modelKey, seedVector);
+                    }
+               }
+
+               if (seedVector) {
+                    // 2. Identify abstracts needing embedding — check per-model cache first.
                     const toEmbedIndices: number[] = [];
                     const abstracts: string[] = [];
 
                     for (let i = 0; i < rankedPapers.length; i++) {
-                         const rp = rankedPapers[i];
-                         const meta = metadata.get(rp.paperId);
-                         if (meta?._cachedEmbedding) {
-                              rp.score = cosineSimilarity(seedVector, meta._cachedEmbedding);
-                         } else if (meta?.abstract) {
-                              toEmbedIndices.push(i);
-                              abstracts.push(meta.abstract);
+                         const cachedVec = modelKey ? embCacheGet(rankedPapers[i].paperId, modelKey) : null;
+                         if (cachedVec) {
+                              rankedPapers[i].score = cosineSimilarity(seedVector, cachedVec);
                          } else {
-                              rp.score = 0; // No abstract = no similarity
+                              const meta = metadata.get(rankedPapers[i].paperId);
+                              if (meta?.abstract) {
+                                   toEmbedIndices.push(i);
+                                   abstracts.push(meta.abstract);
+                              } else {
+                                   rankedPapers[i].score = 0; // No abstract = no similarity
+                              }
                          }
                     }
 
-                    // 3. Batch embed missing ones
+                    // 3. Batch embed missing ones and persist per model in paper_abstract_embeddings.
                     if (abstracts.length > 0) {
                          const batchResults = await getEmbeddings(abstracts);
                          if (batchResults) {
                               for (let i = 0; i < batchResults.length; i++) {
                                    const rpIndex = toEmbedIndices[i];
                                    const vector = batchResults[i];
-                                   const score = cosineSimilarity(seedVector, vector);
-                                   rankedPapers[rpIndex].score = score;
-
-                                   // Update cache with these new embeddings
-                                   const rpId = rankedPapers[rpIndex].paperId;
-                                   const meta = metadata.get(rpId);
-                                   if (meta) {
-                                        meta._cachedEmbedding = vector;
-                                        metaCacheSet(rpId, meta);
-                                   }
+                                   rankedPapers[rpIndex].score = cosineSimilarity(seedVector, vector);
+                                   if (modelKey) embCacheSet(rankedPapers[rpIndex].paperId, modelKey, vector);
                               }
                          }
                     }
@@ -682,9 +732,7 @@ async function buildSnowballGraph(
                          .filter(p => p.score >= embedThreshold)
                          .slice(0, maxPapers);
                     
-                    // Since the user wants to remove BC/CC from display when using embeddings,
-                    // we can zero them out here so the API doesn't return them as meaningful values.
-                    // (They will be hidden in the UI anyway based on the next change).
+                    // Zero out BC/CC scores — not meaningful for embedding-ranked results
                     for (const rp of rankedPapers) {
                         rp.bcScore = 0;
                         rp.ccScore = 0;
@@ -698,6 +746,10 @@ async function buildSnowballGraph(
      }
      console.log(`[Phase 8/9] Final rankedPapers list size: ${rankedPapers.length}`);
 
+     const usedEmbeddingModel = rankMethod === "embedding"
+          ? (() => { const m = configManager.getConfig("preferences.defaultEmbeddingModel"); return typeof m === "object" ? m?.modelKey : null; })()
+          : undefined;
+
      return {
           pdfTitle: finalPdfTitle,
           pdfDoi,
@@ -705,6 +757,8 @@ async function buildSnowballGraph(
           rankedPapers,
           totalCandidates: candidateSet.size,
           resolvedCitations: initialIds.length,
+          rankMethod,
+          embeddingModel: usedEmbeddingModel ?? undefined,
      } satisfies RelatedPapersResponse;
 }
 

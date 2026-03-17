@@ -25,6 +25,13 @@ sqlite.exec(`
           data_json TEXT NOT NULL,
           fetched_at INTEGER NOT NULL
      );
+     CREATE TABLE IF NOT EXISTS paper_abstract_embeddings (
+          paper_id   TEXT    NOT NULL,
+          model_key  TEXT    NOT NULL,
+          embedding  BLOB    NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (paper_id, model_key)
+     );
 `);
 
 export default db;

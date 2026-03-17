@@ -7,6 +7,7 @@ import {
      ArrowLeft,
      AlertCircle,
      Check,
+     ChevronDown,
      ClipboardCopy,
      Database,
      FileText,
@@ -445,6 +446,40 @@ function PaperCard({
      isComputingRelated: boolean;
 }) {
      const isUploading = paper.status === "uploading" || paper.status === "processing";
+     const [isRelatedDropdownOpen, setIsRelatedDropdownOpen] = useState(false);
+     const [rankMethod, setRankMethod] = useState<string>("bibliographic");
+
+     useEffect(() => {
+          const fetchConfig = async () => {
+               try {
+                    const res = await fetch("/api/config");
+                    if (res.ok) {
+                         const data = await res.json();
+                         const method = data.config?.personalization?.graphRankMethod || "bibliographic";
+                         setRankMethod(method);
+                    }
+               } catch (err) {
+                    console.error("Failed to fetch rank method config", err);
+               }
+          };
+          fetchConfig();
+     }, []);
+
+     const handleSwitchMethod = async (method: string) => {
+          try {
+               await fetch("/api/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                         key: "personalization.graphRankMethod",
+                         value: method,
+                    }),
+               });
+               setRankMethod(method);
+          } catch (err) {
+               console.error("Failed to update rank method config", err);
+          }
+     };
 
      if (isUploading) {
           return (
@@ -510,23 +545,69 @@ function PaperCard({
 
                     {/* Action buttons */}
                     <div className="mt-auto flex items-center justify-end gap-1 pt-2 border-t border-light-200/50 dark:border-dark-200/50">
-                         <button
-                              type="button"
-                              onClick={(e) => {
-                                   e.stopPropagation();
-                                   onComputeRelated();
-                              }}
-                              disabled={isComputingRelated}
-                              className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-[#F8B692] hover:bg-[#F8B692]/10 transition-colors duration-200 disabled:opacity-50"
-                              aria-label="Compute related papers"
-                              title="Related papers"
-                         >
-                              {isComputingRelated ? (
-                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                   <Network className="w-3.5 h-3.5" />
+                         <div className="relative">
+                              <div className="flex items-center gap-0 bg-black/5 dark:bg-white/5 rounded-lg overflow-hidden border border-transparent hover:border-black/5 dark:hover:border-white/5 transition-all">
+                                   <button
+                                        type="button"
+                                        onClick={(e) => {
+                                             e.stopPropagation();
+                                             onComputeRelated();
+                                        }}
+                                        disabled={isComputingRelated}
+                                        className="py-1.5 pl-2 pr-1 text-black/40 dark:text-white/40 hover:text-[#F8B692] transition-colors duration-200 disabled:opacity-50"
+                                        aria-label="Compute related papers"
+                                        title={`Related papers (${rankMethod === "embedding" ? "semantic" : "bibliographic"})`}
+                                   >
+                                        {isComputingRelated ? (
+                                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                             <Network className="w-3.5 h-3.5" />
+                                        )}
+                                   </button>
+                                   <button
+                                        type="button"
+                                        onClick={(e) => {
+                                             e.stopPropagation();
+                                             setIsRelatedDropdownOpen(!isRelatedDropdownOpen);
+                                        }}
+                                        className="py-1.5 pr-1.5 pl-0.5 text-black/20 dark:text-white/20 hover:text-[#F8B692] transition-colors duration-200"
+                                   >
+                                        <ChevronDown className={`w-3 h-3 transition-transform ${isRelatedDropdownOpen ? "rotate-180" : ""}`} />
+                                   </button>
+                              </div>
+
+                              {isRelatedDropdownOpen && (
+                                   <div
+                                        className="absolute bottom-full right-0 mb-2 w-48 rounded-xl bg-white dark:bg-[#1a1a1a] border border-light-200 dark:border-dark-200 shadow-xl z-50 overflow-hidden"
+                                        onClick={(e) => e.stopPropagation()}
+                                   >
+                                        <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-black/40 dark:text-white/40 font-bold border-b border-light-200 dark:border-dark-200">
+                                             Method
+                                        </div>
+                                        <button
+                                             onClick={() => {
+                                                  handleSwitchMethod("bibliographic");
+                                                  setIsRelatedDropdownOpen(false);
+                                             }}
+                                             className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F8B692]/5 transition-colors flex items-center justify-between ${rankMethod === "bibliographic" ? "text-[#F8B692] font-semibold bg-[#F8B692]/5" : "text-black/70 dark:text-white/70"}`}
+                                        >
+                                             Bibliographic (BC+CC)
+                                             {rankMethod === "bibliographic" && <Check className="w-3 h-3" />}
+                                        </button>
+                                        <button
+                                             onClick={() => {
+                                                  handleSwitchMethod("embedding");
+                                                  setIsRelatedDropdownOpen(false);
+                                             }}
+                                             className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F8B692]/5 transition-colors flex items-center justify-between ${rankMethod === "embedding" ? "text-[#F8B692] font-semibold bg-[#F8B692]/5" : "text-black/70 dark:text-white/70"}`}
+                                        >
+                                             Semantic Similarity
+                                             {rankMethod === "embedding" && <Check className="w-3 h-3" />}
+                                        </button>
+                                   </div>
                               )}
-                         </button>
+                         </div>
+
                          <button
                               type="button"
                               onClick={(e) => {

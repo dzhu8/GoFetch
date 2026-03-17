@@ -10,6 +10,7 @@ import {
      Globe,
      Loader2,
      Network,
+     ChevronDown,
 } from "lucide-react";
 
 interface RelatedPaper {
@@ -25,6 +26,8 @@ interface RelatedPaper {
      relevanceScore: number | null;
      bcScore: number | null;
      ccScore: number | null;
+     rankMethod: string;
+     embeddingModel: string | null;
      createdAt: string;
 }
 
@@ -59,11 +62,14 @@ export default function RelatedPapersPage() {
      const [paper, setPaper] = useState<PaperInfo | null>(null);
      const [relatedPapers, setRelatedPapers] = useState<RelatedPaper[]>([]);
      const [rankMethod, setRankMethod] = useState<string>("bibliographic");
+     const [cachedMethods, setCachedMethods] = useState<string[]>([]);
+     const [embeddingResultsStale, setEmbeddingResultsStale] = useState(false);
      const [isLoading, setIsLoading] = useState(true);
      const [isComputing, setIsComputing] = useState(false);
      const [error, setError] = useState<string | null>(null);
+     const [isMethodDropdownOpen, setIsMethodDropdownOpen] = useState(false);
 
-     const fetchData = useCallback(async () => {
+     const fetchData = useCallback(async (method?: string) => {
           try {
                setIsLoading(true);
                setError(null);
@@ -75,12 +81,24 @@ export default function RelatedPapersPage() {
                     if (data.paper) setPaper(data.paper);
                }
 
-               // Fetch saved related papers
-               const rpRes = await fetch(`/api/papers/${paperId}/related-papers`);
+               // Fetch saved related papers (optionally for a specific method)
+               const url = method
+                    ? `/api/papers/${paperId}/related-papers?method=${encodeURIComponent(method)}`
+                    : `/api/papers/${paperId}/related-papers`;
+               const rpRes = await fetch(url);
                if (!rpRes.ok) throw new Error("Failed to fetch related papers");
                const rpData = await rpRes.json();
-               setRelatedPapers(rpData.relatedPapers ?? []);
+               let results = rpData.relatedPapers ?? [];
+               
+               // Sort by relevance score (which is already calculated based on rankMethod in the backend)
+               results = results.sort((a: RelatedPaper, b: RelatedPaper) => 
+                    (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0)
+               );
+
+               setRelatedPapers(results);
                setRankMethod(rpData.rankMethod ?? "bibliographic");
+               setCachedMethods(rpData.cachedMethods ?? []);
+               setEmbeddingResultsStale(rpData.embeddingResultsStale ?? false);
           } catch (err) {
                setError(err instanceof Error ? err.message : "Failed to load related papers");
           } finally {
@@ -88,16 +106,42 @@ export default function RelatedPapersPage() {
           }
      }, [paperId]);
 
-     const handleCompute = async () => {
+     /** Switch to a method that already has cached results — no recompute needed. */
+     const switchMethod = async (method: string) => {
+          setIsMethodDropdownOpen(false);
+          // Update global config so future Recompute uses this method
+          await fetch("/api/config", {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({ key: "personalization.graphRankMethod", value: method }),
+          });
+          await fetchData(method);
+     };
+
+     const handleCompute = async (selectedMethod?: string) => {
           setIsComputing(true);
           setError(null);
+          setIsMethodDropdownOpen(false);
           try {
+               // Update global config first if method changed
+               if (selectedMethod && selectedMethod !== rankMethod) {
+                    await fetch("/api/config", {
+                         method: "POST",
+                         headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({
+                              key: "personalization.graphRankMethod",
+                              value: selectedMethod,
+                         }),
+                    });
+                    setRankMethod(selectedMethod);
+               }
+
                const res = await fetch(`/api/papers/${paperId}/related-papers`, { method: "POST" });
                if (!res.ok) {
                     const data = await res.json();
                     throw new Error(data.error || "Failed to compute related papers");
                }
-               await fetchData();
+               await fetchData(selectedMethod ?? rankMethod);
           } catch (err) {
                setError(err instanceof Error ? err.message : "Failed to compute related papers");
           } finally {
@@ -150,25 +194,90 @@ export default function RelatedPapersPage() {
                                    )}
                               </p>
                          </div>
-                         {!isLoading && (
-                              <button
-                                   type="button"
-                                   onClick={handleCompute}
-                                   disabled={isComputing}
-                                   className="ml-auto shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#F8B692]/10 text-[#F8B692] hover:bg-[#F8B692]/20 disabled:opacity-50 transition-colors"
-                                   title="Recompute related papers"
-                              >
-                                   {isComputing ? (
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                   ) : (
-                                        <Network className="w-3.5 h-3.5" />
+                    {!isLoading && (
+                              <div className="ml-auto flex items-center gap-2">
+                                   {embeddingResultsStale && rankMethod === "embedding" && (
+                                        <div className="flex items-center gap-1 text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg">
+                                             <AlertCircle className="w-3 h-3" />
+                                             Model changed
+                                        </div>
                                    )}
-                                   {isComputing ? "Computing..." : "Recompute"}
-                              </button>
-                         )}
-                    </div>
-               </div>
+                                   <div className="relative">
+                                   <div className="flex items-center gap-0.5">
+                                        <button
+                                             type="button"
+                                             onClick={() => handleCompute()}
+                                             disabled={isComputing}
+                                             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-l-lg text-xs font-medium bg-[#F8B692]/10 text-[#F8B692] hover:bg-[#F8B692]/20 disabled:opacity-50 transition-colors border-r border-[#F8B692]/20"
+                                             title={`Compute using ${rankMethod === "embedding" ? "Embedding Similarity" : "Bibliographic (BC+CC)"}`}
+                                        >
+                                             {isComputing ? (
+                                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                             ) : (
+                                                  <Network className="w-3.5 h-3.5" />
+                                             )}
+                                             {isComputing ? "Computing..." : "Recompute"}
+                                        </button>
+                                        <button
+                                             type="button"
+                                             onClick={() => setIsMethodDropdownOpen(!isMethodDropdownOpen)}
+                                             disabled={isComputing}
+                                             className="px-2 py-1.5 rounded-r-lg bg-[#F8B692]/10 text-[#F8B692] hover:bg-[#F8B692]/20 disabled:opacity-50 transition-colors"
+                                        >
+                                             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isMethodDropdownOpen ? "rotate-180" : ""}`} />
+                                        </button>
+                                   </div>
 
+                                   {isMethodDropdownOpen && (
+                                        <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white dark:bg-[#1a1a1a] border border-light-200 dark:border-dark-200 shadow-xl z-50 overflow-hidden">
+                                             <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-black/40 dark:text-white/40 font-bold border-b border-light-200 dark:border-dark-200">
+                                                  Switch View
+                                             </div>
+                                             {(["bibliographic", "embedding"] as const).map((m) => {
+                                                  const isCurrent = rankMethod === m;
+                                                  const isCached = cachedMethods.includes(m);
+                                                  const isStale = m === "embedding" && embeddingResultsStale;
+                                                  return (
+                                                       <button
+                                                            key={m}
+                                                            onClick={() => isCached && !isCurrent ? switchMethod(m) : undefined}
+                                                            disabled={isCurrent || !isCached}
+                                                            className={`w-full text-left px-3 py-2 text-xs transition-colors flex items-center justify-between gap-2
+                                                                 ${isCurrent ? "text-[#F8B692] font-semibold bg-[#F8B692]/5 cursor-default" : ""}
+                                                                 ${isCached && !isCurrent ? "hover:bg-[#F8B692]/5 text-black/70 dark:text-white/70 cursor-pointer" : ""}
+                                                                 ${!isCached ? "text-black/30 dark:text-white/30 cursor-not-allowed" : ""}
+                                                            `}
+                                                       >
+                                                            <span>{m === "embedding" ? "Embedding Similarity" : "Bibliographic (BC+CC)"}</span>
+                                                            <span className="shrink-0 text-[10px]">
+                                                                 {isCurrent ? (
+                                                                      <span className="text-[#F8B692]">active</span>
+                                                                 ) : isStale ? (
+                                                                      <span className="text-amber-500">stale</span>
+                                                                 ) : isCached ? (
+                                                                      <span className="text-green-500">cached</span>
+                                                                 ) : (
+                                                                      <span className="opacity-40">not computed</span>
+                                                                 )}
+                                                            </span>
+                                                       </button>
+                                                  );
+                                             })}
+                                             <div className="border-t border-light-200 dark:border-dark-200 p-1">
+                                                  <button
+                                                       onClick={() => { setIsMethodDropdownOpen(false); handleCompute(); }}
+                                                       className="w-full text-left px-3 py-1.5 text-xs text-black/50 dark:text-white/50 hover:text-[#F8B692] hover:bg-[#F8B692]/5 transition-colors rounded-lg"
+                                                  >
+                                                       Force recompute current method
+                                                  </button>
+                                             </div>
+                                        </div>
+                                   )}
+                              </div>
+                         </div>
+                    )}
+               </div>
+          </div>
                {/* Error */}
                {error && (
                     <div className="mx-6 max-w-4xl mx-auto w-full mb-4 flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-sm">
@@ -200,10 +309,14 @@ export default function RelatedPapersPage() {
                               <div className="flex flex-col items-center justify-center py-16 text-center">
                                    <FileText className="w-12 h-12 text-black/20 dark:text-white/20 mb-3" />
                                    <p className="text-base font-medium text-black/70 dark:text-white/70 mb-1">
-                                        No related papers yet
+                                        {cachedMethods.length === 0
+                                             ? "No related papers yet"
+                                             : `No results for ${rankMethod === "embedding" ? "embedding similarity" : "bibliographic"} method`}
                                    </p>
                                    <p className="text-sm text-black/50 dark:text-white/50 mb-4">
-                                        Click &ldquo;Recompute&rdquo; to find related papers from this paper&rsquo;s references.
+                                        {cachedMethods.length === 0
+                                             ? "Click \u201cRecompute\u201d to find related papers from this paper\u2019s references."
+                                             : `Click \u201cRecompute\u201d to compute ${rankMethod === "embedding" ? "embedding similarity" : "bibliographic (BC+CC)"} results.`}
                                    </p>
                               </div>
                          ) : (
