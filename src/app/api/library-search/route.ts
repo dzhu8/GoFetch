@@ -10,6 +10,7 @@ import {
      paperAbstractEmbeddings,
      paperSourceLinks,
      libraryFolders,
+     librarySearchCache,
 } from "@/server/db/schema";
 import configManager from "@/server";
 import modelRegistry from "@/server/providerRegistry";
@@ -134,20 +135,63 @@ export async function POST(req: NextRequest) {
           const embModel = await provider.provider.loadEmbeddingModel(modelPref.modelKey);
           const modelKey = `${modelPref.providerId}/${modelPref.modelKey}`;
 
+          // ── Relevant Settings for Cache ───────────────────────────────
+          const personalization = configManager.getConfig("personalization") || {};
+          const settingsHash = JSON.stringify({
+               topN,
+               graphDepth: personalization.snowballDepth,
+               graphMaxPapers: personalization.snowballMaxPapers,
+               // add other thresholds if they affect the final ranked list
+               bcThreshold: personalization.snowballBcThreshold,
+               ccThreshold: personalization.snowballCcThreshold,
+               embThreshold: personalization.snowballEmbeddingThreshold,
+          });
+
+          // ── Check Cache ───────────────────────────────────────────────
+          const normalizedQuery = query.trim().toLowerCase();
+          let targetFolderIds: number[];
+          if (folderIds && folderIds.length > 0) {
+               targetFolderIds = [...folderIds].sort((a, b) => a - b);
+          } else {
+               const allFolders = db.select({ id: libraryFolders.id }).from(libraryFolders).all();
+               targetFolderIds = allFolders.map((f) => f.id).sort((a, b) => a - b);
+          }
+          const folderIdsJson = JSON.stringify(targetFolderIds);
+
+          const cached = db
+               .select()
+               .from(librarySearchCache)
+               .where(
+                    and(
+                         eq(librarySearchCache.query, normalizedQuery),
+                         eq(librarySearchCache.folderIdsJson, folderIdsJson),
+                         eq(librarySearchCache.searchScope, searchScope),
+                         eq(librarySearchCache.modelKey, modelKey),
+                         eq(librarySearchCache.settingsHash, settingsHash),
+                    ),
+               )
+               .get();
+
+          if (cached) {
+               try {
+                    const results = JSON.parse(cached.resultsJson) as SearchResult[];
+                    return NextResponse.json({
+                         results,
+                         embeddingModel: modelKey,
+                         totalCandidates: results.length, // approximation
+                         embeddedOnTheFly: 0,
+                         fromCache: true,
+                    } satisfies LibrarySearchResponse & { fromCache: boolean });
+               } catch (e) {
+                    console.error("[library-search] Cache parse error:", e);
+               }
+          }
+
           // ── Embed the query ────────────────────────────────────────────
           const [queryVec] = await embModel.embedDocuments([query.trim()]);
 
           let embeddedOnTheFly = 0;
           const candidates: Array<{ vec: number[]; result: SearchResult }> = [];
-
-          // ── Determine which library folders to search ──────────────────
-          let targetFolderIds: number[];
-          if (folderIds && folderIds.length > 0) {
-               targetFolderIds = folderIds;
-          } else {
-               const allFolders = db.select({ id: libraryFolders.id }).from(libraryFolders).all();
-               targetFolderIds = allFolders.map((f) => f.id);
-          }
 
           // ── Collect seed paper IDs from target folders ─────────────────
           const seedPapers =
@@ -380,6 +424,32 @@ export async function POST(req: NextRequest) {
                .map(({ vec, result }) => ({ ...result, score: cosineSimilarity(queryVec, vec) }))
                .sort((a, b) => b.score - a.score)
                .slice(0, topN);
+
+          // ── Save to Cache ──────────────────────────────────────────────
+          db.insert(librarySearchCache)
+               .values({
+                    query: normalizedQuery,
+                    folderIdsJson,
+                    searchScope,
+                    modelKey,
+                    settingsHash,
+                    resultsJson: JSON.stringify(ranked),
+                    createdAt: Date.now(),
+               })
+               .onConflictDoUpdate({
+                    target: [
+                         librarySearchCache.query,
+                         librarySearchCache.folderIdsJson,
+                         librarySearchCache.searchScope,
+                         librarySearchCache.modelKey,
+                         librarySearchCache.settingsHash,
+                    ],
+                    set: {
+                         resultsJson: JSON.stringify(ranked),
+                         createdAt: Date.now(),
+                    },
+               })
+               .run();
 
           return NextResponse.json({
                results: ranked,

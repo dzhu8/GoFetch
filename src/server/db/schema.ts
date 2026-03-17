@@ -400,3 +400,32 @@ export const academicSearches = sqliteTable("academic_searches", {
           .notNull()
           .default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const librarySearchCache = sqliteTable(
+     "library_search_cache",
+     {
+          id: integer("id").primaryKey(),
+          /** Standardized (lowercase) query string */
+          query: text("query").notNull(),
+          /** Sorted, JSON-stringified array of folder IDs */
+          folderIdsJson: text("folder_ids_json").notNull(),
+          /** Search scope: "papers" | "web_abstracts" | "both" */
+          searchScope: text("search_scope").notNull().default("both"),
+          /** The embedding model key used */
+          modelKey: text("model_key").notNull(),
+          /** Hash or JSON of relevant app settings (to recompute if settings change) */
+          settingsHash: text("settings_hash"),
+          /** JSON-stringified search results */
+          resultsJson: text("results_json").notNull(),
+          createdAt: integer("created_at").notNull(),
+     },
+     (table) => ({
+          queryFolderIdx: uniqueIndex("library_search_cache_query_folder_idx").on(
+               table.query,
+               table.folderIdsJson,
+               table.searchScope,
+               table.modelKey,
+               table.settingsHash
+          ),
+     })
+);
