@@ -323,67 +323,87 @@ function stitchSegments(segments: Segment[]): EntryAccumulator[] {
 // Step 7 – DOI detection
 // ---------------------------------------------------------------------------
 
-const DOI_PATTERNS = [
-     /https?:\/\/doi\.org\/(10\.\d{4,}\/\S+)/i,
-     /\bDOI:\s*(10\.\d{4,}\/\S+)/i,
-     /\b(10\.\d{4,}\/\S+)/,
-];
-
 const TRAILING_PUNCT = /[.,;:)\]}"']+$/;
 
+/** Strip trailing punctuation from a potential DOI string. */
+function cleanDoi(raw: string): string {
+     let doi = raw;
+     let prev = "";
+     while (doi !== prev) {
+          prev = doi;
+          doi = doi.replace(TRAILING_PUNCT, "");
+     }
+     return doi;
+}
+
+/**
+ * Matches a DOI in a URL context, stopping at characters that indicate the
+ * DOI has ended and supplemental / query / fragment info follows:
+ *   /-/  → publisher supplemental separator (e.g. Springer)
+ *   ?    → URL query string
+ *   #    → URL fragment
+ *   whitespace → end of token
+ */
+const URL_DOI_RE = /10\.\d{4,}\/(?:[^/?#\s]|\/(?!-))+/i;
+const EMBED_DOI_ORG_RE = new RegExp("doi\\.org/(" + URL_DOI_RE.source + ")", "i");
+const DOI_SEGMENT_RE = /(?:\/doi\/(?:\w+\/)*|doi:)/i;
+
 function extractDoi(text: string): string | null {
-     const matches: string[] = [];
-     
-     // 1. Check existing DOI patterns (DOI itself, or labels)
-     for (const re of DOI_PATTERNS) {
-          const m = re.exec(text);
-          if (m) {
-               let doi = m[1];
-               // Verify this isn't part of a non-doi.org URL (heuristic)
-               const startIdx = m.index;
-               const before = text.slice(Math.max(0, startIdx - 20), startIdx);
-               if (before.includes("http") && !before.includes("doi.org")) {
-                    continue; 
-               }
+     const candidates: string[] = [];
+     // Track spans covered by URLs so non-URL patterns don't double-count them.
+     const urlSpans: [number, number][] = [];
 
-               let prev = "";
-               while (doi !== prev) {
-                    prev = doi;
-                    doi = doi.replace(TRAILING_PUNCT, "");
-               }
-               matches.push(doi);
+     let m: RegExpExecArray | null;
+
+     // ── 1. Canonical doi.org URL ─────────────────────────────────────────
+     //    Take everything after doi.org/ with standard trailing-punct cleanup.
+     const doiOrgRe = /https?:\/\/doi\.org\/(10\.\d{4,}\/\S+)/gi;
+     while ((m = doiOrgRe.exec(text)) !== null) {
+          urlSpans.push([m.index, m.index + m[0].length]);
+          candidates.push(cleanDoi(m[1]));
+     }
+
+     // ── 2. Non-doi.org https URLs ────────────────────────────────────────
+     //    DOI extraction stops at /-/, ?, #, or whitespace.
+     const otherUrlRe = /https?:\/\/(?!doi\.org)\S+/gi;
+     while ((m = otherUrlRe.exec(text)) !== null) {
+          const url = m[0];
+          urlSpans.push([m.index, m.index + url.length]);
+
+          // 2a. URL embeds a doi.org/ redirect — start after doi.org/
+          const embedded = EMBED_DOI_ORG_RE.exec(url);
+          if (embedded) {
+               candidates.push(cleanDoi(embedded[1]));
+               continue;
+          }
+
+          // 2b. URL has a /doi/ path segment or doi: URI scheme
+          //     e.g. https://www.pnas.org/doi/10.1073/pnas.2400677121#supplemental
+          const seg = DOI_SEGMENT_RE.exec(url);
+          if (seg) {
+               const after = url.slice(seg.index! + seg[0].length);
+               const doi = URL_DOI_RE.exec(after);
+               if (doi) candidates.push(cleanDoi(doi[0]));
           }
      }
 
-     // 2. Additional check for doi.org links specifically
-     const doiOrgRegex = /https?:\/\/doi\.org\/(10\.\d{4,}\/[^\s?#]+)/gi;
-     let m;
-     while ((m = doiOrgRegex.exec(text)) !== null) {
-          let doi = m[1];
-          let prev = "";
-          while (doi !== prev) {
-               prev = doi;
-               doi = doi.replace(TRAILING_PUNCT, "");
-          }
-          matches.push(doi);
+     // ── 3. "DOI:" text label (not inside a URL) ──────────────────────────
+     const doiLabelRe = /\bDOI:\s*(10\.\d{4,}\/\S+)/gi;
+     while ((m = doiLabelRe.exec(text)) !== null) {
+          if (!urlSpans.some(([s, e]) => m!.index >= s && m!.index < e))
+               candidates.push(cleanDoi(m[1]));
      }
 
-     // 3. Fallback for raw "doi:" prefix with specific delimiters
-     const rawDoiRegex = /\bdoi:\s*(10\.\d{4,}\/[^\s?#]+)/gi;
-     while ((m = rawDoiRegex.exec(text)) !== null) {
-          let doi = m[1];
-          let prev = "";
-          while (doi !== prev) {
-               prev = doi;
-               doi = doi.replace(TRAILING_PUNCT, "");
-          }
-          matches.push(doi);
+     // ── 4. Bare 10.xxxx/... (not inside a URL) ───────────────────────────
+     const bareRe = /\b(10\.\d{4,}\/\S+)/g;
+     while ((m = bareRe.exec(text)) !== null) {
+          if (!urlSpans.some(([s, e]) => m!.index >= s && m!.index < e))
+               candidates.push(cleanDoi(m[1]));
      }
 
-     if (matches.length === 0) return null;
-     
-     // Return the shortest match (heuristic: the real DOI is likely shorter than complex URLs)
-     return matches.sort((a, b) => a.length - b.length)[0];
+     if (candidates.length === 0) return null;
+     // Return the shortest candidate as the most likely canonical DOI.
+     return candidates.sort((a, b) => a.length - b.length)[0];
 }
 
 // ---------------------------------------------------------------------------
