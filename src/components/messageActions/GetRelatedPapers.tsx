@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect, Fragment } from "react";
-import { FileText, Loader2, Link, Upload, X, ChevronRight, LoaderCircle } from "lucide-react";
+import { FileText, Loader2, Link, Upload, X, ChevronRight, LoaderCircle, CheckCircle2, AlertCircle } from "lucide-react";
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -18,6 +18,13 @@ interface LibraryFolder {
 
 type Stage = "method" | "doi" | "folder" | null;
 
+interface ResolvedSeed {
+     s2Id: string;
+     title: string;
+     abstract?: string;
+     edgesCached: boolean;
+}
+
 const GetRelatedPapers = () => {
      const fileInputRef = useRef<HTMLInputElement | null>(null);
      const [loading, setLoading] = useState(false);
@@ -31,6 +38,8 @@ const GetRelatedPapers = () => {
      // DOI path
      const [doi, setDoi] = useState("");
      const [doiError, setDoiError] = useState("");
+     const [resolving, setResolving] = useState(false);
+     const [resolvedSeed, setResolvedSeed] = useState<ResolvedSeed | null>(null);
 
      // PDF path — folder picker
      const [folders, setFolders] = useState<LibraryFolder[]>([]);
@@ -64,6 +73,8 @@ const GetRelatedPapers = () => {
      const openMethodModal = () => {
           setDoi("");
           setDoiError("");
+          setResolvedSeed(null);
+          setResolving(false);
           setSelectedFolderId(null);
           setCreateMode(false);
           setNewFolderName("");
@@ -74,12 +85,41 @@ const GetRelatedPapers = () => {
      const close = () => setStage(null);
 
      // ── DOI flow ──────────────────────────────────────────────────────────
+     /** Step 1: Resolve the DOI to an S2 paper without starting the full crawl. */
      const handleDoiSubmit = async () => {
+          if (resolvedSeed) {
+               // Step 2: user confirmed — run with the already-known S2ID.
+               setStage(null);
+               await runRelatedPapersSearch(
+                    { pdfTitle: resolvedSeed.title, pdfDoi: doi.trim(), seedPaperS2Id: resolvedSeed.s2Id },
+               );
+               return;
+          }
+
           const trimmed = doi.trim();
           if (!trimmed) { setDoiError("Please enter a DOI."); return; }
           setDoiError("");
-          setStage(null);
-          await runRelatedPapersSearch({ pdfDoi: trimmed });
+          setResolving(true);
+          try {
+               const res = await fetch(
+                    `/api/related-papers/resolve?doi=${encodeURIComponent(trimmed)}`,
+               );
+               if (res.status === 404) {
+                    setDoiError("Paper not found on Semantic Scholar. Check the DOI and try again.");
+                    return;
+               }
+               if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    setDoiError(data.error || "Resolution failed.");
+                    return;
+               }
+               const data = await res.json();
+               setResolvedSeed(data as ResolvedSeed);
+          } catch {
+               setDoiError("Network error during resolution.");
+          } finally {
+               setResolving(false);
+          }
      };
 
      // ── PDF + folder flow ─────────────────────────────────────────────────
@@ -215,7 +255,7 @@ const GetRelatedPapers = () => {
 
      // ── Shared related-papers search ──────────────────────────────────────
      const runRelatedPapersSearch = async (
-          params: { pdfTitle?: string; pdfDoi?: string },
+          params: { pdfTitle?: string; pdfDoi?: string; seedPaperS2Id?: string },
           fileNameForNotification?: string,
      ) => {
           const displayName = params.pdfTitle || params.pdfDoi || fileNameForNotification || "paper";
@@ -348,36 +388,80 @@ const GetRelatedPapers = () => {
                               <p className="text-xs text-black/50 dark:text-white/50 mb-4">
                                    Paste the paper&apos;s DOI (e.g. <span className="font-mono">10.1038/s41586-023-06291-2</span>).
                               </p>
+
+                              {/* ── DOI input ── */}
                               <input
                                    type="text"
                                    value={doi}
-                                   onChange={(e) => { setDoi(e.target.value); if (doiError) setDoiError(""); }}
-                                   onKeyDown={(e) => { if (e.key === "Enter") handleDoiSubmit(); }}
+                                   onChange={(e) => {
+                                        setDoi(e.target.value);
+                                        if (doiError) setDoiError("");
+                                        if (resolvedSeed) setResolvedSeed(null);
+                                   }}
+                                   onKeyDown={(e) => { if (e.key === "Enter" && !resolvedSeed) handleDoiSubmit(); }}
                                    autoFocus
                                    placeholder="10.xxxx/..."
+                                   disabled={resolving}
                                    className={cn(
-                                        "w-full px-3 py-2 text-sm font-mono bg-light-secondary dark:bg-dark-secondary border rounded-lg text-black dark:text-white focus:outline-none focus:ring-2",
+                                        "w-full px-3 py-2 text-sm font-mono bg-light-secondary dark:bg-dark-secondary border rounded-lg text-black dark:text-white focus:outline-none focus:ring-2 disabled:opacity-60",
                                         doiError
                                              ? "border-red-400 focus:ring-red-400"
                                              : "border-light-200 dark:border-dark-200 focus:ring-[#F8B692]"
                                    )}
                               />
-                              {doiError && <p className="mt-1.5 text-xs text-red-500">{doiError}</p>}
+                              {doiError && (
+                                   <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
+                                        <AlertCircle size={12} />{doiError}
+                                   </p>
+                              )}
+
+                              {/* ── Resolved paper confirmation card ── */}
+                              {resolvedSeed && (
+                                   <div className="mt-3 rounded-xl border border-light-200 dark:border-dark-200 bg-light-secondary dark:bg-dark-secondary p-3 space-y-1">
+                                        <p className="text-xs font-semibold text-black dark:text-white leading-snug line-clamp-2">
+                                             {resolvedSeed.title}
+                                        </p>
+                                        <div className={cn(
+                                             "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full",
+                                             resolvedSeed.edgesCached
+                                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                        )}>
+                                             {resolvedSeed.edgesCached
+                                                  ? <><CheckCircle2 size={11} /> Edges cached — fast run</>
+                                                  : <><AlertCircle size={11} /> Fresh crawl required</>
+                                             }
+                                        </div>
+                                        <p className="text-[10px] text-black/40 dark:text-white/40 font-mono">
+                                             S2:{resolvedSeed.s2Id}
+                                        </p>
+                                   </div>
+                              )}
+
                               <div className="flex justify-between items-center mt-5">
                                    <button
                                         type="button"
-                                        onClick={() => setStage("method")}
+                                        onClick={() => {
+                                             if (resolvedSeed) { setResolvedSeed(null); }
+                                             else { setStage("method"); }
+                                        }}
                                         className="text-xs text-black/50 dark:text-white/50 hover:underline"
                                    >
-                                        ← Back
+                                        {resolvedSeed ? "← Change DOI" : "← Back"}
                                    </button>
                                    <button
                                         type="button"
                                         onClick={handleDoiSubmit}
-                                        disabled={!doi.trim()}
+                                        disabled={!doi.trim() || resolving}
                                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F8B692] text-black text-sm font-medium hover:bg-[#e6ad82] active:scale-95 transition-all disabled:opacity-50"
                                    >
-                                        Find Papers
+                                        {resolving ? (
+                                             <><LoaderCircle size={14} className="animate-spin" /> Resolving...</>
+                                        ) : resolvedSeed ? (
+                                             "Find Papers"
+                                        ) : (
+                                             "Look Up"
+                                        )}
                                    </button>
                               </div>
                          </div>

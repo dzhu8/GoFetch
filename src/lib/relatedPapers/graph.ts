@@ -825,6 +825,36 @@ async function buildSnowballGraph(
 // ── Public dispatcher ─────────────────────────────────────────────────────────
 
 /**
+ * Resolve a DOI (and/or title) to a Semantic Scholar seed paper without running
+ * the full graph expansion.  This is a lightweight call (one S2 API request) and
+ * can be used by the frontend to confirm a paper exists before committing to a
+ * potentially long snowball crawl.
+ *
+ * Also checks whether edge data (references + citations) for the resolved paper
+ * is already present in the local cache, which reliably indicates that a full
+ * graph run has been performed before and subsequent runs will be very fast.
+ */
+export async function resolveSeedPaper(
+     doi: string | undefined,
+     title: string,
+): Promise<{ s2Id: string; title: string; abstract?: string; edgesCached: boolean } | null> {
+     const rl = new RateLimiter(S2_REQUESTS_PER_SECOND);
+     const result = await s2ResolveSeed(doi, title, rl);
+     if (!result) return null;
+
+     // A prior full run will have written both edge vectors; treat both present as cached.
+     const refsCached = edgeCacheGet(result.id, "references") !== null;
+     const citsCached = edgeCacheGet(result.id, "citations") !== null;
+
+     return {
+          s2Id: result.id,
+          title: result.title ?? title,
+          abstract: result.abstract ?? undefined,
+          edgesCached: refsCached && citsCached,
+     };
+}
+
+/**
  * Build a related-papers graph using the specified method.
  * This is the single entry point shared by the Next.js API route and the CLI.
  */
