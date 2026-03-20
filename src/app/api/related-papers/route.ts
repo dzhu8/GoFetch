@@ -13,14 +13,16 @@ export async function POST(req: NextRequest) {
      try {
           const body = await req.json();
           const { pdfTitle, pdfDoi, method } = body as {
-               pdfTitle: string;
+               pdfTitle?: string;
                pdfDoi?: string;
                method?: GraphConstructionMethod;
           };
 
-          if (!pdfTitle) {
-               return NextResponse.json({ error: "pdfTitle is required." }, { status: 400 });
+          if (!pdfTitle && !pdfDoi) {
+               return NextResponse.json({ error: "pdfTitle or pdfDoi is required." }, { status: 400 });
           }
+
+          const effectiveTitle = pdfTitle || `DOI:${pdfDoi}`;
 
           // Use method from payload if provided, otherwise fallback to personalization setting, default to Snowball.
           const activeMethod =
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
 
           const response = await buildRelatedPapersGraph(
                activeMethod,
-               pdfTitle,
+               effectiveTitle,
                pdfDoi,
                snowballConfig,
           );
