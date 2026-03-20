@@ -266,13 +266,13 @@ const GetRelatedPapers = () => {
                setLoading(true);
                setShowProgressModal(true);
           }
-          setStatusMessage("Searching for related papers");
+          setStatusMessage("Initializing graph construction...");
 
           try {
                const searchRes = await fetch("/api/related-papers", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(params),
+                    body: JSON.stringify({ ...params, stream: true }),
                });
 
                if (!searchRes.ok) {
@@ -280,9 +280,49 @@ const GetRelatedPapers = () => {
                     throw new Error(data.error || "Related papers search failed");
                }
 
-               const searchData = await searchRes.json();
-               const paperCount = searchData.rankedPapers?.length ?? 0;
-               addRelatedPapers(searchData);
+               const reader = searchRes.body?.getReader();
+               if (!reader) throw new Error("Could not initialize stream reader");
+
+               const decoder = new TextDecoder();
+               let buffer = "";
+               let finalResult: any = null;
+
+               while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop() || "";
+                    for (const line of lines) {
+                         if (!line.trim()) continue;
+                         try {
+                              const msg = JSON.parse(line);
+                              if (msg.type === "progress") {
+                                   let display = msg.message;
+                                   if (msg.total && msg.current !== undefined) {
+                                        // Show percentage or iteration progress
+                                        const pct = Math.round((msg.current / msg.total) * 100);
+                                        display = `[Phase ${msg.phase}] ${msg.message} (${pct}%)`;
+                                   } else if (msg.phase) {
+                                        display = `[Phase ${msg.phase}] ${msg.message}`;
+                                   }
+                                   setStatusMessage(display);
+                              } else if (msg.type === "result") {
+                                   finalResult = msg;
+                              } else if (msg.type === "error") {
+                                   throw new Error(msg.message);
+                              }
+                         } catch (err) {
+                              if (err instanceof Error && err.message !== "Related papers search failed") throw err;
+                              console.error("Error parsing NDJSON chunk:", err);
+                         }
+                    }
+               }
+
+               if (!finalResult) throw new Error("Search produced no results");
+
+               const paperCount = finalResult.rankedPapers?.length ?? 0;
+               addRelatedPapers(finalResult);
                window.history.replaceState(null, "", `/c/${chatId}`);
                toast.success(`Found ${paperCount} related paper${paperCount === 1 ? "" : "s"}`);
                sendSystemNotification(`Related papers for "${shortTitle}"`, {

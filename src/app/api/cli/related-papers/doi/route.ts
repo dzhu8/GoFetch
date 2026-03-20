@@ -187,6 +187,11 @@ export async function GET(req: NextRequest) {
  *   curl -X POST http://localhost:3000/api/cli/related-papers/doi \
  *     -H "Content-Type: application/json" \
  *     -d '{ "doi": "10.1038/s41586-023-06291-2", "seedPaperS2Id": "abc123..." }'
+ *
+ * Example — stream progress (NDJSON):
+ *   curl -X POST http://localhost:3000/api/cli/related-papers/doi \
+ *     -H "Content-Type: application/json" \
+ *     -d '{ "doi": "10.1038/s41586-023-06291-2", "stream": true }' --no-buffer
  */
 export async function POST(req: NextRequest) {
      try {
@@ -201,6 +206,7 @@ export async function POST(req: NextRequest) {
                ccThreshold,
                embeddingThreshold,
                seedPaperS2Id: bodyS2Id,
+               stream = false,
           } = body as {
                doi?: string;
                method?: GraphConstructionMethod;
@@ -212,6 +218,8 @@ export async function POST(req: NextRequest) {
                embeddingThreshold?: number;
                /** Optional: pre-resolved S2 ID from a prior GET call — skips Phase 1. */
                seedPaperS2Id?: string;
+               /** Whether to stream progress updates via NDJSON. Defaults to false. */
+               stream?: boolean;
           };
 
           if (!doi || typeof doi !== "string") {
@@ -253,14 +261,53 @@ export async function POST(req: NextRequest) {
                seedPaperS2Id: resolvedS2Id,
           };
 
-          const response = await buildRelatedPapersGraph(
-               activeMethod,
-               resolvedTitle ?? `DOI:${doi}`,
-               doi,
-               snowballConfig,
-          );
+          if (!stream) {
+               const response = await buildRelatedPapersGraph(
+                    activeMethod,
+                    resolvedTitle ?? `DOI:${doi}`,
+                    doi,
+                    snowballConfig,
+               );
+               return NextResponse.json(response);
+          }
 
-          return NextResponse.json(response);
+          // Streaming implementation using TransformStream
+          const encoder = new TextEncoder();
+          const { readable, writable } = new TransformStream();
+          const writer = writable.getWriter();
+
+          const send = async (data: any) => {
+               await writer.write(encoder.encode(JSON.stringify(data) + "\n"));
+          };
+
+          // Run graph construction in the background
+          (async () => {
+               try {
+                    const result = await buildRelatedPapersGraph(
+                         activeMethod,
+                         resolvedTitle ?? `DOI:${doi}`,
+                         doi,
+                         {
+                              ...snowballConfig,
+                              onProgress: async (update) => {
+                                   await send({ type: "progress", ...update });
+                              },
+                         },
+                    );
+                    await send({ type: "result", ...result });
+               } catch (err: any) {
+                    await send({ type: "error", message: err.message || "Execution error" });
+               } finally {
+                    await writer.close();
+               }
+          })();
+
+          return new NextResponse(readable, {
+               headers: {
+                    "Content-Type": "application/x-ndjson",
+                    "Cache-Control": "no-cache",
+               },
+          });
      } catch (err) {
           console.error("[CLI Related Papers DOI / POST] Error:", err);
           const msg = err instanceof Error ? err.message : "Failed to build related-papers graph";
