@@ -270,6 +270,20 @@ export const relatedPapers = sqliteTable(
      })
 );
 
+export const relatedRuns = sqliteTable("related_runs", {
+     id: integer("id").primaryKey(),
+     paperId: integer("paper_id")
+          .notNull()
+          .references(() => papers.id, { onDelete: "cascade" }),
+     rankMethod: text("rank_method").notNull(),
+     embeddingModel: text("embedding_model"),
+     configJson: text("config_json", { mode: "json" }).notNull(),
+     resultsCount: integer("results_count").notNull(),
+     completedAt: text("completed_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
+});
+
 const TEXT_FORMAT_ENUM = ["markdown", "text", "json", "yaml", "toml", "xml", "csv", "ini", "log", "env"] as const;
 
 type TextChunkMetadata = Record<string, unknown>;
@@ -427,5 +441,27 @@ export const librarySearchCache = sqliteTable(
                table.modelKey,
                table.settingsHash
           ),
+     })
+);
+
+/**
+ * Persistent cache for DOI-based related-papers results that were computed
+ * via the CLI endpoint without being tied to a local library paper.
+ * Keyed by (s2_paper_id, rank_method) so both bibliographic and embedding
+ * results can coexist for the same seed paper.
+ */
+export const doiRelatedResultsCache = sqliteTable(
+     "doi_related_results_cache",
+     {
+          s2PaperId: text("s2_paper_id").notNull(),
+          doi: text("doi").notNull(),
+          rankMethod: text("rank_method").notNull().default("bibliographic"),
+          resultsJson: text("results_json").notNull(),
+          seedTitle: text("seed_title"),
+          embeddingModel: text("embedding_model"),
+          createdAt: integer("created_at").notNull(),
+     },
+     (table) => ({
+          pk: primaryKey({ columns: [table.s2PaperId, table.rankMethod] }),
      })
 );

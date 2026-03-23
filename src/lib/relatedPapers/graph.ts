@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import configManager from "@/server/index";
 import modelRegistry from "@/server/providerRegistry";
 import { Buffer } from "node:buffer";
+import { EventEmitter } from "node:events";
 import { getEmbeddings, cosineSimilarity } from "./abstractEmbedding";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -51,6 +52,33 @@ let _s2429Count = 0;
 // Cached edge data and metadata expire after 90 days; academic paper reference
 // lists are essentially immutable after publication.
 const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Event emitter for snowball graph events.
+ */
+class RelatedPapersEventEmitter extends EventEmitter {
+     constructor() {
+          super();
+          this.setMaxListeners(100);
+     }
+
+     /**
+      * Notify listeners that a graph construction run has completed.
+      */
+     notifyComplete(payload: RelatedPapersResponse): void {
+          this.emit("complete", payload);
+     }
+}
+
+const GLOBAL_KEY = Symbol.for("gofetch.relatedPapersEvents");
+const g = globalThis as Record<symbol, unknown>;
+if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = new RelatedPapersEventEmitter();
+
+export const relatedPapersEvents = g[GLOBAL_KEY] as RelatedPapersEventEmitter;
+
+relatedPapersEvents.on("complete", (data) => {
+     console.log(`✅ [EVENT] Graph construction complete for: ${data.pdfTitle}`);
+});
 
 // Per-run cache statistics — reset at the start of each buildSnowballGraph call.
 let _edgeCacheHits = 0;
@@ -842,7 +870,7 @@ async function buildSnowballGraph(
           ? (() => { const m = configManager.getConfig("preferences.defaultEmbeddingModel"); return typeof m === "object" ? m?.modelKey : null; })()
           : undefined;
 
-     return {
+     const response = {
           pdfTitle: finalPdfTitle,
           pdfDoi,
           seedPaperId: seedId,
@@ -852,6 +880,11 @@ async function buildSnowballGraph(
           rankMethod,
           embeddingModel: usedEmbeddingModel ?? undefined,
      } satisfies RelatedPapersResponse;
+
+     // Notify subscribers that construction is done
+     relatedPapersEvents.notifyComplete(response);
+
+     return response;
 }
 
 /**
@@ -890,3 +923,28 @@ export async function buildRelatedPapersGraph(
                return buildSnowballGraph(pdfTitle, pdfDoi, config);
      }
 }
+
+
+/**
+ * Returns a list of all papers currently stored in the metadata cache.
+ */
+export async function getCachedPapers(): Promise<{ s2Id: string; title: string | null }[]> {
+     try {
+          const rows = db
+               .select({
+                    s2Id: paperMetadataCache.paperId,
+                    title: paperMetadataCache.title,
+               })
+               .from(paperMetadataCache)
+               .all();
+
+          return rows;
+     } catch (err) {
+          console.error("[Cache] Failed to fetch cached papers:", err);
+          return [];
+     }
+}
+
+/**
+ * Clears the metadata cache
+ */

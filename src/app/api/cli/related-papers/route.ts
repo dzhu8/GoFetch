@@ -3,8 +3,19 @@ import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { eq } from "drizzle-orm";
 import configManager from "@/server";
-import { buildRelatedPapersGraph, GraphConstructionMethod } from "@/lib/relatedPapers/graph";
+import db from "@/server/db";
+import {
+     papers,
+     relatedPapers,
+     relatedRuns,
+     paperEdgeCache,
+     paperMetadataCache,
+     paperAbstractEmbeddings,
+     paperSourceLinks,
+} from "@/server/db/schema";
+import { buildRelatedPapersGraph, GraphConstructionMethod, resolveSeedPaper } from "@/lib/relatedPapers/graph";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 
 // Allow enough time for OCR on large documents
@@ -230,3 +241,124 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: msg }, { status: 500 });
      }
 }
+
+// ── DELETE /api/cli/related-papers ───────────────────────────────────────────
+/**
+ * Clear cached related-papers data. Without parameters, erases all four
+ * S2-derived cache tables: ranked results, edge data, metadata, and embeddings.
+ *
+ * Query params:
+ *   doi    string  Optional. Scope clearing to a single paper identified by DOI.
+ *   scope  string  Optional comma-separated list of caches to clear.
+ *                  Choices: "ranked", "edges", "metadata", "embeddings"
+ *                  Default: all four.
+ *
+ * Examples:
+ *   # Wipe every S2-derived cache table
+ *   curl -X DELETE "http://localhost:3000/api/cli/related-papers"
+ *
+ *   # Wipe only ranked results (keeps S2 edge/metadata/embedding caches)
+ *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?scope=ranked"
+ *
+ *   # Wipe everything for one paper
+ *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?doi=10.1038/s41586-023-06291-2"
+ *
+ *   # Wipe ranked results + embeddings for one paper
+ *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?doi=10.1038/s41586-023-06291-2&scope=ranked,embeddings"
+ */
+export async function DELETE(req: NextRequest) {
+     try {
+          const { searchParams } = new URL(req.url);
+          const doi = searchParams.get("doi")?.trim() || null;
+          const scopeParam = searchParams.get("scope");
+
+          const VALID_SCOPES = ["ranked", "edges", "metadata", "embeddings"] as const;
+          type Scope = (typeof VALID_SCOPES)[number];
+
+          const scopes: Set<Scope> = scopeParam
+               ? new Set(
+                      scopeParam
+                           .split(",")
+                           .map((s) => s.trim() as Scope)
+                           .filter((s): s is Scope => (VALID_SCOPES as readonly string[]).includes(s)),
+                 )
+               : new Set(VALID_SCOPES);
+
+          if (scopes.size === 0) {
+               return NextResponse.json(
+                    { error: `Invalid scope. Valid values: ${VALID_SCOPES.join(", ")}` },
+                    { status: 400 },
+               );
+          }
+
+          const cleared: Partial<Record<Scope, boolean>> = {};
+
+          if (doi) {
+               // DOI-scoped clear — resolve to S2 ID and local library paper ID.
+               const resolved = await resolveSeedPaper(doi, `DOI:${doi}`);
+               const s2Id = resolved?.s2Id ?? null;
+               const localPaper = s2Id
+                    ? (db
+                           .select({ id: papers.id })
+                           .from(papers)
+                           .where(eq(papers.semanticScholarId, s2Id))
+                           .get() ?? null)
+                    : null;
+
+               if (!s2Id && !localPaper) {
+                    return NextResponse.json({
+                         cleared: {},
+                         note: "Paper not found in Semantic Scholar or local library — nothing to clear.",
+                    });
+               }
+
+               if (localPaper && scopes.has("ranked")) {
+                    db.delete(relatedPapers).where(eq(relatedPapers.paperId, localPaper.id)).run();
+                    db.delete(relatedRuns).where(eq(relatedRuns.paperId, localPaper.id)).run();
+                    db.delete(paperSourceLinks).where(eq(paperSourceLinks.sourcePaperId, localPaper.id)).run();
+                    cleared.ranked = true;
+               }
+               if (s2Id && scopes.has("edges")) {
+                    db.delete(paperEdgeCache).where(eq(paperEdgeCache.paperId, s2Id)).run();
+                    cleared.edges = true;
+               }
+               if (s2Id && scopes.has("metadata")) {
+                    db.delete(paperMetadataCache).where(eq(paperMetadataCache.paperId, s2Id)).run();
+                    cleared.metadata = true;
+               }
+               if (s2Id && scopes.has("embeddings")) {
+                    db.delete(paperAbstractEmbeddings)
+                         .where(eq(paperAbstractEmbeddings.paperId, s2Id))
+                         .run();
+                    cleared.embeddings = true;
+               }
+          } else {
+               // Global clear — truncate entire cache tables.
+               if (scopes.has("ranked")) {
+                    db.delete(relatedPapers).run();
+                    db.delete(relatedRuns).run();
+                    db.delete(paperSourceLinks).run();
+                    cleared.ranked = true;
+               }
+               if (scopes.has("edges")) {
+                    db.delete(paperEdgeCache).run();
+                    cleared.edges = true;
+               }
+               if (scopes.has("metadata")) {
+                    db.delete(paperMetadataCache).run();
+                    cleared.metadata = true;
+               }
+               if (scopes.has("embeddings")) {
+                    db.delete(paperAbstractEmbeddings).run();
+                    cleared.embeddings = true;
+               }
+          }
+
+          return NextResponse.json({ cleared });
+     } catch (err) {
+          console.error("[CLI Related Papers / DELETE] Error:", err);
+          const msg = err instanceof Error ? err.message : "Failed to clear cache";
+          return NextResponse.json({ error: msg }, { status: 500 });
+     }
+}
+

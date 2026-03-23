@@ -10,6 +10,7 @@ next-env.d.ts
 sqlite-dump.txt
 yarn.lock
 .env.local
+.env
 
 .next/
 .vscode/

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, relatedPapers } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
+import { papers, relatedPapers, doiRelatedResultsCache } from "@/server/db/schema";
+import { eq, and } from "drizzle-orm";
 import configManager from "@/server";
 import {
      buildRelatedPapersGraph,
@@ -110,13 +110,25 @@ export async function GET(req: NextRequest) {
                .get() ?? null;
 
           if (!localPaperRow) {
-               // Paper not in library — we can report edge-cache status but have no stored results.
+               // Paper not in library — check the DOI-only results cache.
+               const doiRows = db
+                    .select()
+                    .from(doiRelatedResultsCache)
+                    .where(eq(doiRelatedResultsCache.s2PaperId, resolved.s2Id))
+                    .all();
+
+               const cachedMethods = doiRows.map((r) => r.rankMethod);
+               const doiRow = doiRows.find((r) => r.rankMethod === requestedMethod) ?? null;
+               const rankedPapers: RankedPaper[] | null = doiRow
+                    ? (JSON.parse(doiRow.resultsJson) as RankedPaper[])
+                    : null;
+
                return NextResponse.json({
                     resolved,
                     localPaper: null,
                     rankMethod: requestedMethod,
-                    cachedMethods: [],
-                    rankedPapers: null,
+                    cachedMethods,
+                    rankedPapers,
                });
           }
 
@@ -133,7 +145,7 @@ export async function GET(req: NextRequest) {
           const rankedPapers: RankedPaper[] | null =
                rowsForMethod.length > 0
                     ? rowsForMethod
-                         .sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0))
+                         .sort((a: any, b: any) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0))
                          .map(dbRowToRankedPaper)
                     : null;
 
@@ -268,6 +280,32 @@ export async function POST(req: NextRequest) {
                     doi,
                     snowballConfig,
                );
+
+               // Persist results so the GET endpoint can retrieve them later.
+               if (resolvedS2Id && response.rankedPapers?.length) {
+                    db.insert(doiRelatedResultsCache)
+                         .values({
+                              s2PaperId: resolvedS2Id,
+                              doi,
+                              rankMethod: response.rankMethod ?? "bibliographic",
+                              resultsJson: JSON.stringify(response.rankedPapers),
+                              seedTitle: resolvedTitle ?? null,
+                              embeddingModel: response.embeddingModel ?? null,
+                              createdAt: Date.now(),
+                         })
+                         .onConflictDoUpdate({
+                              target: [doiRelatedResultsCache.s2PaperId, doiRelatedResultsCache.rankMethod],
+                              set: {
+                                   doi,
+                                   resultsJson: JSON.stringify(response.rankedPapers),
+                                   seedTitle: resolvedTitle ?? null,
+                                   embeddingModel: response.embeddingModel ?? null,
+                                   createdAt: Date.now(),
+                              },
+                         })
+                         .run();
+               }
+
                return NextResponse.json(response);
           }
 
@@ -294,6 +332,32 @@ export async function POST(req: NextRequest) {
                               },
                          },
                     );
+
+                    // Persist streamed results so the GET endpoint can retrieve them later.
+                    if (resolvedS2Id && result.rankedPapers?.length) {
+                         db.insert(doiRelatedResultsCache)
+                              .values({
+                                   s2PaperId: resolvedS2Id,
+                                   doi,
+                                   rankMethod: result.rankMethod ?? "bibliographic",
+                                   resultsJson: JSON.stringify(result.rankedPapers),
+                                   seedTitle: resolvedTitle ?? null,
+                                   embeddingModel: result.embeddingModel ?? null,
+                                   createdAt: Date.now(),
+                              })
+                              .onConflictDoUpdate({
+                                   target: [doiRelatedResultsCache.s2PaperId, doiRelatedResultsCache.rankMethod],
+                                   set: {
+                                        doi,
+                                        resultsJson: JSON.stringify(result.rankedPapers),
+                                        seedTitle: resolvedTitle ?? null,
+                                        embeddingModel: result.embeddingModel ?? null,
+                                        createdAt: Date.now(),
+                                   },
+                              })
+                              .run();
+                    }
+
                     await send({ type: "result", ...result });
                } catch (err: any) {
                     await send({ type: "error", message: err.message || "Execution error" });
