@@ -12,6 +12,7 @@ yarn.lock
 .env.local
 .env
 
+.claude/
 .next/
 .vscode/
 .yarn/

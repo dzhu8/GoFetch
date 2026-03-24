@@ -14,6 +14,7 @@ import {
      paperMetadataCache,
      paperAbstractEmbeddings,
      paperSourceLinks,
+     doiRelatedResultsCache,
 } from "@/server/db/schema";
 import { buildRelatedPapersGraph, GraphConstructionMethod, resolveSeedPaper } from "@/lib/relatedPapers/graph";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
@@ -244,11 +245,15 @@ export async function POST(req: NextRequest) {
 
 // ── DELETE /api/cli/related-papers ───────────────────────────────────────────
 /**
- * Clear cached related-papers data. Without parameters, erases all four
- * S2-derived cache tables: ranked results, edge data, metadata, and embeddings.
+ * Clear cached related-papers data.
+ *
+ * Without an identifier, erases ALL cache tables globally.
+ * With an identifier (doi, s2id, or title), clears only data for that paper.
  *
  * Query params:
- *   doi    string  Optional. Scope clearing to a single paper identified by DOI.
+ *   doi    string  Optional. Identify the paper by DOI.
+ *   s2id   string  Optional. Identify the paper by Semantic Scholar ID.
+ *   title  string  Optional. Identify the paper by title (fuzzy-matched via S2).
  *   scope  string  Optional comma-separated list of caches to clear.
  *                  Choices: "ranked", "edges", "metadata", "embeddings"
  *                  Default: all four.
@@ -260,8 +265,11 @@ export async function POST(req: NextRequest) {
  *   # Wipe only ranked results (keeps S2 edge/metadata/embedding caches)
  *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?scope=ranked"
  *
- *   # Wipe everything for one paper
+ *   # Wipe everything for one paper by DOI
  *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?doi=10.1038/s41586-023-06291-2"
+ *
+ *   # Wipe everything for one paper by S2 ID
+ *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?s2id=abc123"
  *
  *   # Wipe ranked results + embeddings for one paper
  *   curl -X DELETE "http://localhost:3000/api/cli/related-papers?doi=10.1038/s41586-023-06291-2&scope=ranked,embeddings"
@@ -270,6 +278,8 @@ export async function DELETE(req: NextRequest) {
      try {
           const { searchParams } = new URL(req.url);
           const doi = searchParams.get("doi")?.trim() || null;
+          const s2id = searchParams.get("s2id")?.trim() || null;
+          const title = searchParams.get("title")?.trim() || null;
           const scopeParam = searchParams.get("scope");
 
           const VALID_SCOPES = ["ranked", "edges", "metadata", "embeddings"] as const;
@@ -291,12 +301,24 @@ export async function DELETE(req: NextRequest) {
                );
           }
 
+          const hasPaperIdentifier = doi || s2id || title;
           const cleared: Partial<Record<Scope, boolean>> = {};
 
-          if (doi) {
-               // DOI-scoped clear — resolve to S2 ID and local library paper ID.
-               const resolved = await resolveSeedPaper(doi, `DOI:${doi}`);
-               const s2Id = resolved?.s2Id ?? null;
+          if (hasPaperIdentifier) {
+               // Resolve the identifier to an S2 ID
+               let s2Id: string | null = null;
+
+               if (s2id) {
+                    s2Id = s2id;
+               } else {
+                    const resolved = await resolveSeedPaper(
+                         doi ?? undefined,
+                         title ?? `DOI:${doi}`,
+                    );
+                    s2Id = resolved?.s2Id ?? null;
+               }
+
+               // Find a matching local library paper (if any)
                const localPaper = s2Id
                     ? (db
                            .select({ id: papers.id })
@@ -312,10 +334,15 @@ export async function DELETE(req: NextRequest) {
                     });
                }
 
-               if (localPaper && scopes.has("ranked")) {
-                    db.delete(relatedPapers).where(eq(relatedPapers.paperId, localPaper.id)).run();
-                    db.delete(relatedRuns).where(eq(relatedRuns.paperId, localPaper.id)).run();
-                    db.delete(paperSourceLinks).where(eq(paperSourceLinks.sourcePaperId, localPaper.id)).run();
+               if (scopes.has("ranked")) {
+                    if (localPaper) {
+                         db.delete(relatedPapers).where(eq(relatedPapers.paperId, localPaper.id)).run();
+                         db.delete(relatedRuns).where(eq(relatedRuns.paperId, localPaper.id)).run();
+                         db.delete(paperSourceLinks).where(eq(paperSourceLinks.sourcePaperId, localPaper.id)).run();
+                    }
+                    if (s2Id) {
+                         db.delete(doiRelatedResultsCache).where(eq(doiRelatedResultsCache.s2PaperId, s2Id)).run();
+                    }
                     cleared.ranked = true;
                }
                if (s2Id && scopes.has("edges")) {
@@ -338,6 +365,7 @@ export async function DELETE(req: NextRequest) {
                     db.delete(relatedPapers).run();
                     db.delete(relatedRuns).run();
                     db.delete(paperSourceLinks).run();
+                    db.delete(doiRelatedResultsCache).run();
                     cleared.ranked = true;
                }
                if (scopes.has("edges")) {
@@ -361,4 +389,3 @@ export async function DELETE(req: NextRequest) {
           return NextResponse.json({ error: msg }, { status: 500 });
      }
 }
-
