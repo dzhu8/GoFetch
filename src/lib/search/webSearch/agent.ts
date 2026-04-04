@@ -1,0 +1,135 @@
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
+import EventEmitter from "events";
+import { searchSearxng } from "@/lib/searxng";
+import { classifyWebQuery, messagesToTuples } from "./classifier";
+import { getWebWriterPrompt } from "@/lib/prompts/webSearch";
+import { WebSearchChunk } from "./types";
+
+const WEB_CATEGORIES = ["general"];
+
+/**
+ * Executes the full web search pipeline:
+ * 1. Classifies the query to get a standalone version + search queries
+ * 2. Queries SearXNG with general engines in parallel
+ * 3. Deduplicates and caps results
+ * 4. Emits the search results as sources
+ * 5. Generates a streamed LLM response using the writer prompt
+ */
+async function executeSearch(
+     emitter: EventEmitter,
+     query: string,
+     history: Array<[string, string]>,
+     llm: BaseChatModel,
+     systemInstructions: string,
+): Promise<void> {
+     try {
+          // Step 1: classify query and generate targeted search queries
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "analyzing", message: "Analyzing query..." } }));
+          const { standaloneQuery, searchQueries } = await classifyWebQuery(query, history, llm);
+
+          // Step 2: search SearXNG in parallel for each query
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "searching", message: "Searching the web..." } }));
+          const allChunks: WebSearchChunk[] = [];
+
+          await Promise.all(
+               searchQueries.map(async (q) => {
+                    try {
+                         const { results } = await searchSearxng(q, {
+                              categories: WEB_CATEGORIES,
+                         });
+                         const chunks: WebSearchChunk[] = results.map((r) => ({
+                              content: r.content || r.title,
+                              metadata: { title: r.title, url: r.url },
+                         }));
+                         allChunks.push(...chunks);
+                    } catch (err) {
+                         console.warn(`[webSearch] SearXNG query failed for "${q}":`, err);
+                    }
+               }),
+          );
+
+          // Deduplicate by URL
+          const seen = new Set<string>();
+          let dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
+               if (seen.has(url)) return false;
+               seen.add(url);
+               return true;
+          });
+
+          // Cap results to avoid context explosion
+          dedupedChunks = dedupedChunks.slice(0, 10);
+
+          // Step 3: emit sources so the client can display them
+          const sources = dedupedChunks.map((chunk) => ({
+               pageContent: chunk.content,
+               metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
+          }));
+
+          emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
+
+          // Step 4: build context string and stream the writer response
+          emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Generating answer..." } }));
+          const context = dedupedChunks
+               .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\nContent: ${chunk.content}`)
+               .join("\n\n");
+
+          const writerPrompt = getWebWriterPrompt(context, systemInstructions);
+
+          const chatHistory: BaseMessage[] = history.flatMap(([role, content]): BaseMessage[] =>
+               role === "human" ? [new HumanMessage(content)] : [new AIMessage(content)],
+          );
+
+          const llmStream = await llm.stream([
+               new SystemMessage(writerPrompt),
+               ...chatHistory,
+               new HumanMessage(standaloneQuery),
+          ]);
+
+          for await (const chunk of llmStream) {
+               const text = typeof chunk.content === "string" ? chunk.content : "";
+               if (text) {
+                    emitter.emit("data", JSON.stringify({ type: "response", data: text }));
+               }
+          }
+
+          emitter.emit("end");
+     } catch (err: any) {
+          console.error("[webSearch] Search failed:", err);
+          emitter.emit("error", JSON.stringify({ data: err?.message ?? "Web search failed" }));
+     }
+}
+
+/**
+ * Stand-alone stream factory used by the chat route's default focus mode.
+ * Accepts BaseMessage[] history (as used by the chat route) and converts internally.
+ */
+export class WebSearchAgent {
+     async searchAndAnswer(
+          message: string,
+          history: BaseMessage[],
+          llm: BaseChatModel,
+          systemInstructions: string,
+          _searchRetrieverChainArgs?: any[],
+     ): Promise<EventEmitter> {
+          const emitter = new EventEmitter();
+          const historyTuples = messagesToTuples(history);
+          setImmediate(() => executeSearch(emitter, message, historyTuples, llm, systemInstructions));
+          return emitter;
+     }
+}
+
+/**
+ * Creates and returns an EventEmitter that fires search events asynchronously.
+ * Accepts history as [role, content] tuples (used by the academic-search route shape if ever needed).
+ */
+export function createWebSearchStream(
+     query: string,
+     history: Array<[string, string]>,
+     llm: BaseChatModel,
+     systemInstructions: string,
+): EventEmitter {
+     const emitter = new EventEmitter();
+     setImmediate(() => executeSearch(emitter, query, history, llm, systemInstructions));
+     return emitter;
+}

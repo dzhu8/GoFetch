@@ -4,7 +4,7 @@ This repository contains complex logic for chat handling, document processing, a
 
 ## Codebase Reference
 
-Before making any changes to the core logic (especially in `src/lib`), **always consult [docs/FEATURES.md](docs/FEATURES.md)**. This file provides a detailed breakdown of the system architecture, data flows, and module responsibilities.
+Before making any changes to the core logic (especially in `src/lib`), **always consult [docs/FEATURES.md](docs/FEATURES.md)**. This file provides a detailed breakdown of the system architecture, data flows, and module responsibilities. After making changes to the core logic, **update [docs/FEATURES.md](docs/FEATURES.md)** with the description of your new changes. 
 
 ### FEATURES.md Summary
 

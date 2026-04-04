@@ -5,33 +5,32 @@ export type { SearchStatus, SearchRetrieverResult, BasicChainInput, BaseSearchAg
 
 // Re-export types only - actual classes must be accessed via lazy loaders
 export type { default as BaseSearchAgent } from "./baseSearchAgent";
-export type { default as CodeSearchAgent } from "./codeSearchAgent";
 
-import type CodeSearchAgent from "./codeSearchAgent";
 import type { HNSWSearch as HNSWSearchType } from "./HNSWSearch";
-import {
-     codeSearchRetrieverPrompt,
-     codeSearchRetrieverFewShots,
-     codeSearchResponsePrompt,
-} from "../prompts/codeSearch";
 
-// Lazy-loaded search handlers to avoid instantiating HNSWSearch at module load time
-// This prevents faiss-node from being required during Next.js bundling
-let _searchHandlers: Record<string, CodeSearchAgent> | null = null;
+/** Minimal interface required by the chat route. */
+export interface SearchAgentLike {
+     searchAndAnswer(
+          message: string,
+          history: import("@langchain/core/messages").BaseMessage[],
+          llm: import("@langchain/core/language_models/chat_models").BaseChatModel,
+          systemInstructions: string,
+          searchRetrieverChainArgs?: any[],
+     ): Promise<import("events").EventEmitter>;
+}
 
-export function getSearchHandlers(): Record<string, CodeSearchAgent> {
+// Lazy-loaded search handlers
+let _searchHandlers: Record<string, SearchAgentLike> | null = null;
+
+export function getSearchHandlers(): Record<string, SearchAgentLike> {
      if (!_searchHandlers) {
-          // Dynamic import to ensure this only runs server-side at runtime
           // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { default: CodeSearchAgentClass } = require("./codeSearchAgent");
+          const { WebSearchAgent: WebSearchAgentClass } = require("./webSearch/agent");
+          const webSearchAgent = new WebSearchAgentClass();
           _searchHandlers = {
-               code: new CodeSearchAgentClass({
-                    queryGeneratorPrompt: codeSearchRetrieverPrompt,
-                    queryGeneratorFewShots: codeSearchRetrieverFewShots,
-                    responsePrompt: codeSearchResponsePrompt,
-                    maxNDocuments: 15,
-                    activeEngines: [],
-               }),
+               default: webSearchAgent,
+               // "code" is kept as an alias so existing clients sending focusMode:"code" still work
+               code: webSearchAgent,
           };
      }
      return _searchHandlers;

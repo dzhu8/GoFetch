@@ -650,154 +650,47 @@ Filters by `bcThreshold` and `ccThreshold`.
 
 ## 11. `search/`
 
-Files: [index.ts](src/lib/search/index.ts), [baseSearchAgent.ts](src/lib/search/baseSearchAgent.ts), [codeSearchAgent.ts](src/lib/search/codeSearchAgent.ts), [embedding.ts](src/lib/search/embedding.ts), [HNSWSearch.ts](src/lib/search/HNSWSearch.ts), and `academicSearch/` subfolder with [types.ts](src/lib/search/academicSearch/types.ts), [agent.ts](src/lib/search/academicSearch/agent.ts), [classifier.ts](src/lib/search/academicSearch/classifier.ts), [filter.ts](src/lib/search/academicSearch/filter.ts).
+Files: [index.ts](src/lib/search/index.ts), [baseSearchAgent.ts](src/lib/search/baseSearchAgent.ts), [HNSWSearch.ts](src/lib/search/HNSWSearch.ts), `academicSearch/` subfolder, and `webSearch/` subfolder.
 
 ### Purpose
 
-The complete search infrastructure: semantic code search using HNSW vector similarity (FAISS), and academic search using SearXNG + LLM filtering. Both share a streaming EventEmitter architecture for real-time results.
+The complete search infrastructure: academic search using SearXNG + LLM filtering, and general web search using SearXNG. Both share a streaming architecture for real-time results. Note: Direct code search has been deprecated.
 
 ### Module Entry (`index.ts`)
 
-Uses **lazy loading** with `require()` instead of `import` to defer initialization and prevent Next.js from bundling native modules (faiss-node, better-sqlite3) at build time.
+Uses **lazy loading** with `require()` instead of `import` to defer initialization and prevent Next.js from bundling native modules at build time.
 
-- **`getSearchHandlers()`** -- Returns singleton `{ code: new CodeSearchAgent({...}) }` initialized with prompts from `../prompts/codeSearch` and config `{ maxNDocuments: 15, activeEngines: [] }`.
-- **`getHNSWSearch()`** -- Returns the `HNSWSearch` class constructor.
+- **`getSearchHandlers()`** — Returns singleton `{ default: WebSearchAgent, code: WebSearchAgent }`. The `"code"` key is maintained as an alias for backward compatibility but now routes to the web search pipeline.
+- **`getHNSWSearch()`** — Returns the `HNSWSearch` class constructor (used by library search).
 
 ### Abstract Base (`baseSearchAgent.ts`)
 
 **`BaseSearchAgent`** defines the search template:
 
-- **`searchAndAnswer(message, history, llm, systemInstructions, searchRetrieverChainArgs?)`** -- Main entry. Creates EventEmitter, sets `statusEmitter`, creates answering chain via LangChain `RunnableSequence`, streams events via `handleStream()`. Returns EventEmitter (non-awaited stream runs asynchronously).
+- **`searchAndAnswer(message, history, llm, systemInstructions, searchRetrieverChainArgs?)`** — Main entry. Creates EventEmitter, sets `statusEmitter`, creates answering chain via LangChain `RunnableSequence`, streams events via `handleStream()`. Returns EventEmitter (non-awaited stream runs asynchronously).
 
-- **`createAnsweringChain()`** -- Builds chain: `RunnableMap` (prepares systemInstructions, query, chat_history, date, context) -> `ChatPromptTemplate` -> LLM -> `StringOutputParser`. The `context` field is computed by calling subclass `createSearchRetrieverChain()` then `processDocs()`.
+- **`createAnsweringChain()`** — Builds chain: `RunnableMap` (prepares systemInstructions, query, chat_history, date, context) -> `ChatPromptTemplate` -> LLM -> `StringOutputParser`. The `context` field is computed by calling subclass `createSearchRetrieverChain()` then `processDocs()`.
 
-- **`processDocs(docs)`** -- Formats documents as: `"1. {title} [score: 0.xxx] {pageContent}"`.
+- **`SearchStatus`** — `{ stage: "analyzing" | "searching" | "embedding" | "retrieving" | "generating", message, details? }`.
 
-- **`handleStream()`** -- Converts LangChain streaming events to emitter events: `"sources"` (when `FinalSourceRetriever` ends), `"response"` (each LLM token), `"end"` (generation complete).
+### Web Search (`webSearch/`)
 
-- **`SearchStatus`** -- `{ stage: "analyzing" | "searching" | "embedding" | "retrieving" | "generating", message, details? }`.
+Files: [agent.ts](src/lib/search/webSearch/agent.ts), [classifier.ts](src/lib/search/webSearch/classifier.ts), [types.ts](src/lib/search/webSearch/types.ts).
 
-### Code Search (`codeSearchAgent.ts`)
+**`WebSearchAgent`** implements general web search:
 
-**`CodeSearchAgent extends BaseSearchAgent`** with `maxNDocuments: 15`.
+1. **Classification**: Uses the chat history and user query to generate up to 3 targeted search queries for general web engines.
+2. **Search**: Queries SearXNG in parallel using the `"general"` category.
+3. **Synthesis**: Deduplicates results by URL, caps at 10 sources, and streams a grounded response using the `webWriterPrompt`.
 
-**`createSearchRetrieverChain(llm, folderNames?, originalQuery?)`** -- The main code search pipeline:
+### Academic Search (`academicSearch/`)
 
-1. **Query Generation**: `ChatPromptTemplate` with `queryGeneratorPrompt` + few-shot examples -> LLM (temperature=0) -> `StringOutputParser`.
+Files: [agent.ts](src/lib/search/academicSearch/agent.ts), [classifier.ts](src/lib/search/academicSearch/classifier.ts), [filter.ts](src/lib/search/academicSearch/filter.ts), [types.ts](src/lib/search/academicSearch/types.ts).
 
-2. **Lambda Processing**:
-   - Parses LLM output via `LineOutputParser` with key `"question"`.
-   - Falls back to full output if delimiters not found.
-   - Short-circuits if result is `"not_needed"` (returns empty docs).
-   - Cleans `<think>...</think>` blocks from output.
+Executes a specialized research pipeline:
 
-3. **HNSW Index Init**:
-   - `HNSWSearch.fromConfig()` (reads HNSW params from config).
-   - `hnswSearch.addFolders(folderNames)` -- loads embeddings from DB, initializes FAISS index.
-   - Emits status with embedding count.
+1. **Classification**: Generates targeted queries for academic databases (arXiv, Google Scholar, PubMed).
+2. **Retrieval**: Parallel SearXNG queries with academic-only engines.
+3. **Refinement**: Uses the LLM as a judge to filter the top 45 results down to the most relevant ~15 sources based on title and abstract.
+4. **Synthesis**: Streams a technical response with strict inline citation requirements.
 
-4. **Two-Stage Search with Fallback**:
-   - **Stage 1**: `embedQuery(originalQuery)` -> `hnswSearch.searchWithThreshold(embedding, maxNDocuments)`.
-   - **Stage 2** (if Stage 1 returned 0 results AND rephrased question differs): `embedQuery(rephrasedQuestion)` -> same search.
-   - If both empty: returns single doc with system message about threshold.
-
-5. **Document Mapping**: Converts `SearchResult` to LangChain `Document` with metadata: `type`, `title` (symbolName or nodeType or relativePath), `url` (`file://` path), `relativePath`, `folderName`, `score`, `language`, `startLine`, `endLine`.
-
-### Query Embedding (`embedding.ts`)
-
-**`embedQuery(query)`**: Gets `preferences.defaultEmbeddingModel` from config -> loads provider from registry -> `provider.loadEmbeddingModel(modelKey)` -> `embeddingClient.embedDocuments([query])` -> returns first vector.
-
-### HNSW Vector Index (`HNSWSearch.ts`)
-
-FAISS-backed HNSW index for vector similarity search.
-
-**Config**: `M` (default 32, links per node), `efConstruction` (default 200), `efSearch` (default 64), `scoreThreshold` (default 0.3).
-
-**`HNSWSearch.fromConfig()`** -- Reads all 4 HNSW params from `configManager`.
-
-**`loadFaiss()`** (private) -- Lazy-loads `faiss-node` using `createRequire` from `node:module` to bypass bundler.
-
-**`addFolders(folderNames)`** -- Fetches embeddings from `embeddings` table via Drizzle, converts buffers to Float32Array, initializes FAISS index with descriptor `"HNSW{M},Flat"` (L2 metric), trains if required, adds vectors, updates `indexMap`. Returns count.
-
-**`search(queryVector, k)`** -- FAISS search, converts L2 distance to similarity via `Math.exp(-distance)`, returns sorted `SearchResult[]`.
-
-**Threshold variants**: `searchWithThreshold()`, `searchInFolders()`, `searchInFoldersWithThreshold()` -- apply score/folder filtering, over-fetch by 3x to compensate.
-
-**`rebuild(config?, folderNames?)`** -- Clears and re-indexes.
-
-### Academic Search Subfolder
-
-#### Types (`types.ts`)
-
-- `AcademicSearchChunk` -- `{ content, metadata: { title, url } }`.
-- `ClassifierOutput` -- `{ standaloneQuery, searchQueries[] }`.
-- `AcademicSearchInput` -- Full input for academic search route.
-- `AcademicSource extends Document` -- With `metadata: { title, url }`.
-
-#### Agent (`agent.ts`)
-
-**`createAcademicSearchStream(query, history, llm, systemInstructions)`** -- Returns EventEmitter. Calls `executeSearch()` via `setImmediate()` (async, non-blocking).
-
-**`executeSearch()` pipeline**:
-1. `classifyAcademicQuery()` -> standaloneQuery + searchQueries.
-2. `Promise.all(searchQueries.map(q => searchSearxng(q, { engines: ["arxiv", "google scholar", "pubmed"] })))`.
-3. Deduplicate by URL, limit to 45.
-4. `filterRelevantChunks()`, limit to 15. Fallback: top 3 if filter emptied everything.
-5. Sort by reputation (12 reputable publishers: nature.com, science.org, sciencedirect.com, ieeexplore.ieee.org, pnas.org, nejm.org, thelancet.com, cell.com, jamanetwork.com, arxiv.org, springer.com, wiley.com).
-6. Emit sources.
-7. Build context, call `getAcademicWriterPrompt()`, stream LLM response.
-8. Emit end.
-
-#### Classifier (`classifier.ts`)
-
-**`classifyAcademicQuery(query, history, llm)`** -- Formats last 6 history items, sends `SystemMessage(academicClassifierPrompt)` + `HumanMessage`, extracts JSON via regex. Falls back to `{ standaloneQuery: query, searchQueries: [query] }` on failure.
-
-#### Filter (`filter.ts`)
-
-**`filterRelevantChunks(query, chunks, llm)`** -- Formats chunks as `[index]\nTitle: ...\nAbstract: ...`, sends `SystemMessage(academicFilterPrompt)` + `HumanMessage`. Parses JSON array of indices. Handles out-of-bounds indices (filters nulls). Returns all chunks if parsing fails.
-
-### Key Design Patterns
-
-- **Lazy Loading**: Prevents bundling native modules at build time.
-- **Strategy Pattern**: `BaseSearchAgent` template, `CodeSearchAgent` concrete implementation.
-- **Observer Pattern**: EventEmitter for streaming results.
-- **Two-Tier Fallback**: Raw query first, rephrased query second.
-- **LLM-as-Judge**: Academic search uses LLM for both query classification and relevance filtering.
-
----
-
-## 12. `utils/` (directory) + standalone files
-
-### `utils/computeSimilarity.ts`
-
-**`computeSimilarity(x, y)`** -- Cosine similarity between two vectors. Validates equal length (throws on mismatch). Returns 0 if either magnitude is 0. Currently **unused** in the codebase.
-
-### `utils/formatHistory.ts`
-
-**`formatChatHistoryAsString(history: BaseMessage[])`** -- Maps LangChain message array to string. Each message prefixed with `"AI: "` or `"User: "` based on `instanceof AIMessage` check. Joined with `\n`.
-
-**Used by**: `baseSearchAgent.ts` for formatting chat history into LLM context.
-
-### `utils.ts` (standalone)
-
-Four exported utilities:
-
-**`cn(...classes)`** -- Merges Tailwind CSS classes using `clsx()` then `twMerge()`. Handles deduplication of conflicting Tailwind utilities. Used in 16+ UI component files.
-
-**`formatTimeDifference(date1, date2)`** -- Human-readable time difference. Scale: seconds -> minutes -> hours -> days -> years, with plural handling (adds "s" when value != 1).
-
-**`sendSystemNotification(title, options?)`** -- Browser Notification API wrapper. Guards: SSR check (`typeof window`), API support check, permission check (requests if not denied). No-ops gracefully in all edge cases.
-
-**`cosineSimilarity(vectorA, vectorB)`** -- Cosine similarity with strict validation: throws for non-arrays, empty arrays, unequal lengths, and zero-magnitude vectors.
-
-### `searxng.ts` (standalone)
-
-SearXNG metasearch engine client.
-
-**`getSearxngURL()`** -- Returns `process.env.SEARXNG_API_URL` or `"http://localhost:8080"`.
-
-**`searchSearxng(query, opts?)`** -- Constructs URL `{searxngURL}/search?format=json&q={query}` with optional params (categories, engines, language, pageno). For array options, joins with commas. Fetches, validates response status, returns `{ results: SearxngSearchResult[], suggestions: string[] }`.
-
-**`SearxngSearchResult`** -- `title`, `url`, `img_src?`, `thumbnail_src?`, `thumbnail?`, `content?`, `author?`, `iframe_src?`.
-
-**Used by**: `academicSearch/agent.ts` for querying academic databases.
