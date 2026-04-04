@@ -1,16 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
+"use server";
+
 import configManager from "@/server";
 import {
      buildRelatedPapersGraph,
      GraphConstructionMethod,
-     type RankedPaper,
-     type RelatedPapersResponse,
 } from "@/lib/relatedPapers/graph";
 
-export type { RankedPaper, RelatedPapersResponse, GraphConstructionMethod };
-
-export async function POST(req: NextRequest) {
+export async function buildRelatedPapersGraphAction(
+     pdfTitle: string,
+     pdfDoi?: string,
+     method?: GraphConstructionMethod,
+) {
      try {
+<<<<<<< Updated upstream:src/app/api/related-papers/route.ts
           const body = await req.json();
           const { pdfTitle, pdfDoi, method, seedPaperS2Id, stream = false } = body as {
                pdfTitle?: string;
@@ -24,6 +26,10 @@ export async function POST(req: NextRequest) {
 
           if (!pdfTitle && !pdfDoi && !seedPaperS2Id) {
                return NextResponse.json({ error: "pdfTitle, pdfDoi, or seedPaperS2Id is required." }, { status: 400 });
+=======
+          if (!pdfTitle) {
+               return { error: "pdfTitle is required." };
+>>>>>>> Stashed changes:src/lib/actions/related-papers.ts
           }
 
           const effectiveTitle = pdfTitle || `DOI:${pdfDoi}` || `S2:${seedPaperS2Id}`;
@@ -52,6 +58,7 @@ export async function POST(req: NextRequest) {
                return NextResponse.json(response);
           }
 
+<<<<<<< Updated upstream:src/app/api/related-papers/route.ts
           // Streaming implementation using TransformStream
           const encoder = new TextEncoder();
           const { readable, writable } = new TransformStream();
@@ -89,10 +96,13 @@ export async function POST(req: NextRequest) {
                     "Cache-Control": "no-cache",
                },
           });
+=======
+          return response;
+>>>>>>> Stashed changes:src/lib/actions/related-papers.ts
      } catch (err) {
           console.error("[Related Papers] Error:", err);
           const msg = err instanceof Error ? err.message : "Search failed";
-          return NextResponse.json({ error: msg }, { status: 500 });
+          return { error: msg };
      }
 }
 

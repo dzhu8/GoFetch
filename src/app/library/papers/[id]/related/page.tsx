@@ -12,6 +12,8 @@ import {
      Network,
      ChevronDown,
 } from "lucide-react";
+import { getPaper, getRelatedPapers, computeRelatedPapers } from "@/lib/actions/papers";
+import { updateConfig } from "@/lib/actions/config";
 
 interface RelatedPaper {
      id: number;
@@ -76,19 +78,14 @@ export default function RelatedPapersPage() {
                setError(null);
 
                // Fetch source paper info
-               const paperRes = await fetch(`/api/papers/${paperId}`);
-               if (paperRes.ok) {
-                    const data = await paperRes.json();
-                    if (data.paper) setPaper(data.paper);
+               const paperData = await getPaper(paperId);
+               if (!paperData.error && paperData.paper) {
+                    setPaper(paperData.paper);
                }
 
                // Fetch saved related papers (optionally for a specific method)
-               const url = method
-                    ? `/api/papers/${paperId}/related-papers?method=${encodeURIComponent(method)}`
-                    : `/api/papers/${paperId}/related-papers`;
-               const rpRes = await fetch(url);
-               if (!rpRes.ok) throw new Error("Failed to fetch related papers");
-               const rpData = await rpRes.json();
+               const rpData = await getRelatedPapers(paperId, method);
+               if (rpData.error) throw new Error("Failed to fetch related papers");
                let results = rpData.relatedPapers ?? [];
                
                // Sort by relevance score (which is already calculated based on rankMethod in the backend)
@@ -111,11 +108,7 @@ export default function RelatedPapersPage() {
      const switchMethod = async (method: string) => {
           setIsMethodDropdownOpen(false);
           // Update global config so future Recompute uses this method
-          await fetch("/api/config", {
-               method: "POST",
-               headers: { "Content-Type": "application/json" },
-               body: JSON.stringify({ key: "personalization.graphRankMethod", value: method }),
-          });
+          await updateConfig("personalization.graphRankMethod", method);
           await fetchData(method);
      };
 
@@ -126,20 +119,12 @@ export default function RelatedPapersPage() {
           try {
                // Update global config first if method changed
                if (selectedMethod && selectedMethod !== rankMethod) {
-                    await fetch("/api/config", {
-                         method: "POST",
-                         headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({
-                              key: "personalization.graphRankMethod",
-                              value: selectedMethod,
-                         }),
-                    });
+                    await updateConfig("personalization.graphRankMethod", selectedMethod);
                     setRankMethod(selectedMethod);
                }
 
-               const res = await fetch(`/api/papers/${paperId}/related-papers`, { method: "POST" });
-               if (!res.ok) {
-                    const data = await res.json();
+               const data = await computeRelatedPapers(paperId);
+               if (data.error) {
                     throw new Error(data.error || "Failed to compute related papers");
                }
                await fetchData(selectedMethod ?? rankMethod);

@@ -7,6 +7,11 @@ import { UMAP } from "umap-js";
 import { cn } from "@/lib/utils";
 import ThreeEmbeddingViewer from "@/components/ThreeEmbeddingViewer";
 import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
+import { getConfig } from "@/lib/actions/config";
+import { getFolders, addFolder, deleteFolder } from "@/lib/actions/folders";
+import { getEmbeddings, deleteEmbeddings, embedQuery } from "@/lib/actions/embeddings";
+import { getPaperEmbeddings } from "@/lib/actions/papers";
+import { getLibraryFolders } from "@/lib/actions/library";
 
 type RegisteredFolder = {
      name: string;
@@ -377,9 +382,8 @@ export default function InspectPage() {
                if (!silent) {
                     setLoadingFolders(true);
                }
-               const res = await fetch("/api/folders", { cache: "no-store" });
-               if (!res.ok) throw new Error("Failed to load folders");
-               const data = (await res.json()) as { folders: RegisteredFolder[] };
+               const data = await getFolders();
+               if (data.error) throw new Error(data.error);
                setFolders(data.folders ?? []);
           } catch (error) {
                console.error("Failed to load folders", error);
@@ -438,9 +442,8 @@ export default function InspectPage() {
      useEffect(() => {
           const fetchCliPreference = async () => {
                try {
-                    const res = await fetch("/api/config");
-                    if (!res.ok) throw new Error("Failed to load configuration");
-                    const data = await res.json();
+                    const data = await getConfig();
+                    if (data.error) throw new Error(data.error);
                     setCliFolderWatcherEnabled(Boolean(data.values?.preferences?.cliFolderWatcher));
                     const preferredSize = Number(data.values?.preferences?.embeddingPointSize ?? 5);
                     setDotSize(Number.isFinite(preferredSize) && preferredSize > 0 ? preferredSize : 5);
@@ -508,15 +511,10 @@ export default function InspectPage() {
 
           setIsSavingFolder(true);
           try {
-               const res = await fetch("/api/folders", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: trimmedName, rootPath: trimmedPath }),
-               });
+               const data = await addFolder(trimmedName, trimmedPath);
 
-               if (!res.ok) {
-                    const error = await res.json().catch(() => ({ error: "Failed to add folder" }));
-                    throw new Error(error.message || error.error || "Failed to add folder");
+               if (data.error) {
+                    throw new Error(data.message || data.error || "Failed to add folder");
                }
 
                setIsAddModalOpen(false);
@@ -599,22 +597,15 @@ export default function InspectPage() {
                let total = 0;
 
                while (hasMore) {
-                    const params = new URLSearchParams({
-                         folderName: folder.name,
-                         limit: String(batchSize),
-                         offset: String(offset),
-                    });
-
-                    const res = await fetch(`/api/embeddings?${params.toString()}`, { cache: "no-store" });
-                    const data = (await res.json().catch(() => ({}))) as {
+                    const data = await getEmbeddings(folder.name, batchSize, offset) as {
                          embeddings?: EmbeddingRow[];
                          error?: string;
                          hasMore?: boolean;
                          total?: number;
                     };
 
-                    if (!res.ok) {
-                         throw new Error(data?.error || "Failed to load embeddings");
+                    if (data.error) {
+                         throw new Error(data.error || "Failed to load embeddings");
                     }
 
                     // Get total from first response
@@ -686,15 +677,9 @@ export default function InspectPage() {
 
           setDeletingEmbeddings(folderName);
           try {
-               const params = new URLSearchParams({
-                    folderName,
-               });
-               const res = await fetch(`/api/embeddings?${params.toString()}`, {
-                    method: "DELETE",
-               });
-               const data = await res.json().catch(() => ({}));
-               if (!res.ok) {
-                    throw new Error(data?.error || "Failed to delete embeddings");
+               const data = await deleteEmbeddings(folderName);
+               if (data.error) {
+                    throw new Error(data.error || "Failed to delete embeddings");
                }
 
                setInfoMessage(`Deleted ${data?.deleted ?? 0} embeddings for ${folderName}.`);
@@ -720,13 +705,9 @@ export default function InspectPage() {
 
                setDeletingFolder(folderName);
                try {
-                    const res = await fetch(`/api/folders/${encodeURIComponent(folderName)}`, {
-                         method: "DELETE",
-                         cache: "no-store",
-                    });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) {
-                         throw new Error(data?.error || data?.message || "Failed to remove folder");
+                    const data = await deleteFolder(folderName);
+                    if (data.error) {
+                         throw new Error(data.error || data.message || "Failed to remove folder");
                     }
                     await fetchFolders();
                     if (selectedFolder === folderName) {
@@ -794,18 +775,13 @@ export default function InspectPage() {
 
           try {
                // Step 1: Compute embedding for the query
-               const queryRes = await fetch("/api/embeddings/query", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ query: queryText.trim() }),
-               });
-               const queryData = (await queryRes.json().catch(() => ({}))) as {
+               const queryData = await embedQuery(queryText.trim()) as {
                     vector?: number[];
                     error?: string;
                };
 
-               if (!queryRes.ok) {
-                    throw new Error(queryData?.error || "Failed to compute query embedding");
+               if (queryData.error) {
+                    throw new Error(queryData.error || "Failed to compute query embedding");
                }
 
                const queryVector = queryData.vector;
@@ -823,22 +799,15 @@ export default function InspectPage() {
                     let hasMore = true;
 
                     while (hasMore) {
-                         const params = new URLSearchParams({
-                              folderId: String(folderId),
-                              limit: String(batchSize),
-                              offset: String(offset),
-                         });
-
-                         const res = await fetch(`/api/paper-embeddings?${params.toString()}`, { cache: "no-store" });
-                         const data = (await res.json().catch(() => ({}))) as {
+                         const data = await getPaperEmbeddings(folderId, batchSize, offset) as {
                               chunks?: LibraryChunkRow[];
                               error?: string;
                               total?: number;
                          };
 
-                         if (!res.ok) {
+                         if (data.error) {
                               const folder = libraryFolders.find(f => f.id === folderId);
-                              throw new Error(data?.error || `Failed to load embeddings for ${folder?.name || folderId}`);
+                              throw new Error(data.error || `Failed to load embeddings for ${folder?.name || folderId}`);
                          }
 
                          const batchChunks = data.chunks ?? [];
@@ -962,9 +931,8 @@ export default function InspectPage() {
      const fetchLibraryFolders = useCallback(async () => {
           setIsLoadingLibraryFolders(true);
           try {
-               const res = await fetch("/api/library-folders", { cache: "no-store" });
-               if (res.ok) {
-                    const data = await res.json();
+               const data = await getLibraryFolders();
+               if (!data.error) {
                     setLibraryFolders(data.folders ?? []);
                }
           } catch {}
@@ -1009,9 +977,8 @@ export default function InspectPage() {
           setLibraryLoadProgress(null);
 
           try {
-               const res = await fetch(`/api/paper-embeddings?folderId=${folderId}&limit=5000`, { cache: "no-store" });
-               const data = (await res.json().catch(() => ({}))) as { chunks?: LibraryChunkRow[]; error?: string };
-               if (!res.ok) throw new Error(data?.error || "Failed to fetch paper embeddings");
+               const data = await getPaperEmbeddings(folderId, 5000, 0) as { chunks?: LibraryChunkRow[]; error?: string };
+               if (data.error) throw new Error(data.error || "Failed to fetch paper embeddings");
 
                const raw = data.chunks ?? [];
                if (raw.length === 0) {

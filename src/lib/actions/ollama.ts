@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+"use server";
+
 import { inferOllamaFamilyFromName, isRecommendedOllamaModel } from "@/lib/models/providers/OllamaProvider";
 import type { OllamaTag } from "@/lib/models/ollamaClient";
 import modelRegistry from "@/server/providerRegistry";
@@ -197,9 +198,8 @@ const AVAILABLE_MODELS = [
           contextWindow: 131072, // 128K
           description: "Open-source GPT 120B - top-tier performance, requires significant resources",
           family: "GPT-OSS",
-          recommended: false
+          recommended: false,
      },
-
 ];
 
 // Fetch model info to get context window size
@@ -286,14 +286,14 @@ const deriveCapabilities = (modelName: string, options: CapabilityOptions) => {
      return { supportsChat, supportsEmbedding, supportsOCR };
 };
 
-export async function GET(req: NextRequest) {
-     const { searchParams } = new URL(req.url);
-     const baseURL = searchParams.get("baseURL")?.trim() || "http://127.0.0.1:11434";
-     const providerId = searchParams.get("providerId")?.trim();
+// ── GET /api/ollama/models ──────────────────────────────────────────
+
+export async function getOllamaModels(baseURL?: string, providerId?: string) {
+     const resolvedBaseURL = baseURL?.trim() || "http://127.0.0.1:11434";
 
      try {
           // Fetch installed models
-          const res = await fetch(`${baseURL}/api/tags`, {
+          const res = await fetch(`${resolvedBaseURL}/api/tags`, {
                headers: {
                     "Content-Type": "application/json",
                },
@@ -317,7 +317,7 @@ export async function GET(req: NextRequest) {
           const installedModelNames = Array.from(installedModels.keys());
 
           const modelInfoPromises = installedModelNames.map(async (name) => {
-               const info = await fetchModelInfo(baseURL, name);
+               const info = await fetchModelInfo(resolvedBaseURL, name);
                return { name, info };
           });
 
@@ -417,12 +417,9 @@ export async function GET(req: NextRequest) {
                return a.name.localeCompare(b.name);
           });
 
-          return NextResponse.json({ models: allModels });
+          return { models: allModels };
      } catch (error) {
           console.error("Error fetching Ollama models:", error);
-          return NextResponse.json(
-               { error: error instanceof Error ? error.message : "Failed to fetch models" },
-               { status: 500 }
-          );
+          return { error: error instanceof Error ? error.message : "Failed to fetch models" };
      }
 }

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Download, Loader2, Star } from "lucide-react";
 import { toast } from "sonner";
+import { getOllamaModels } from "@/lib/actions/ollama";
+import { getProviders, updateProvider } from "@/lib/actions/providers";
 
 interface OllamaModel {
      name: string;
@@ -64,14 +66,9 @@ const OllamaModels = ({
      const fetchModels = useCallback(async () => {
           try {
                setIsLoading(true);
-               const params = new URLSearchParams({ baseURL: resolvedBaseUrl });
-               if (providerId) {
-                    params.append("providerId", providerId);
-               }
-               const res = await fetch(`/api/ollama/models?${params}`);
-               if (!res.ok) throw new Error("Failed to fetch models");
+               const data = await getOllamaModels(resolvedBaseUrl, providerId);
+               if (data.error) throw new Error("Failed to fetch models");
 
-               const data = await res.json();
                const nextModels: OllamaModel[] = data.models ?? [];
                nextModels.sort((a, b) => Number(b.recommended) - Number(a.recommended));
                setModels(nextModels);
@@ -138,10 +135,10 @@ const OllamaModels = ({
                setUpdatingModels((prev) => new Set(prev).add(`${modelName}-${modelType}`));
 
                // Get current provider state
-               const res = await fetch("/api/providers");
-               if (!res.ok) throw new Error("Failed to fetch providers");
+               const providersData = await getProviders();
+               if (providersData.error) throw new Error("Failed to fetch providers");
 
-               const { providers } = await res.json();
+               const { providers } = providersData;
                const provider = providers.find((p: any) => p.id === providerId);
 
                if (!provider) {
@@ -171,20 +168,13 @@ const OllamaModels = ({
                }
 
                // Update provider via API
-               const updateRes = await fetch(`/api/providers/${providerId}`, {
-                    method: "PATCH",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         chatModels,
-                         embeddingModels,
-                    }),
+               const updateResult = await updateProvider(providerId, {
+                    chatModels,
+                    embeddingModels,
                });
 
-               if (!updateRes.ok) {
-                    const error = await updateRes.json();
-                    throw new Error(error.message || "Failed to update provider");
+               if (updateResult.error) {
+                    throw new Error(updateResult.error || "Failed to update provider");
                }
 
                // Refresh the model list to get updated states

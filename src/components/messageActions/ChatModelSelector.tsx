@@ -7,6 +7,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { MinimalProvider } from "@/lib/models/types";
 import { useChat } from "@/lib/chat/Chat";
 import { persistModelPreference } from "@/lib/models/modelPreference";
+import { getProviders } from "@/lib/actions/providers";
 import { toast } from "sonner";
 
 const ModelSelector = () => {
@@ -20,14 +21,13 @@ const ModelSelector = () => {
           const loadProviders = async () => {
                try {
                     setIsLoading(true);
-                    const providersRes = await fetch("/api/providers");
+                    const data = await getProviders();
 
-                    if (!providersRes.ok) {
+                    if ("error" in data) {
                          throw new Error("Failed to fetch providers");
                     }
 
-                    const data: { providers: MinimalProvider[] } = await providersRes.json();
-                    setProviders(data.providers);
+                    setProviders(data.providers as MinimalProvider[]);
                } catch (error) {
                     console.error("Error loading providers:", error);
                } finally {

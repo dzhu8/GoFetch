@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import GoFetchDogBox from "../../../public/assets/GoFetch-dog-box.svg";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
+import { getLibraryFolders, createLibraryFolder, deleteLibraryFolder } from "@/lib/actions/library";
+import { getPapers } from "@/lib/actions/papers";
 
 interface FolderData {
      id: number;
@@ -43,9 +45,8 @@ export default function LibraryPage() {
      const fetchFolders = useCallback(async () => {
           try {
                setIsLoading(true);
-               const res = await fetch("/api/library-folders");
-               if (!res.ok) throw new Error("Failed to fetch folders");
-               const data = await res.json();
+               const data = await getLibraryFolders();
+               if (data.error) throw new Error("Failed to fetch folders");
                setFolders(data.folders || []);
                if (data.libraryRoot) setLibraryRoot(data.libraryRoot);
 
@@ -54,9 +55,8 @@ export default function LibraryPage() {
                await Promise.all(
                     (data.folders || []).map(async (folder: FolderData) => {
                          try {
-                              const papersRes = await fetch(`/api/papers?folderId=${folder.id}`);
-                              if (papersRes.ok) {
-                                   const papersData = await papersRes.json();
+                              const papersData = await getPapers(folder.id);
+                              if (!papersData.error) {
                                    counts.set(folder.id, papersData.papers?.length || 0);
                               }
                          } catch {}
@@ -84,14 +84,9 @@ export default function LibraryPage() {
           }
           setIsSavingFolder(true);
           try {
-               const res = await fetch("/api/library-folders", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: trimmedName }),
-               });
-               if (!res.ok) {
-                    const err = await res.json().catch(() => ({ error: "Failed to create folder" }));
-                    setCreateFolderError(err.error || "Failed to create folder.");
+               const result = await createLibraryFolder(trimmedName);
+               if (result.error) {
+                    setCreateFolderError(result.error || "Failed to create folder.");
                     return;
                }
                setIsCreateModalOpen(false);
@@ -127,13 +122,8 @@ export default function LibraryPage() {
                if (!derivedName) {
                     throw new Error("Could not determine folder name from the selected path.");
                }
-               const postRes = await fetch("/api/library-folders", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: derivedName }),
-               });
-               const postData = await postRes.json().catch(() => ({}));
-               if (!postRes.ok) throw new Error(postData.error || "Failed to add folder");
+               const postData = await createLibraryFolder(derivedName);
+               if (postData.error) throw new Error(postData.error || "Failed to add folder");
                await fetchFolders();
           } catch (error) {
                console.error("Error adding folder:", error);
@@ -146,10 +136,8 @@ export default function LibraryPage() {
      const handleDelete = async (folderId: number) => {
           setDeletingId(folderId);
           try {
-               const res = await fetch(`/api/library-folders/${folderId}`, {
-                    method: "DELETE",
-               });
-               if (!res.ok) throw new Error("Failed to delete folder");
+               const data = await deleteLibraryFolder(String(folderId));
+               if (data.error) throw new Error("Failed to delete folder");
                setFolders((prev) => prev.filter((f) => f.id !== folderId));
                setPaperCounts((prev) => {
                     const next = new Map(prev);

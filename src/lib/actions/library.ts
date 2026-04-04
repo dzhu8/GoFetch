@@ -1,37 +1,26 @@
-import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+"use server";
 
 import db from "@/server/db";
 import {
+     libraryFolders,
      papers,
      paperChunks,
      paperChunkEmbeddings,
      paperMetadataCache,
      paperAbstractEmbeddings,
      paperSourceLinks,
-     libraryFolders,
      librarySearchCache,
 } from "@/server/db/schema";
+import fs from "fs";
+import path from "path";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
 import configManager from "@/server";
 import modelRegistry from "@/server/providerRegistry";
 import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import type { MinimalProvider } from "@/lib/models/types";
 import type { ModelPreference } from "@/lib/models/modelPreference";
-
-// ── Types ────────────────────────────────────────────────────────────────────
-
 export type SearchScope = "papers" | "web_abstracts" | "both";
-
-export interface SearchRequest {
-     query: string;
-     /** Null / empty = search across entire library */
-     folderIds: number[] | null;
-     searchScope: SearchScope;
-     /** Override the default embedding model */
-     embeddingModel: ModelPreference | null;
-     /** Max results to return — falls back to personalization.snowballMaxPapers */
-     topN?: number;
-}
 
 export interface ChunkResult {
      type: "chunk";
@@ -57,9 +46,6 @@ export interface AbstractResult {
      venue: string | null;
      doi: string | null;
      s2Url: string | null;
-     /** IDs of library papers that reference this S2 paper */
-     sourcePaperIds: number[];
-     minDepth: number;
 }
 
 export type SearchResult = ChunkResult | AbstractResult;
@@ -71,7 +57,43 @@ export interface LibrarySearchResponse {
      embeddedOnTheFly: number;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Shared constants & helpers ──────────────────────────────────────────────
+
+/** Central directory where all GoFetch-managed library folders live */
+const LIBRARY_ROOT = path.join(process.cwd(), "data", "library");
+
+function ensureLibraryRoot() {
+     if (!fs.existsSync(LIBRARY_ROOT)) {
+          fs.mkdirSync(LIBRARY_ROOT, { recursive: true });
+     }
+}
+
+async function triggerPendingEmbeddings(folderId: number, folderName: string) {
+     const papersToEmbed = db
+          .select({ id: papers.id, fileName: papers.fileName, filePath: papers.filePath })
+          .from(papers)
+          .leftJoin(paperChunks, eq(papers.id, paperChunks.paperId))
+          .where(eq(papers.folderId, folderId))
+          .all()
+          .filter((p, i, self) => {
+               const hasChunks = db.select().from(paperChunks).where(eq(paperChunks.paperId, p.id)).limit(1).get();
+               return !hasChunks;
+          });
+
+     for (const paper of papersToEmbed) {
+          const ocrFileName = paper.fileName.replace(/\.pdf$/i, "") + ".ocr.json";
+          const ocrPath = paper.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
+
+          if (fs.existsSync(ocrPath)) {
+               try {
+                    await processPaperOCR(paper.id, ocrPath);
+                    queuePaperEmbedding(paper.id, folderName, paper.fileName);
+               } catch (err) {
+                    console.warn(`[Library] Failed to process pending embedding for ${paper.fileName}:`, err);
+               }
+          }
+     }
+}
 
 function bufToVector(buf: Buffer): number[] {
      return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
@@ -93,19 +115,121 @@ function cosineSimilarity(a: number[], b: number[]): number {
      return denom === 0 ? 0 : dot / denom;
 }
 
-// ── Route ────────────────────────────────────────────────────────────────────
+// ── Server Actions ──────────────────────────────────────────────────────────
 
-export async function POST(req: NextRequest) {
+/** GET /api/library-folders -> getLibraryFolders() */
+export async function getLibraryFolders() {
      try {
-          const body: SearchRequest = await req.json();
-          const { query, folderIds, searchScope = "both", embeddingModel: requestedModel } = body;
+          ensureLibraryRoot();
+          const rows = db.select().from(libraryFolders).orderBy(libraryFolders.createdAt).all();
 
-          if (!query?.trim()) {
-               return NextResponse.json({ error: "query is required" }, { status: 400 });
+          // Trigger background embedding checks for each folder
+          for (const folder of rows) {
+               triggerPendingEmbeddings(folder.id, folder.name).catch(console.error);
           }
 
-          const topN: number =
-               body.topN ??
+          return { folders: rows, libraryRoot: LIBRARY_ROOT };
+     } catch (error) {
+          console.error("Error fetching library folders:", error);
+          return { error: "Failed to fetch library folders" };
+     }
+}
+
+/** POST /api/library-folders -> createLibraryFolder(name, rootPath?) */
+export async function createLibraryFolder(name: string, rootPath?: string) {
+     try {
+          ensureLibraryRoot();
+          const trimmedName = typeof name === "string" ? name.trim() : "";
+          const trimmedRoot = typeof rootPath === "string" ? rootPath.trim() : "";
+
+          if (!trimmedName) {
+               return { error: "Folder name is required" };
+          }
+
+          const resolvedPath = trimmedRoot || path.join(LIBRARY_ROOT, trimmedName);
+
+          if (fs.existsSync(resolvedPath)) {
+               return { error: `A folder named "${trimmedName}" already exists in the library directory.` };
+          }
+
+          fs.mkdirSync(resolvedPath, { recursive: true });
+
+          const row = db
+               .insert(libraryFolders)
+               .values({ name: trimmedName, rootPath: resolvedPath })
+               .returning()
+               .get();
+
+          return { folder: row };
+     } catch (error: any) {
+          console.error("Error creating library folder:", error);
+          if (error?.message?.includes("UNIQUE constraint failed")) {
+               return { error: "A folder with that name already exists" };
+          }
+          return { error: "Failed to create library folder" };
+     }
+}
+
+/** GET /api/library-folders/[id] -> getLibraryFolder(id) */
+export async function getLibraryFolder(id: string) {
+     try {
+          const folderId = parseInt(id, 10);
+          if (isNaN(folderId)) {
+               return { error: "Invalid folder ID" };
+          }
+
+          const folder = db.select().from(libraryFolders).where(eq(libraryFolders.id, folderId)).get();
+          if (!folder) {
+               return { error: "Folder not found" };
+          }
+
+          return { folder };
+     } catch (error) {
+          console.error("Error fetching library folder:", error);
+          return { error: "Failed to fetch library folder" };
+     }
+}
+
+/** DELETE /api/library-folders/[id] -> deleteLibraryFolder(id) */
+export async function deleteLibraryFolder(id: string) {
+     try {
+          const folderId = parseInt(id, 10);
+          if (isNaN(folderId)) {
+               return { error: "Invalid folder ID" };
+          }
+
+          const folder = db.select().from(libraryFolders).where(eq(libraryFolders.id, folderId)).get();
+          if (!folder) {
+               return { error: "Folder not found" };
+          }
+
+          // Delete folder (papers cascade via FK)
+          db.delete(libraryFolders).where(eq(libraryFolders.id, folderId)).run();
+
+          return { message: "Folder deleted successfully" };
+     } catch (error) {
+          console.error("Error deleting library folder:", error);
+          return { error: "Failed to delete library folder" };
+     }
+}
+
+/** POST /api/library-search -> searchLibrary(...) */
+export async function searchLibrary(
+     query: string,
+     folderIds?: number[] | null,
+     searchScope?: string,
+     embeddingModel?: { providerId: string; modelKey: string },
+     topN?: number,
+) {
+     try {
+          const scope = (searchScope ?? "both") as SearchScope;
+
+          if (!query?.trim()) {
+               return { error: "query is required" };
+          }
+
+          const resolvedTopN: number =
+               topN ??
                (configManager.getConfig("personalization.snowballMaxPapers") as number | undefined) ??
                50;
 
@@ -125,12 +249,12 @@ export async function POST(req: NextRequest) {
           const modelPref = resolveModelPreference(
                "embedding",
                providers,
-               requestedModel ?? snapshot.preferences?.defaultEmbeddingModel,
+               embeddingModel ?? snapshot.preferences?.defaultEmbeddingModel,
           );
 
           const provider = modelRegistry.getProviderById(modelPref.providerId);
           if (!provider) {
-               return NextResponse.json({ error: `Provider ${modelPref.providerId} not found` }, { status: 500 });
+               return { error: `Provider ${modelPref.providerId} not found` };
           }
           const embModel = await provider.provider.loadEmbeddingModel(modelPref.modelKey);
           const modelKey = `${modelPref.providerId}/${modelPref.modelKey}`;
@@ -138,10 +262,9 @@ export async function POST(req: NextRequest) {
           // ── Relevant Settings for Cache ───────────────────────────────
           const personalization = configManager.getConfig("personalization") || {};
           const settingsHash = JSON.stringify({
-               topN,
+               topN: resolvedTopN,
                graphDepth: personalization.snowballDepth,
                graphMaxPapers: personalization.snowballMaxPapers,
-               // add other thresholds if they affect the final ranked list
                bcThreshold: personalization.snowballBcThreshold,
                ccThreshold: personalization.snowballCcThreshold,
                embThreshold: personalization.snowballEmbeddingThreshold,
@@ -165,7 +288,7 @@ export async function POST(req: NextRequest) {
                     and(
                          eq(librarySearchCache.query, normalizedQuery),
                          eq(librarySearchCache.folderIdsJson, folderIdsJson),
-                         eq(librarySearchCache.searchScope, searchScope),
+                         eq(librarySearchCache.searchScope, scope),
                          eq(librarySearchCache.modelKey, modelKey),
                          eq(librarySearchCache.settingsHash, settingsHash),
                     ),
@@ -175,13 +298,13 @@ export async function POST(req: NextRequest) {
           if (cached) {
                try {
                     const results = JSON.parse(cached.resultsJson) as SearchResult[];
-                    return NextResponse.json({
+                    return {
                          results,
                          embeddingModel: modelKey,
-                         totalCandidates: results.length, // approximation
+                         totalCandidates: results.length,
                          embeddedOnTheFly: 0,
                          fromCache: true,
-                    } satisfies LibrarySearchResponse & { fromCache: boolean });
+                    } satisfies LibrarySearchResponse & { fromCache: boolean };
                } catch (e) {
                     console.error("[library-search] Cache parse error:", e);
                }
@@ -207,7 +330,7 @@ export async function POST(req: NextRequest) {
           const seedPaperMap = new Map(seedPapers.map((p) => [p.id, p]));
 
           // ── SCOPE: paper chunks ────────────────────────────────────────
-          if ((searchScope === "papers" || searchScope === "both") && seedPaperIds.length > 0) {
+          if ((scope === "papers" || scope === "both") && seedPaperIds.length > 0) {
                const chunks = db
                     .select({
                          id: paperChunks.id,
@@ -220,7 +343,6 @@ export async function POST(req: NextRequest) {
                     .all();
 
                if (chunks.length > 0) {
-                    // Fetch cached per-model embeddings
                     const chunkIds = chunks.map((c) => c.id);
                     const cachedEmbs = db
                          .select({ chunkId: paperChunkEmbeddings.chunkId, embedding: paperChunkEmbeddings.embedding })
@@ -234,7 +356,6 @@ export async function POST(req: NextRequest) {
                          .all();
                     const embMap = new Map(cachedEmbs.map((e) => [e.chunkId, bufToVector(e.embedding as Buffer)]));
 
-                    // Collect chunks needing fresh embedding
                     const toEmbed = chunks.filter((c) => !embMap.has(c.id));
                     if (toEmbed.length > 0) {
                          const BATCH = 32;
@@ -288,8 +409,7 @@ export async function POST(req: NextRequest) {
           }
 
           // ── SCOPE: web abstracts from paperMetadataCache ───────────────
-          if (searchScope === "web_abstracts" || searchScope === "both") {
-               // Collect S2 paper IDs reachable within depth ≤ 2 from any seed paper
+          if (scope === "web_abstracts" || scope === "both") {
                const linkRows =
                     seedPaperIds.length > 0
                          ? db
@@ -302,14 +422,12 @@ export async function POST(req: NextRequest) {
                                 .where(
                                      and(
                                           inArray(paperSourceLinks.sourcePaperId, seedPaperIds),
-                                          // depth <= 2
                                      ),
                                 )
                                 .all()
                                 .filter((r) => r.depth <= 2)
                          : [];
 
-               // Group by s2PaperId
                const s2Map = new Map<string, { sourcePaperIds: number[]; minDepth: number }>();
                for (const row of linkRows) {
                     const existing = s2Map.get(row.s2PaperId);
@@ -340,7 +458,6 @@ export async function POST(req: NextRequest) {
                     if (metaRows.length > 0) {
                          const metaIds = metaRows.map((r) => r.paperId);
 
-                         // Fetch cached per-model abstract embeddings
                          const cachedAbstEmbs = db
                               .select({ paperId: paperAbstractEmbeddings.paperId, embedding: paperAbstractEmbeddings.embedding })
                               .from(paperAbstractEmbeddings)
@@ -353,7 +470,6 @@ export async function POST(req: NextRequest) {
                               .all();
                          const abstEmbMap = new Map(cachedAbstEmbs.map((e) => [e.paperId, bufToVector(e.embedding as Buffer)]));
 
-                         // Embed missing abstracts
                          const metaNeedingEmbed = metaRows.filter((r) => !abstEmbMap.has(r.paperId));
                          if (metaNeedingEmbed.length > 0) {
                               const BATCH = 32;
@@ -423,14 +539,14 @@ export async function POST(req: NextRequest) {
           const ranked = candidates
                .map(({ vec, result }) => ({ ...result, score: cosineSimilarity(queryVec, vec) }))
                .sort((a, b) => b.score - a.score)
-               .slice(0, topN);
+               .slice(0, resolvedTopN);
 
           // ── Save to Cache ──────────────────────────────────────────────
           db.insert(librarySearchCache)
                .values({
                     query: normalizedQuery,
                     folderIdsJson,
-                    searchScope,
+                    searchScope: scope,
                     modelKey,
                     settingsHash,
                     resultsJson: JSON.stringify(ranked),
@@ -451,15 +567,15 @@ export async function POST(req: NextRequest) {
                })
                .run();
 
-          return NextResponse.json({
+          return {
                results: ranked,
                embeddingModel: modelKey,
                totalCandidates: candidates.length,
                embeddedOnTheFly,
-          } satisfies LibrarySearchResponse);
+          } satisfies LibrarySearchResponse;
      } catch (err) {
           console.error("[library-search] Error:", err);
           const msg = err instanceof Error ? err.message : "Search failed";
-          return NextResponse.json({ error: msg }, { status: 500 });
+          return { error: msg };
      }
 }

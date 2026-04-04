@@ -23,6 +23,9 @@ import LibrarySearchModal from "@/components/LibraryEmbeddingSearchModal";
 import GoFetchDogBox from "../../../../public/assets/GoFetch-dog-box.svg";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
 import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
+import { getLibraryFolder } from "@/lib/actions/library";
+import { getPapers, deletePaper, recomputePaperEmbeddings, deletePaperEmbeddings, getRelatedPapers, computeRelatedPapers } from "@/lib/actions/papers";
+import { getConfig, updateConfig } from "@/lib/actions/config";
 
 interface Paper {
      id: number;
@@ -72,16 +75,14 @@ export default function FolderDetailPage() {
                setIsLoading(true);
 
                // Fetch folder info from library-folders API
-               const folderRes = await fetch(`/api/library-folders/${folderId}`);
-               if (folderRes.ok) {
-                    const folderData = await folderRes.json();
-                    if (folderData.folder) setFolder(folderData.folder);
+               const folderData = await getLibraryFolder(folderId);
+               if (!folderData.error && folderData.folder) {
+                    setFolder(folderData.folder);
                }
 
                // Fetch papers
-               const res = await fetch(`/api/papers?folderId=${folderId}`);
-               if (!res.ok) throw new Error("Failed to fetch papers");
-               const data = await res.json();
+               const data = await getPapers(parseInt(folderId, 10));
+               if (data.error) throw new Error("Failed to fetch papers");
                setPapers(data.papers || []);
 
                if (data.embeddingTriggered && data.folderName) {
@@ -116,8 +117,8 @@ export default function FolderDetailPage() {
      const handleDelete = async (paperId: number) => {
           setDeletingId(paperId);
           try {
-               const res = await fetch(`/api/papers/${paperId}?folderId=${folderId}`, { method: "DELETE" });
-               if (!res.ok) throw new Error("Failed to delete paper");
+               const data = await deletePaper(String(paperId), parseInt(folderId, 10));
+               if (data.error) throw new Error("Failed to delete paper");
                setPapers((prev) => prev.filter((p) => p.id !== paperId));
           } catch (error) {
                console.error("Error deleting paper:", error);
@@ -130,9 +131,8 @@ export default function FolderDetailPage() {
      const handleRecomputeEmbeddings = async (paperId: number, folderName: string) => {
           setRecomputingId(paperId);
           try {
-               const res = await fetch(`/api/papers/${paperId}/embeddings`, { method: "POST" });
-               if (!res.ok) {
-                    const data = await res.json();
+               const data = await recomputePaperEmbeddings(String(paperId));
+               if (data.error) {
                     throw new Error(data.error || "Failed to recompute embeddings");
                }
                trackFolderTask(folderName);
@@ -151,9 +151,8 @@ export default function FolderDetailPage() {
 
           setDeletingEmbedId(paperId);
           try {
-               const res = await fetch(`/api/papers/${paperId}/embeddings`, { method: "DELETE" });
-               if (!res.ok) {
-                    const data = await res.json();
+               const data = await deletePaperEmbeddings(String(paperId));
+               if (data.error) {
                     throw new Error(data.error || "Failed to delete embeddings");
                }
           } catch (error) {
@@ -168,20 +167,16 @@ export default function FolderDetailPage() {
           setComputingRelatedId(paperId);
           try {
                // Check whether related papers are already stored
-               const checkRes = await fetch(`/api/papers/${paperId}/related-papers`);
-               if (checkRes.ok) {
-                    const checkData = await checkRes.json();
-                    if (checkData.relatedPapers?.length > 0) {
-                         // Already computed — just navigate
-                         router.push(`/library/papers/${paperId}/related`);
-                         return;
-                    }
+               const checkData = await getRelatedPapers(String(paperId));
+               if (!checkData.error && (checkData.relatedPapers?.length ?? 0) > 0) {
+                    // Already computed — just navigate
+                    router.push(`/library/papers/${paperId}/related`);
+                    return;
                }
 
                // Not yet computed — compute from existing OCR sidecar and navigate
-               const res = await fetch(`/api/papers/${paperId}/related-papers`, { method: "POST" });
-               if (!res.ok) {
-                    const data = await res.json();
+               const data = await computeRelatedPapers(String(paperId));
+               if (data.error) {
                     throw new Error(data.error || "Failed to compute related papers");
                }
                router.push(`/library/papers/${paperId}/related`);
@@ -215,9 +210,8 @@ export default function FolderDetailPage() {
 
           const interval = setInterval(async () => {
                try {
-                    const res = await fetch(`/api/papers?folderId=${folderId}`);
-                    if (res.ok) {
-                         const data = await res.json();
+                    const data = await getPapers(parseInt(folderId, 10));
+                    if (!data.error) {
                          const freshPapers: Paper[] = data.papers || [];
                          setPapers((prev) => {
                               const freshMap = new Map(freshPapers.map((p: Paper) => [p.id, p]));
@@ -473,10 +467,9 @@ function PaperCard({
      useEffect(() => {
           const fetchConfig = async () => {
                try {
-                    const res = await fetch("/api/config");
-                    if (res.ok) {
-                         const data = await res.json();
-                         const method = data.config?.personalization?.graphRankMethod || "bibliographic";
+                    const data = await getConfig();
+                    if (!data.error) {
+                         const method = data.values?.personalization?.graphRankMethod || "bibliographic";
                          setRankMethod(method);
                     }
                } catch (err) {
@@ -488,14 +481,7 @@ function PaperCard({
 
      const handleSwitchMethod = async (method: string) => {
           try {
-               await fetch("/api/config", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                         key: "personalization.graphRankMethod",
-                         value: method,
-                    }),
-               });
+               await updateConfig("personalization.graphRankMethod", method);
                setRankMethod(method);
           } catch (err) {
                console.error("Failed to update rank method config", err);

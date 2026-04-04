@@ -1,5 +1,7 @@
 "use client";
 
+import { updateConfig } from "@/lib/actions/config";
+
 export type ModelPreference = {
      providerId: string;
      modelKey: string;
@@ -14,19 +16,9 @@ const CONFIG_KEYS: Record<ModelPreferenceKind, string> = {
 };
 
 export const persistModelPreference = async (kind: ModelPreferenceKind, preference: ModelPreference) => {
-     const res = await fetch("/api/config", {
-          method: "POST",
-          headers: {
-               "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-               key: CONFIG_KEYS[kind],
-               value: preference,
-          }),
-     });
+     const result = await updateConfig(CONFIG_KEYS[kind], preference);
 
-     if (!res.ok) {
-          const message = await res.text();
-          throw new Error(message || "Failed to save configuration");
+     if (result.error) {
+          throw new Error(result.error || "Failed to save configuration");
      }
 };

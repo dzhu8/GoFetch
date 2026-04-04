@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import GithubProjectCard from "@/components/GithubProjectCard";
 import { Loader2, Plus } from "lucide-react";
 import { useTaskProgressActions } from "@/components/progress/TaskProgressProvider";
+import { getConfig } from "@/lib/actions/config";
+import { getFolders, addFolder, deleteFolder } from "@/lib/actions/folders";
 
 type FolderSyncData = {
      name: string;
@@ -128,11 +130,10 @@ export default function SyncPage() {
      const fetchFolders = async () => {
           try {
                setIsLoading(true);
-               const res = await fetch("/api/folders?includeGitData=true");
-               if (!res.ok) throw new Error("Failed to fetch folders");
+               const data = await getFolders(true);
+               if (data.error) throw new Error("Failed to fetch folders");
 
-               const data = await res.json();
-               const githubFolders = (data.folders || []).filter((folder: FolderSyncData) =>
+               const githubFolders = ((data.folders || []) as unknown as FolderSyncData[]).filter((folder) =>
                     Boolean(folder.isGitConnected && folder.githubUrl)
                );
                setFolders(githubFolders);
@@ -154,27 +155,22 @@ export default function SyncPage() {
 
           setIsSavingFolder(true);
           try {
-               const res = await fetch("/api/folders", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: trimmedName, rootPath: trimmedPath }),
-               });
+               const addResult = await addFolder(trimmedName, trimmedPath);
 
-               if (!res.ok) {
-                    const error = await res.json().catch(() => ({ error: "Failed to add folder" }));
-                    throw new Error(error.message || error.error || "Failed to add folder");
+               if (addResult.error) {
+                    throw new Error(addResult.message || addResult.error || "Failed to add folder");
                }
 
-               const verifyRes = await fetch("/api/folders?includeGitData=true");
-               if (!verifyRes.ok) throw new Error("Failed to verify folder");
+               const verifyData = await getFolders(true);
+               if (verifyData.error) throw new Error("Failed to verify folder");
 
-               const verifyData = await verifyRes.json();
-               const addedFolder = (verifyData.folders || []).find(
-                    (folder: FolderSyncData) => folder.name === trimmedName
+               const allFolders = (verifyData.folders || []) as unknown as FolderSyncData[];
+               const addedFolder = allFolders.find(
+                    (folder) => folder.name === trimmedName
                );
 
                if (!addedFolder || !addedFolder.isGitConnected || !addedFolder.githubUrl) {
-                    await fetch(`/api/folders/${encodeURIComponent(trimmedName)}`, { method: "DELETE" });
+                    await deleteFolder(trimmedName);
                     setErrorModalMessage(
                          "The selected folder does not have a GitHub remote. Please connect it to GitHub before adding."
                     );
@@ -185,7 +181,7 @@ export default function SyncPage() {
                setNewFolderName("");
                setNewFolderPath("");
                setFolders(
-                    (verifyData.folders || []).filter((folder: FolderSyncData) =>
+                    allFolders.filter((folder) =>
                          Boolean(folder.isGitConnected && folder.githubUrl)
                     )
                );
@@ -248,9 +244,8 @@ export default function SyncPage() {
      useEffect(() => {
           const fetchCliPreference = async () => {
                try {
-                    const res = await fetch("/api/config");
-                    if (!res.ok) throw new Error("Failed to load configuration");
-                    const data = await res.json();
+                    const data = await getConfig();
+                    if (data.error) throw new Error("Failed to load configuration");
                     setCliFolderWatcherEnabled(Boolean(data.values?.preferences?.cliFolderWatcher));
                } catch (error) {
                     console.error("Error loading CLI preference:", error);

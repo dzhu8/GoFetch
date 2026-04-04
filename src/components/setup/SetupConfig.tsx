@@ -11,7 +11,11 @@ import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import OllamaModels from "./modelsView/OllamaModels";
 import ModelSelect from "./modelsView/ModelSelect";
 import AddProvider from "../models/AddProvider";
-import type { PythonEnvironment } from "@/app/api/related-papers/paddleocr/environments/route";
+import type { PythonEnvironment } from "@/lib/actions/paddleocr";
+import { getConfig, updateConfig, markSetupComplete } from "@/lib/actions/config";
+import { getProviders, deleteProvider } from "@/lib/actions/providers";
+import { createLibraryFolder } from "@/lib/actions/library";
+import { getPythonEnvironments, createPythonEnvironment } from "@/lib/actions/paddleocr";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -43,10 +47,9 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
                if (showSpinner) {
                     setIsLoading(true);
                }
-               const res = await fetch("/api/providers");
-               if (!res.ok) throw new Error("Failed to fetch providers");
+               const data = await getProviders();
+               if (data.error) throw new Error("Failed to fetch providers");
 
-               const data = await res.json();
                setProviders(data.providers || []);
           } catch (error) {
                console.error("Error fetching providers:", error);
@@ -67,9 +70,9 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      useEffect(() => {
           if (setupState !== 6) return;
           setPythonEnvsLoading(true);
-          fetch("/api/related-papers/paddleocr/environments")
-               .then((res) => res.json())
-               .then((data: { environments?: PythonEnvironment[] }) => {
+          getPythonEnvironments()
+               .then((data: { environments?: PythonEnvironment[]; error?: string }) => {
+                    if (data.error) throw new Error(data.error);
                     const envs = data.environments ?? [];
                     setPythonEnvs(envs);
                     // Pre-select the first detected environment if nothing is chosen yet
@@ -85,9 +88,8 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
      useEffect(() => {
           const fetchSettings = async () => {
                try {
-                    const res = await fetch("/api/config");
-                    if (!res.ok) throw new Error("Failed to load configuration");
-                    const data = await res.json();
+                    const data = await getConfig();
+                    if (data.error) throw new Error("Failed to load configuration");
 
                     const chatPreference = data.values?.preferences?.defaultChatModel;
                     if (chatPreference?.providerId && chatPreference?.modelKey) {
@@ -112,27 +114,17 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
 
                // Save the selected Python path to config before completing setup
                if (selectedPythonPath) {
-                    await fetch("/api/config", {
-                         method: "POST",
-                         headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({ key: "preferences.pythonPath", value: selectedPythonPath }),
-                    });
+                    await updateConfig("preferences.pythonPath", selectedPythonPath);
                }
 
                // Create default library folder if a name was provided
                if (folderPath.trim()) {
-                    await fetch("/api/library-folders", {
-                         method: "POST",
-                         headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({ name: folderPath.trim() }),
-                    });
+                    await createLibraryFolder(folderPath.trim());
                }
 
-               const res = await fetch("/api/config/setup-complete", {
-                    method: "POST",
-               });
+               const result = await markSetupComplete();
 
-               if (!res.ok) throw new Error("Failed to complete setup");
+               if (result.error) throw new Error("Failed to complete setup");
 
                // If a Python env is selected, store a flag so PaddleInstallMonitor
                // can pick it up and run the install from the main page.
@@ -156,21 +148,16 @@ const SetupConfig = ({ configSections, setupState, setSetupState }: SetupConfigP
           }
           setIsCreatingVenv(true);
           try {
-               const res = await fetch("/api/related-papers/paddleocr/environments", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ venvPath: newVenvPath.trim() }),
-               });
-               if (!res.ok) {
-                    const err = await res.json().catch(() => ({ error: "Failed to create virtual environment" }));
-                    toast.error((err as { error?: string }).error ?? "Failed to create virtual environment");
+               const data = await createPythonEnvironment(newVenvPath.trim());
+               if (data.error) {
+                    toast.error(data.error ?? "Failed to create virtual environment");
                     return;
                }
-               const data = (await res.json()) as { environment: PythonEnvironment };
-               setPythonEnvs((prev) => [...prev, data.environment]);
-               setSelectedPythonPath(data.environment.pythonPath);
+               const env = (data as { environment: PythonEnvironment }).environment;
+               setPythonEnvs((prev) => [...prev, env]);
+               setSelectedPythonPath(env.pythonPath);
                setNewVenvPath("");
-               toast.success(`Created virtual environment: ${data.environment.name}`);
+               toast.success(`Created virtual environment: ${env.name}`);
           } catch {
                toast.error("Failed to create virtual environment");
           } finally {
@@ -687,9 +674,9 @@ const ProviderCard = ({
      const handleModelUpdate = useCallback(async () => {
           // Fetch all providers to update parent state and enable Next button
           try {
-               const res = await fetch("/api/providers");
-               if (res.ok) {
-                    const { providers } = await res.json();
+               const data = await getProviders();
+               if (!data.error) {
+                    const { providers } = data;
                     const updated = providers.find((p: ConfigModelProvider) => p.id === provider.id);
                     if (updated) {
                          setLocalProvider(updated);
@@ -709,13 +696,10 @@ const ProviderCard = ({
 
           setIsDeleting(true);
           try {
-               const res = await fetch(`/api/providers/${provider.id}`, {
-                    method: "DELETE",
-               });
+               const result = await deleteProvider(provider.id);
 
-               if (!res.ok) {
-                    const error = await res.json();
-                    throw new Error(error.message || "Failed to delete provider");
+               if (result.error) {
+                    throw new Error(result.error || "Failed to delete provider");
                }
 
                toast.success("Provider deleted successfully");

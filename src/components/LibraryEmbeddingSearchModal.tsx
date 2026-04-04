@@ -13,8 +13,10 @@ import {
      ChevronDown,
      Check,
 } from "lucide-react";
-import type { SearchResult, SearchScope, LibrarySearchResponse } from "@/app/api/library-search/route";
+import type { SearchResult, SearchScope, LibrarySearchResponse } from "@/lib/actions/library";
 import type { ModelPreference } from "@/lib/models/modelPreference";
+import { getLibraryFolders, searchLibrary } from "@/lib/actions/library";
+import { getConfig } from "@/lib/actions/config";
 
 // ── Score badge ───────────────────────────────────────────────────────────────
 
@@ -213,25 +215,23 @@ export default function LibrarySearchModal({ currentFolderId, currentFolderName,
           let cancelled = false;
           (async () => {
                try {
-                    const [foldersRes, configRes] = await Promise.all([
-                         fetch("/api/library-folders"),
-                         fetch("/api/config"),
+                    const [foldersData, configData] = await Promise.all([
+                         getLibraryFolders(),
+                         getConfig(),
                     ]);
                     if (cancelled) return;
 
-                    if (foldersRes.ok) {
-                         const data = await foldersRes.json();
-                         const folders: FolderOption[] = (data.folders ?? []).map((f: { id: number; name: string }) => ({
+                    if (!("error" in foldersData)) {
+                         const folders: FolderOption[] = (foldersData.folders ?? []).map((f: { id: number; name: string }) => ({
                               id: f.id,
                               name: f.name,
                          }));
                          setFolderOptions(folders);
                     }
 
-                    if (configRes.ok) {
-                         const data = await configRes.json();
+                    if (!("error" in configData)) {
                          const providers: Array<{ id: string; name: string; embeddingModels: Array<{ key: string; name: string }> }> =
-                              data.values?.modelProviders ?? [];
+                              configData.values?.modelProviders ?? [];
                          const opts: ModelOption[] = [];
                          for (const p of providers) {
                               for (const m of p.embeddingModels ?? []) {
@@ -240,7 +240,7 @@ export default function LibrarySearchModal({ currentFolderId, currentFolderName,
                          }
                          setModelOptions(opts);
 
-                         const pref = data.values?.preferences?.defaultEmbeddingModel as ModelPreference | undefined;
+                         const pref = configData.values?.preferences?.defaultEmbeddingModel as ModelPreference | undefined;
                          if (pref) {
                               setSelectedModel(pref);
                               setDefaultModelKey(`${pref.providerId}/${pref.modelKey}`);
@@ -295,23 +295,18 @@ export default function LibrarySearchModal({ currentFolderId, currentFolderName,
                     ? null
                     : (selectedFolders.map((f) => f.id).filter((id) => id !== "all") as number[]);
 
-               const res = await fetch("/api/library-search", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                         query: q,
-                         folderIds,
-                         searchScope,
-                         embeddingModel: selectedModel,
-                    }),
-               });
-               if (!res.ok) {
-                    const data = await res.json();
+               const data = await searchLibrary(
+                    q,
+                    folderIds,
+                    searchScope,
+                    selectedModel ?? undefined,
+               );
+               if ("error" in data) {
                     throw new Error(data.error ?? "Search failed");
                }
-               const data: LibrarySearchResponse = await res.json();
-               setResults(data.results);
-               setEmbeddingInfo({ model: data.embeddingModel, total: data.totalCandidates, onTheFly: data.embeddedOnTheFly });
+               const typedData = data as LibrarySearchResponse;
+               setResults(typedData.results);
+               setEmbeddingInfo({ model: typedData.embeddingModel, total: typedData.totalCandidates, onTheFly: typedData.embeddedOnTheFly });
           } catch (err) {
                setError(err instanceof Error ? err.message : "Search failed");
           } finally {

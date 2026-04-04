@@ -1,10 +1,58 @@
-import { NextRequest, NextResponse } from "next/server";
+"use server";
+
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
+import configManager from "@/server";
 
 const execFileAsync = promisify(execFile);
+
+// ---------------------------------------------------------------------------
+// PaddleOCR Models
+// ---------------------------------------------------------------------------
+
+const PADDLEOCR_CURATED_MODELS = [
+     {
+          name: "PaddleOCR-VL",
+          description: "High-performance document OCR — installed via pip (NVIDIA GPU + CUDA required)",
+     },
+];
+
+async function isPaddleOCRInstalled(): Promise<boolean> {
+     try {
+          // Use `pip show` rather than `import paddleocr` to avoid GPU/CUDA
+          // library initialisation, which can fail or time out even when the
+          // package is correctly installed (e.g. torch CUDA libs conflict).
+          const pythonExe: string = configManager.getConfig("preferences.pythonPath", "python") || "python";
+          await execFileAsync(pythonExe, ["-m", "pip", "show", "paddleocr"], { timeout: 10000 });
+          return true;
+     } catch {
+          return false;
+     }
+}
+
+export async function getPaddleOCRModels() {
+     try {
+          const installed = await isPaddleOCRInstalled();
+
+          const models = PADDLEOCR_CURATED_MODELS.map((m) => ({
+               ...m,
+               installed,
+               supportsOCR: true,
+               supportsChat: false,
+               supportsEmbedding: false,
+          }));
+
+          return { models };
+     } catch (error) {
+          return { error: error instanceof Error ? error.message : "Failed to check PaddleOCR status" };
+     }
+}
+
+// ---------------------------------------------------------------------------
+// Python Environments
+// ---------------------------------------------------------------------------
 
 export type PythonEnvironment = {
      name: string;
@@ -94,35 +142,33 @@ async function detectCondaEnvs(): Promise<PythonEnvironment[]> {
      }
 }
 
-export async function GET() {
+export async function getPythonEnvironments() {
      const [systemEnvs, condaEnvs] = await Promise.all([detectSystemPython(), detectCondaEnvs()]);
      const environments: PythonEnvironment[] = [...systemEnvs, ...condaEnvs];
-     return NextResponse.json({ environments });
+     return { environments };
 }
 
-export async function POST(req: NextRequest) {
+export async function createPythonEnvironment(venvPath: string, basePython?: string) {
      try {
-          const body = await req.json() as { venvPath?: string; basePython?: string };
-          const { venvPath, basePython = "python" } = body;
+          const effectiveBasePython = basePython || "python";
 
           if (!venvPath || typeof venvPath !== "string" || !venvPath.trim()) {
-               return NextResponse.json({ error: "venvPath is required" }, { status: 400 });
+               return { error: "venvPath is required" };
           }
 
           // Resolve and validate — reject traversal attempts
           const resolved = path.resolve(venvPath.trim());
 
           const created = await new Promise<boolean>((resolve) => {
-               const proc = spawn(basePython, ["-m", "venv", resolved]);
+               const proc = spawn(effectiveBasePython, ["-m", "venv", resolved]);
                proc.on("close", (code) => resolve(code === 0));
                proc.on("error", () => resolve(false));
           });
 
           if (!created) {
-               return NextResponse.json(
-                    { error: "Failed to create virtual environment. Make sure the base Python has the venv module available." },
-                    { status: 500 }
-               );
+               return {
+                    error: "Failed to create virtual environment. Make sure the base Python has the venv module available.",
+               };
           }
 
           const pythonExe =
@@ -139,8 +185,8 @@ export async function POST(req: NextRequest) {
                type: "venv",
           };
 
-          return NextResponse.json({ environment });
+          return { environment };
      } catch {
-          return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+          return { error: "Invalid request body" };
      }
 }

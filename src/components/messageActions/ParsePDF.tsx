@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { usePdfParseActions } from "@/components/progress/PdfParseProvider";
+import { getLibraryFolders, createLibraryFolder } from "@/lib/actions/library";
 
 interface LibraryFolder {
      id: number;
@@ -41,9 +42,8 @@ const ParsePDF = () => {
      const fetchFolders = useCallback(async (): Promise<LibraryFolder[]> => {
           setLoadingFolders(true);
           try {
-               const res = await fetch("/api/library-folders");
-               if (!res.ok) throw new Error("Failed to fetch folders");
-               const data = await res.json();
+               const data = await getLibraryFolders();
+               if ("error" in data) throw new Error(data.error);
                const fetched: LibraryFolder[] = data.folders ?? [];
                setFolders(fetched);
                return fetched;
@@ -88,13 +88,8 @@ const ParsePDF = () => {
                }
                setIsSavingFolder(true);
                try {
-                    const res = await fetch("/api/library-folders", {
-                         method: "POST",
-                         headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({ name: trimmed }),
-                    });
-                    const data = await res.json();
-                    if (!res.ok) {
+                    const data = await createLibraryFolder(trimmed);
+                    if ("error" in data) {
                          setFolderCreateError(data.error || "Failed to create folder.");
                          setIsSavingFolder(false);
                          return;

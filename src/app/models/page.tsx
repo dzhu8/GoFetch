@@ -24,6 +24,11 @@ import { cn } from "@/lib/utils";
 import ModelFamilyGroup, { inferFamilyFromName } from "@/components/setup/modelsView/ModelFamilyGroup";
 import AddProvider from "@/components/models/AddProvider";
 import type { ModelProviderUISection } from "@/lib/config/types";
+import { getConfig } from "@/lib/actions/config";
+import { getProviders, addProvider, updateProvider, deleteProvider, getProviderModels } from "@/lib/actions/providers";
+import { getOllamaModels } from "@/lib/actions/ollama";
+import { getPaddleOCRModels } from "@/lib/actions/paddleocr";
+import { testEmbedding } from "@/lib/actions/test-embedding";
 
 interface NormalizedModelRow {
      key: string;
@@ -130,12 +135,11 @@ const ModelsPage = () => {
      }, [providers]);
 
      const registerModelWithProvider = useCallback(async (providerId: string, model: NormalizedModelRow) => {
-          const providersRes = await fetch("/api/providers", { cache: "no-store" });
-          if (!providersRes.ok) {
+          const data = await getProviders();
+          if (data.error) {
                throw new Error("Failed to load provider configuration");
           }
 
-          const data = await providersRes.json().catch(() => ({}));
           const providerList = (data?.providers ?? []) as MinimalProvider[];
           const provider = providerList.find((entry) => entry.id === providerId);
 
@@ -168,15 +172,10 @@ const ModelsPage = () => {
                return;
           }
 
-          const patchRes = await fetch(`/api/providers/${providerId}`, {
-               method: "PATCH",
-               headers: { "Content-Type": "application/json" },
-               body: JSON.stringify({ chatModels, embeddingModels, ocrModels }),
-          });
+          const patchRes = await updateProvider(providerId, { chatModels, embeddingModels, ocrModels });
 
-          if (!patchRes.ok) {
-               const error = await patchRes.json().catch(() => ({}));
-               throw new Error(error?.message || "Failed to update provider configuration");
+          if (patchRes.error) {
+               throw new Error(patchRes.error || "Failed to update provider configuration");
           }
 
           setProviders((prev) =>
@@ -196,9 +195,8 @@ const ModelsPage = () => {
                }
 
                if (providerType === "paddleocr") {
-                    const res = await fetch(`/api/related-papers/paddleocr/models?providerId=${provider.id}`, { cache: "no-store" });
-                    if (!res.ok) throw new Error("Failed to load PaddleOCR models");
-                    const data = await res.json();
+                    const data = await getPaddleOCRModels();
+                    if (data.error) throw new Error("Failed to load PaddleOCR models");
                     const rows: NormalizedModelRow[] = (data.models ?? []).map((model: any) => ({
                          key: model.name,
                          displayName: model.name,
@@ -228,11 +226,7 @@ const ModelsPage = () => {
                          syncedOcrModels.some((m) => !currentKeys.has(m.key)) ||
                          currentOcrModels.some((m) => !installedKeys.has(m.key));
                     if (needsSync) {
-                         await fetch(`/api/providers/${provider.id}`, {
-                              method: "PATCH",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ ocrModels: syncedOcrModels }),
-                         });
+                         await updateProvider(provider.id, { ocrModels: syncedOcrModels });
                          setProviders((prev) =>
                               prev.map((existing) =>
                                    existing.id === provider.id
@@ -246,9 +240,8 @@ const ModelsPage = () => {
 
                try {
                     if (providerType === "ollama") {
-                         const res = await fetch(`/api/ollama/models?providerId=${provider.id}`, { cache: "no-store" });
-                         if (!res.ok) throw new Error("Failed to load Ollama models");
-                         const data = await res.json();
+                         const data = await getOllamaModels(provider.baseURL ?? "", provider.id);
+                         if (data.error) throw new Error("Failed to load Ollama models");
                          const rows: NormalizedModelRow[] = (data.models ?? []).map((model: any) => ({
                               key: model.name,
                               displayName: model.name,
@@ -276,14 +269,10 @@ const ModelsPage = () => {
                               freshOcrModels.length !== (provider.ocrModels ?? []).length;
 
                          if (needsPrune) {
-                              await fetch(`/api/providers/${provider.id}`, {
-                                   method: "PATCH",
-                                   headers: { "Content-Type": "application/json" },
-                                   body: JSON.stringify({
-                                        chatModels: freshChatModels,
-                                        embeddingModels: freshEmbeddingModels,
-                                        ocrModels: freshOcrModels,
-                                   }),
+                              await updateProvider(provider.id, {
+                                   chatModels: freshChatModels,
+                                   embeddingModels: freshEmbeddingModels,
+                                   ocrModels: freshOcrModels,
                               });
                               setProviders((prev) =>
                                    prev.map((existing) =>
@@ -302,9 +291,8 @@ const ModelsPage = () => {
                          return;
                     }
 
-                    const res = await fetch(`/api/providers/${provider.id}/models`, { cache: "no-store" });
-                    if (!res.ok) throw new Error("Failed to load provider models");
-                    const data = await res.json();
+                    const data = await getProviderModels(provider.id);
+                    if (data.error) throw new Error("Failed to load provider models");
                     const rows: NormalizedModelRow[] = (data.models ?? []).map((model: any) => ({
                          key: model.key,
                          displayName: model.displayName ?? model.name ?? model.key,
@@ -338,29 +326,23 @@ const ModelsPage = () => {
           try {
                setIsLoadingProviders(true);
                setErrorMessage(null);
-               const res = await fetch("/api/providers", { cache: "no-store" });
-               if (!res.ok) throw new Error("Failed to fetch providers");
-               const data = await res.json();
+               const data = await getProviders();
+               if (data.error) throw new Error("Failed to fetch providers");
                let list = (data.providers ?? []) as MinimalProvider[];
 
                // Ensure the PaddleOCR provider exists (created on first visit)
                const paddleOcrProviders = list.filter((p) => p.type === "paddleocr");
                if (paddleOcrProviders.length === 0) {
                     try {
-                         await fetch("/api/providers", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                   name: "PaddleOCR",
-                                   type: "paddleocr",
-                                   chatModels: [],
-                                   embeddingModels: [],
-                                   ocrModels: [],
-                              }),
+                         await addProvider({
+                              name: "PaddleOCR",
+                              type: "paddleocr",
+                              chatModels: [],
+                              embeddingModels: [],
+                              ocrModels: [],
                          });
-                         const refreshedRes = await fetch("/api/providers", { cache: "no-store" });
-                         if (refreshedRes.ok) {
-                              const refreshedData = await refreshedRes.json();
+                         const refreshedData = await getProviders();
+                         if (!refreshedData.error) {
                               list = (refreshedData.providers ?? []) as MinimalProvider[];
                          }
                     } catch {
@@ -369,7 +351,7 @@ const ModelsPage = () => {
                } else if (paddleOcrProviders.length > 1) {
                     // Duplicates can be created by React StrictMode's double-invocation — keep only the first
                     for (const extra of paddleOcrProviders.slice(1)) {
-                         await fetch(`/api/providers/${extra.id}`, { method: "DELETE" }).catch(() => {});
+                         await deleteProvider(extra.id).catch(() => {});
                     }
                     list = list.filter(
                          (p) => p.type !== "paddleocr" || p.id === paddleOcrProviders[0].id
@@ -394,8 +376,7 @@ const ModelsPage = () => {
      }, [fetchProviders]);
 
      useEffect(() => {
-          fetch("/api/config")
-               .then((res) => res.json())
+          getConfig()
                .then((data) => setProviderSections(data.fields?.modelProviders ?? []))
                .catch(() => {});
      }, []);
@@ -601,10 +582,9 @@ const ModelsPage = () => {
           if (!confirm(`Are you sure you want to delete "${provider.name}"?`)) return;
           setDeletingProviderId(provider.id);
           try {
-               const res = await fetch(`/api/providers/${provider.id}`, { method: "DELETE" });
-               if (!res.ok) {
-                    const err = await res.json().catch(() => ({}));
-                    throw new Error((err as { message?: string }).message || "Failed to delete provider");
+               const res = await deleteProvider(provider.id);
+               if (res.error) {
+                    throw new Error(res.error || "Failed to delete provider");
                }
                toast.success("Provider deleted successfully");
                await fetchProviders();
@@ -966,20 +946,10 @@ const TestEmbeddingModal = ({ config, onClose }: TestEmbeddingModalProps) => {
           setSimilarity(null);
 
           try {
-               const res = await fetch("/api/test-embedding", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                         providerId: config.providerId,
-                         modelKey: config.modelKey,
-                         inputs: [textA.trim(), textB.trim()],
-                    }),
-               });
+               const data = await testEmbedding(config.providerId, config.modelKey, [textA.trim(), textB.trim()]);
 
-               const data = await res.json().catch(() => ({}));
-
-               if (!res.ok) {
-                    throw new Error(data?.error || "Failed to test embedding");
+               if (data.error) {
+                    throw new Error(data.error || "Failed to test embedding");
                }
 
                setSimilarity(typeof data?.similarity === "number" ? data.similarity : null);

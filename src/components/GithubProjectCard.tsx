@@ -5,6 +5,7 @@ import GithubIcon from "../../public/assets/Octicons-mark-github.svg";
 import { FolderGit2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { syncFolder } from "@/lib/actions/folders";
 
 type GithubProjectCardProps = {
      folderName: string;
@@ -35,14 +36,10 @@ const GithubProjectCard = ({
      const handleSync = async () => {
           setIsSyncing(true);
           try {
-               const res = await fetch(`/api/folders/${encodeURIComponent(folderName)}/sync`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-               });
+               const data = await syncFolder(folderName);
 
-               if (!res.ok) {
-                    const error = await res.json();
-                    throw new Error(error.message || "Failed to sync folder");
+               if ("error" in data) {
+                    throw new Error(data.message || data.error || "Failed to sync folder");
                }
 
                toast.success(`Successfully synced ${folderName}`);

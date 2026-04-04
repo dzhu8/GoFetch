@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { cancelPaperUpload } from "@/lib/actions/papers";
 
 export interface PdfParseJob {
      /** Unique key — `folderId:fileName:timestamp` */
@@ -164,8 +165,8 @@ export function PdfParseProvider({ children }: { children: React.ReactNode }) {
           // Tell the server to SIGTERM the Python process and clean up
           const paperId = paperIds.current.get(id);
           if (paperId != null) {
-               fetch(`/api/papers/upload/${paperId}`, { method: "DELETE" }).catch(() => {
-                    // Best-effort — ignore network errors on cancellation
+               cancelPaperUpload(String(paperId)).catch(() => {
+                    // Best-effort — ignore errors on cancellation
                });
           }
 

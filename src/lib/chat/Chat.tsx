@@ -17,6 +17,9 @@ import { toast } from "sonner";
 import { getSuggestions } from "../output/suggestions/actions";
 import { resolveModelPreference, resolveOcrModelPreference } from "../models/preferenceResolver";
 import { MinimalProvider } from "../models/types";
+import { getConfig } from "@/lib/actions/config";
+import { getProviders } from "@/lib/actions/providers";
+import { getChat } from "@/lib/actions/chats";
 
 export type Section = {
      userMessage: UserMessage;
@@ -94,20 +97,18 @@ const checkConfig = async (
      setSystemInstructions: (value: string) => void
 ) => {
      try {
-          const [configRes, providersRes] = await Promise.all([
-               fetch(`/api/config`, { headers: { "Content-Type": "application/json" } }),
-               fetch(`/api/providers`, { headers: { "Content-Type": "application/json" } }),
+          const [configData, providersPayload] = await Promise.all([
+               getConfig(),
+               getProviders(),
           ]);
 
-          if (!configRes.ok) {
+          if (configData.error) {
                throw new Error("Failed to load configuration");
           }
-          if (!providersRes.ok) {
-               throw new Error(`Provider fetching failed with status code ${providersRes.status}`);
+          if (providersPayload.error) {
+               throw new Error("Provider fetching failed");
           }
 
-          const configData = await configRes.json();
-          const providersPayload = await providersRes.json();
           const providers: MinimalProvider[] = providersPayload.providers;
 
           if (providers.length === 0) {
@@ -167,20 +168,13 @@ const loadMessages = async (
      setFiles: (files: File[]) => void,
      setFileIds: (fileIds: string[]) => void
 ) => {
-     const res = await fetch(`/api/chats/${chatId}`, {
-          method: "GET",
-          headers: {
-               "Content-Type": "application/json",
-          },
-     });
+     const data = await getChat(chatId);
 
-     if (res.status === 404) {
+     if (data.error) {
           setNotFound(true);
           setIsMessagesLoaded(true);
           return;
      }
-
-     const data = await res.json();
 
      const messages = data.messages as Message[];
 

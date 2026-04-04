@@ -8,6 +8,7 @@ import Loader from "../Loader";
 import { cn } from "@/lib/utils";
 import Select from "../Select";
 import Personalization from "./Personalization";
+import { getConfig } from "@/lib/actions/config";
 
 const sections = [
      {
@@ -69,14 +70,11 @@ const SettingsDialogue = ({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (
           if (isOpen) {
                const fetchConfig = async () => {
                     try {
-                         const res = await fetch("/api/config", {
-                              method: "GET",
-                              headers: {
-                                   "Content-Type": "application/json",
-                              },
-                         });
+                         const data = await getConfig();
 
-                         const data = await res.json();
+                         if (data.error) {
+                              throw new Error(data.error);
+                         }
 
                          setConfig(data);
                     } catch (error) {

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useTheme } from "next-themes";
 import { Loader2 } from "lucide-react";
 import { Switch } from "@headlessui/react";
+import { updateConfig } from "@/lib/actions/config";
 
 const SettingsSelect = ({
      field,
@@ -31,19 +32,10 @@ const SettingsSelect = ({
           setLoading(true);
           setValue(newValue);
           try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         key: `${dataAdd}.${field.key}`,
-                         value: newValue,
-                    }),
-               });
+               const result = await updateConfig(`${dataAdd}.${field.key}`, newValue);
 
-               if (!res.ok) {
-                    console.error("Failed to save config:", await res.text());
+               if (result.error) {
+                    console.error("Failed to save config:", result.error);
                     throw new Error("Failed to save configuration");
                }
 
@@ -98,19 +90,10 @@ const SettingsInput = ({
           setLoading(true);
           setValue(newValue);
           try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         key: `${dataAdd}.${field.key}`,
-                         value: newValue,
-                    }),
-               });
+               const result = await updateConfig(`${dataAdd}.${field.key}`, newValue);
 
-               if (!res.ok) {
-                    console.error("Failed to save config:", await res.text());
+               if (result.error) {
+                    console.error("Failed to save config:", result.error);
                     throw new Error("Failed to save configuration");
                }
           } catch (error) {
@@ -166,19 +149,10 @@ const SettingsTextarea = ({
           setLoading(true);
           setValue(newValue);
           try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         key: `${dataAdd}.${field.key}`,
-                         value: newValue,
-                    }),
-               });
+               const result = await updateConfig(`${dataAdd}.${field.key}`, newValue);
 
-               if (!res.ok) {
-                    console.error("Failed to save config:", await res.text());
+               if (result.error) {
+                    console.error("Failed to save config:", result.error);
                     throw new Error("Failed to save configuration");
                }
           } catch (error) {
@@ -234,19 +208,10 @@ const SettingsSwitch = ({
           setLoading(true);
           setValue(newValue);
           try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         key: `${dataAdd}.${field.key}`,
-                         value: newValue,
-                    }),
-               });
+               const result = await updateConfig(`${dataAdd}.${field.key}`, newValue);
 
-               if (!res.ok) {
-                    console.error("Failed to save config:", await res.text());
+               if (result.error) {
+                    console.error("Failed to save config:", result.error);
                     throw new Error("Failed to save configuration");
                }
           } catch (error) {
@@ -308,19 +273,10 @@ const SettingsNumber = ({
           setLoading(true);
           setValue(validatedValue);
           try {
-               const res = await fetch("/api/config", {
-                    method: "POST",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         key: `${dataAdd}.${field.key}`,
-                         value: validatedValue,
-                    }),
-               });
+               const result = await updateConfig(`${dataAdd}.${field.key}`, validatedValue);
 
-               if (!res.ok) {
-                    console.error("Failed to save config:", await res.text());
+               if (result.error) {
+                    console.error("Failed to save config:", result.error);
                     throw new Error("Failed to save configuration");
                }
           } catch (error) {

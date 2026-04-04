@@ -1,7 +1,7 @@
 "use client";
 
 import { ExternalLink, FileText, Globe, X } from "lucide-react";
-import type { RankedPaper, RelatedPapersResponse } from "@/app/api/related-papers/route";
+import type { RankedPaper, RelatedPapersResponse } from "@/lib/relatedPapers/graph";
 
 export type { RankedPaper, RelatedPapersResponse };
 

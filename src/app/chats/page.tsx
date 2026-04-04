@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Loader2, Trash2 } from "lucide-react";
 import GoFetchDogSweater from "../../../public/assets/GoFetch-dog-sweater.svg";
+import { getChats, deleteChat } from "@/lib/actions/chats";
 
 type ChatData = {
      id: string;
@@ -33,10 +34,9 @@ export default function ChatsPage() {
      const fetchChats = async () => {
           try {
                setIsLoading(true);
-               const res = await fetch("/api/chats");
-               if (!res.ok) throw new Error("Failed to fetch chats");
+               const data = await getChats();
+               if (data.error) throw new Error("Failed to fetch chats");
 
-               const data = await res.json();
                setChats(data.chats || []);
           } catch (error) {
                console.error("Error fetching chats:", error);
@@ -48,11 +48,8 @@ export default function ChatsPage() {
      const handleDelete = async (chatId: string) => {
           setDeletingId(chatId);
           try {
-               const res = await fetch(`/api/chats/${chatId}`, {
-                    method: "DELETE",
-               });
-
-               if (!res.ok) throw new Error("Failed to delete chat");
+               const data = await deleteChat(chatId);
+               if (data.error) throw new Error("Failed to delete chat");
 
                setChats((prev) => prev.filter((chat) => chat.id !== chatId));
           } catch (error) {

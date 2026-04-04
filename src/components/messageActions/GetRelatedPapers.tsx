@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import { useChat } from "@/lib/chat/Chat";
 import { sendSystemNotification } from "@/lib/utils";
+import { buildRelatedPapersGraphAction } from "@/lib/actions/related-papers";
 
 interface LibraryFolder {
      id: number;
@@ -253,6 +254,7 @@ const GetRelatedPapers = () => {
           }
      };
 
+<<<<<<< Updated upstream
      // ── Shared related-papers search ──────────────────────────────────────
      const runRelatedPapersSearch = async (
           params: { pdfTitle?: string; pdfDoi?: string; seedPaperS2Id?: string },
@@ -274,12 +276,18 @@ const GetRelatedPapers = () => {
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ ...params, stream: true }),
                });
+=======
+               //  Search for related papers via Semantic Scholar
+               setStatusMessage("Searching for related papers");
 
-               if (!searchRes.ok) {
-                    const data = await searchRes.json().catch(() => ({}));
-                    throw new Error(data.error || "Related papers search failed");
+               const searchData = await buildRelatedPapersGraphAction(pdfTitle, pdfDoi);
+>>>>>>> Stashed changes
+
+               if ("error" in searchData) {
+                    throw new Error(searchData.error || "Related papers search failed");
                }
 
+<<<<<<< Updated upstream
                const reader = searchRes.body?.getReader();
                if (!reader) throw new Error("Could not initialize stream reader");
 
@@ -323,6 +331,11 @@ const GetRelatedPapers = () => {
 
                const paperCount = finalResult.rankedPapers?.length ?? 0;
                addRelatedPapers(finalResult);
+=======
+               //  Add results to chat and navigate 
+               const paperCount = searchData.rankedPapers?.length ?? 0;
+               addRelatedPapers(searchData);
+>>>>>>> Stashed changes
                window.history.replaceState(null, "", `/c/${chatId}`);
                toast.success(`Found ${paperCount} related paper${paperCount === 1 ? "" : "s"}`);
                sendSystemNotification(`Related papers for "${shortTitle}"`, {
