@@ -4,6 +4,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import configManager from "@/server";
+import db from "@/server/db";
+import { libraryFolders, papers } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
+import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 
 // Long-running OCR jobs can take several minutes for large documents
 export const maxDuration = 300;
@@ -50,6 +54,9 @@ export async function POST(req: NextRequest) {
      try {
           const formData = await req.formData();
           const pdf = formData.get("pdf") as globalThis.File | null;
+          const folderIdStr = formData.get("folderId") as string | null;
+          const folderIdNum = folderIdStr ? parseInt(folderIdStr, 10) : null;
+          const saveToFolder = folderIdNum !== null && !isNaN(folderIdNum);
 
           if (!pdf) {
                return NextResponse.json({ error: "No PDF file provided." }, { status: 400 });
@@ -177,7 +184,49 @@ export async function POST(req: NextRequest) {
                          });
 
                          const result = { source: pdf.name, pages };
-                         controller.enqueue(encoder.encode(JSON.stringify({ type: "complete", data: result }) + "\n"));
+
+                         // ── Optional: save PDF + OCR sidecar to a library folder ──────
+                         let savedPaperId: number | undefined;
+                         if (saveToFolder) {
+                              try {
+                                   const folder = db
+                                        .select()
+                                        .from(libraryFolders)
+                                        .where(eq(libraryFolders.id, folderIdNum!))
+                                        .get();
+                                   if (folder) {
+                                        if (!fs.existsSync(folder.rootPath)) {
+                                             fs.mkdirSync(folder.rootPath, { recursive: true });
+                                        }
+                                        const sanitizedName = pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+                                        const destPdf = path.join(folder.rootPath, sanitizedName);
+                                        const destOcr = destPdf.replace(/\.pdf$/i, ".ocr.json");
+
+                                        // Write PDF bytes (re-read from the temp copy since original bytes are gone)
+                                        fs.copyFileSync(pdfPath, destPdf);
+                                        fs.writeFileSync(destOcr, JSON.stringify(result), "utf-8");
+
+                                        const { title, doi } = extractDocumentMetadata(result);
+                                        const paperRow = db
+                                             .insert(papers)
+                                             .values({
+                                                  folderId: folderIdNum!,
+                                                  fileName: sanitizedName,
+                                                  filePath: destPdf,
+                                                  title: title ?? null,
+                                                  doi: doi ?? null,
+                                                  status: "ready",
+                                             })
+                                             .returning()
+                                             .get();
+                                        savedPaperId = paperRow.id;
+                                   }
+                              } catch (saveErr) {
+                                   console.warn("[PaddleOCR extract] Failed to save to library folder:", saveErr);
+                              }
+                         }
+
+                         controller.enqueue(encoder.encode(JSON.stringify({ type: "complete", data: result, paperId: savedPaperId }) + "\n"));
                          controller.close();
                     } catch (err) {
                          const msg = err instanceof Error ? err.message : "OCR extraction failed";

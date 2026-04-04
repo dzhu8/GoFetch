@@ -3,7 +3,7 @@ import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { EventEmitter } from "stream";
 import db from "@/server/db";
-import { chats, messages as messagesSchema, folders } from "@/server/db/schema";
+import { chats, messages as messagesSchema } from "@/server/db/schema";
 import { and, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 import modelRegistry from "@/server/providerRegistry";
@@ -72,10 +72,10 @@ const safeValidateBody = (data: unknown) => {
 
 /**
  * Get all registered folder names from the database.
+ * (Codebase analytics folders have been deprecated; returns empty.)
  */
 function getAllFolderNames(): string[] {
-     const rows = db.select({ name: folders.name }).from(folders).all();
-     return rows.map((r) => r.name);
+     return [];
 }
 
 /**

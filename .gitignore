@@ -10,8 +10,10 @@ next-env.d.ts
 .prettierrc
 sqlite-dump.txt
 yarn.lock
-*.env*
+.env.local
+.env
 
+.claude/
 .next/
 .vscode/
 .yarn/

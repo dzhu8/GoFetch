@@ -38,6 +38,17 @@ sqlite.exec(`
           depth          INTEGER NOT NULL,
           PRIMARY KEY (s2_paper_id, source_paper_id)
      );
+     
+     CREATE TABLE IF NOT EXISTS doi_related_results_cache (
+          s2_paper_id    TEXT    NOT NULL,
+          doi            TEXT    NOT NULL,
+          rank_method    TEXT    NOT NULL DEFAULT 'bibliographic',
+          results_json   TEXT    NOT NULL,
+          seed_title     TEXT,
+          embedding_model TEXT,
+          created_at     INTEGER NOT NULL,
+          PRIMARY KEY (s2_paper_id, rank_method)
+     );
 `);
 
 // Add depth column to related_papers if it doesn't exist yet (idempotent).

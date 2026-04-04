@@ -42,114 +42,7 @@ export const appSettings = sqliteTable("app_settings", {
           .default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const folders = sqliteTable(
-     "folders",
-     {
-          id: integer("id").primaryKey(),
-          name: text("name").notNull(),
-          rootPath: text("root_path").notNull(),
-          githubUrl: text("github_url"),
-          isGitConnected: integer("is_git_connected", { mode: "boolean" }).notNull().default(false),
-          createdAt: text("created_at")
-               .notNull()
-               .default(sql`CURRENT_TIMESTAMP`),
-          updatedAt: text("updated_at")
-               .notNull()
-               .default(sql`CURRENT_TIMESTAMP`),
-     },
-     (table) => ({
-          nameUniqueIdx: uniqueIndex("folders_name_idx").on(table.name),
-          rootPathUniqueIdx: uniqueIndex("folders_root_path_idx").on(table.rootPath),
-     })
-);
-
-type Metadata = Record<string, unknown>;
-
-export const embeddings = sqliteTable("embeddings", {
-     id: integer("id").primaryKey(),
-     externalId: text("external_id"),
-     folderName: text("folder_name").notNull(),
-     filePath: text("file_path").notNull(),
-     relativePath: text("relative_path").notNull(),
-     fileSnapshotId: integer("file_snapshot_id"),
-     content: text("content"),
-     embedding: blob("embedding").notNull(),
-     dim: integer("dim").notNull(),
-     metadata: text("metadata", { mode: "json" })
-          .$type<Metadata>()
-          .default(sql`'{}'`),
-     createdAt: text("created_at")
-          .default(sql`CURRENT_TIMESTAMP`)
-          .notNull(),
-});
-
-type MerkleMetadata = Record<string, unknown>;
-
-const MERKLE_NODE_TYPE_ENUM = ["file", "directory"] as const;
-
-export const merkleFolders = sqliteTable(
-     "merkle_folders",
-     {
-          id: integer("id").primaryKey(),
-          folderName: text("folder_name").notNull(),
-          rootPath: text("root_path").notNull(),
-          rootHash: text("root_hash").notNull(),
-          metadata: text("metadata", { mode: "json" })
-               .$type<MerkleMetadata>()
-               .default(sql`'{}'`)
-               .notNull(),
-          updatedAt: text("updated_at")
-               .default(sql`CURRENT_TIMESTAMP`)
-               .notNull(),
-     },
-     (table) => ({
-          folderNameUniqueIdx: uniqueIndex("merkle_folders_folder_name_idx").on(table.folderName),
-     })
-);
-
-export const merkleNodes = sqliteTable(
-     "merkle_nodes",
-     {
-          id: integer("id").primaryKey(),
-          folderId: integer("folder_id")
-               .notNull()
-               .references(() => merkleFolders.id, { onDelete: "cascade" }),
-          nodePath: text("node_path").notNull(),
-          parentPath: text("parent_path"),
-          nodeType: text("node_type", { enum: MERKLE_NODE_TYPE_ENUM })
-               .$type<(typeof MERKLE_NODE_TYPE_ENUM)[number]>()
-               .notNull(),
-          hash: text("hash").notNull(),
-          size: integer("size"),
-          metadata: text("metadata", { mode: "json" })
-               .$type<MerkleMetadata>()
-               .default(sql`'{}'`)
-               .notNull(),
-          updatedAt: text("updated_at")
-               .default(sql`CURRENT_TIMESTAMP`)
-               .notNull(),
-     },
-     (table) => ({
-          nodePathUniqueIdx: uniqueIndex("merkle_nodes_path_idx").on(table.folderId, table.nodePath),
-     })
-);
-
-export const monitorEvents = sqliteTable("monitor_events", {
-     id: integer("id").primaryKey(),
-     folderId: integer("folder_id")
-          .notNull()
-          .references(() => folders.id, { onDelete: "cascade" }),
-     filePath: text("file_path").notNull(),
-     needsIndexed: integer("needs_indexed", { mode: "boolean" }).notNull().default(true),
-     createdAt: text("created_at")
-          .notNull()
-          .default(sql`CURRENT_TIMESTAMP`),
-     updatedAt: text("updated_at")
-          .notNull()
-          .default(sql`CURRENT_TIMESTAMP`),
-});
-
-// ── Library folders (separate from codebase analytics folders) ────────────────
+// ── Library folders ───────────────────────────────────────────────────────────
 
 export const libraryFolders = sqliteTable(
      "library_folders",
@@ -270,34 +163,18 @@ export const relatedPapers = sqliteTable(
      })
 );
 
-const TEXT_FORMAT_ENUM = ["markdown", "text", "json", "yaml", "toml", "xml", "csv", "ini", "log", "env"] as const;
-
-type TextChunkMetadata = Record<string, unknown>;
-
-export const textChunkSnapshots = sqliteTable("text_chunk_snapshots", {
+export const relatedRuns = sqliteTable("related_runs", {
      id: integer("id").primaryKey(),
-     folderName: text("folder_name").notNull(),
-     filePath: text("file_path").notNull(),
-     relativePath: text("relative_path").notNull(),
-     format: text("format", { enum: TEXT_FORMAT_ENUM }).$type<(typeof TEXT_FORMAT_ENUM)[number]>().notNull(),
-     contentHash: text("content_hash").notNull(),
-     chunkIndex: integer("chunk_index").notNull(),
-     startIndex: integer("start_index").notNull(),
-     endIndex: integer("end_index").notNull(),
-     startRow: integer("start_row").notNull(),
-     startColumn: integer("start_column").notNull(),
-     endRow: integer("end_row").notNull(),
-     endColumn: integer("end_column").notNull(),
-     content: text("content").notNull(),
-     tokenCount: integer("token_count").notNull(),
-     truncated: integer("truncated", { mode: "boolean" }).notNull(),
-     metadata: text("metadata", { mode: "json" })
-          .$type<TextChunkMetadata>()
-          .default(sql`'{}'`)
-          .notNull(),
-     createdAt: text("created_at")
-          .default(sql`CURRENT_TIMESTAMP`)
-          .notNull(),
+     paperId: integer("paper_id")
+          .notNull()
+          .references(() => papers.id, { onDelete: "cascade" }),
+     rankMethod: text("rank_method").notNull(),
+     embeddingModel: text("embedding_model"),
+     configJson: text("config_json", { mode: "json" }).notNull(),
+     resultsCount: integer("results_count").notNull(),
+     completedAt: text("completed_at")
+          .notNull()
+          .default(sql`CURRENT_TIMESTAMP`),
 });
 
 // --- Academic Search History ---
@@ -427,5 +304,27 @@ export const librarySearchCache = sqliteTable(
                table.modelKey,
                table.settingsHash
           ),
+     })
+);
+
+/**
+ * Persistent cache for DOI-based related-papers results that were computed
+ * via the CLI endpoint without being tied to a local library paper.
+ * Keyed by (s2_paper_id, rank_method) so both bibliographic and embedding
+ * results can coexist for the same seed paper.
+ */
+export const doiRelatedResultsCache = sqliteTable(
+     "doi_related_results_cache",
+     {
+          s2PaperId: text("s2_paper_id").notNull(),
+          doi: text("doi").notNull(),
+          rankMethod: text("rank_method").notNull().default("bibliographic"),
+          resultsJson: text("results_json").notNull(),
+          seedTitle: text("seed_title"),
+          embeddingModel: text("embedding_model"),
+          createdAt: integer("created_at").notNull(),
+     },
+     (table) => ({
+          pk: primaryKey({ columns: [table.s2PaperId, table.rankMethod] }),
      })
 );

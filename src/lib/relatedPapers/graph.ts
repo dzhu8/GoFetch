@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import configManager from "@/server/index";
 import modelRegistry from "@/server/providerRegistry";
 import { Buffer } from "node:buffer";
+import { EventEmitter } from "node:events";
 import { getEmbeddings, cosineSimilarity } from "./abstractEmbedding";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -51,6 +52,33 @@ let _s2429Count = 0;
 // Cached edge data and metadata expire after 90 days; academic paper reference
 // lists are essentially immutable after publication.
 const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Event emitter for snowball graph events.
+ */
+class RelatedPapersEventEmitter extends EventEmitter {
+     constructor() {
+          super();
+          this.setMaxListeners(100);
+     }
+
+     /**
+      * Notify listeners that a graph construction run has completed.
+      */
+     notifyComplete(payload: RelatedPapersResponse): void {
+          this.emit("complete", payload);
+     }
+}
+
+const GLOBAL_KEY = Symbol.for("gofetch.relatedPapersEvents");
+const g = globalThis as Record<symbol, unknown>;
+if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = new RelatedPapersEventEmitter();
+
+export const relatedPapersEvents = g[GLOBAL_KEY] as RelatedPapersEventEmitter;
+
+relatedPapersEvents.on("complete", (data) => {
+     console.log(`✅ [EVENT] Graph construction complete for: ${data.pdfTitle}`);
+});
 
 // Per-run cache statistics — reset at the start of each buildSnowballGraph call.
 let _edgeCacheHits = 0;
@@ -213,7 +241,18 @@ export interface SnowballConfig {
       * The route handler should populate this from `papers.semanticScholarId`.
       */
      seedPaperS2Id?: string;
+     /**
+      * Callback for progress updates during the graph construction.
+      */
+     onProgress?: (update: ProgressUpdate) => void;
 }
+
+export type ProgressUpdate = {
+     phase: number;
+     message: string;
+     total?: number;
+     current?: number;
+};
 
 // ── Rate limiter ─────────────────────────────────────────────────────────────
 
@@ -507,6 +546,7 @@ async function buildSnowballGraph(
           configManager.getConfig("personalization.graphRankMethod") ??
           "bibliographic";
      const s2Rl = new RateLimiter(S2_REQUESTS_PER_SECOND);
+     const onProgress = config?.onProgress;
 
      _s2429Count = 0;
      _edgeCacheHits = 0;
@@ -518,6 +558,7 @@ async function buildSnowballGraph(
      // ── Phase 1: Resolve seed paper via Semantic Scholar ────────────────
      // If the route already knows the seed's S2 ID (stored in papers.semanticScholarId),
      // skip the external API lookup entirely and use what's cached.
+     onProgress?.({ phase: 1, message: "Resolving seed paper..." });
      let seedId: string | null = config?.seedPaperS2Id ?? null;
      let finalPdfTitle = pdfTitle;
      let seedAbstract: string | undefined;
@@ -528,6 +569,7 @@ async function buildSnowballGraph(
           const cachedSeedMeta = metaCacheGet(seedId);
           if (cachedSeedMeta?.title) finalPdfTitle = cachedSeedMeta.title;
           if (cachedSeedMeta?.abstract) seedAbstract = cachedSeedMeta.abstract;
+          onProgress?.({ phase: 1, message: `Using cached seed: ${finalPdfTitle.slice(0, 50)}...` });
      } else {
           // Slow path: resolve via Semantic Scholar API.
           console.log(`[Phase 1] Resolving seed — title: "${pdfTitle.slice(0, 80)}"`);
@@ -537,8 +579,10 @@ async function buildSnowballGraph(
                finalPdfTitle = s2.title ?? pdfTitle;
                seedAbstract = s2.abstract ?? undefined;
                console.log(`[Phase 1] Seed resolved via Semantic Scholar: ${seedId}`);
+               onProgress?.({ phase: 1, message: `Resolved seed: ${finalPdfTitle.slice(0, 50)}...` });
           } else {
                console.warn(`[Phase 1] Semantic Scholar returned no result.`);
+               onProgress?.({ phase: 1, message: "Could not resolve seed paper." });
           }
      }
 
@@ -556,16 +600,21 @@ async function buildSnowballGraph(
      }
 
      // ── Phase 2: Fetch R(seed) ────────────────────────────────────────────
+     onProgress?.({ phase: 2, message: "Fetching seed references..." });
      console.log(`[Phase 2] Fetching references for seed ${seedId}...`);
      const initialSet = await s2FetchEdgeIds(seedId, "references", s2Rl) ?? new Set<string>();
      const initialIds = Array.from(initialSet);
      console.log(`[Phase 2] Found ${initialIds.length} references.`);
+     onProgress?.({ phase: 2, message: `Found ${initialIds.length} references.` });
 
      // ── Phase 3: Fetch C(seed) ────────────────────────────────────────────
+     onProgress?.({ phase: 3, message: "Fetching seed citations..." });
      const seedCits = await s2FetchEdgeIds(seedId, "citations", s2Rl) ?? new Set<string>();
      console.log(`[Phase 3] Seed paper has ${seedCits.size} citations.`);
+     onProgress?.({ phase: 3, message: `Found ${seedCits.size} citations.` });
 
      // ── Phase 4: Frontier expansion ──────────────────────────────────────
+     onProgress?.({ phase: 4, message: "Expanding graph...", total: depth, current: 0 });
      let currentLayer = new Set([...initialIds, ...Array.from(seedCits)]);
      currentLayer.delete(seedId);
      const visited = new Set<string>();
@@ -579,7 +628,8 @@ async function buildSnowballGraph(
      const scoredSet = new Set<string>();
 
      for (let d = 0; d < depth; d++) {
-          console.log(`[Phase 4] Crawling layer ${d + 1}/${depth} (${currentLayer.size} papers)...`);
+          console.log(`Processing, (${currentLayer.size} papers)...`);
+          onProgress?.({ phase: 4, message: `Processing, (${currentLayer.size} papers)...`, total: depth, current: d + 1 });
           const toFetch = Array.from(currentLayer).filter((id) => !visited.has(id));
 
           // Single batched POST retrieves refs + cits for all layer papers at once.
@@ -613,7 +663,7 @@ async function buildSnowballGraph(
                scoredSet.add(c);
                layerScoredCount++;
           }
-          console.log(`[Phase 4] Layer ${d + 1} scored ${layerScoredCount} candidates (running total: ${allScored.length}).`);
+          console.log(`Scored ${layerScoredCount} candidates (running total: ${allScored.length}).`);
 
           if (d < depth - 1) {
                const nextLayer = new Set<string>();
@@ -629,10 +679,12 @@ async function buildSnowballGraph(
      }
 
      // ── Phase 5: Candidate pool size ──────────────────────────────────────
+     onProgress?.({ phase: 5, message: "Finalizing candidate pool..." });
      const candidateSet = scoredSet;
      console.log(`[Phase 5] Candidate pool size: ${candidateSet.size}`);
 
      // ── Phase 6: Filter, sort and take top-K ──────────────────────────────
+     onProgress?.({ phase: 6, message: "Ranking candidates..." });
      // If embedding, we take a larger pool (1000) to find best semantic matches.
      // Otherwise, we take the final maxPapers (default 50).
      const initialLimit = rankMethod === "embedding" ? 1000 : maxPapers;
@@ -646,6 +698,7 @@ async function buildSnowballGraph(
 
      if (topK.length === 0) {
           console.warn(`[buildSnowballGraph] Zero results after phase 6.`);
+          onProgress?.({ phase: 6, message: "No candidates found." });
           return {
                pdfTitle: finalPdfTitle,
                pdfDoi,
@@ -659,9 +712,11 @@ async function buildSnowballGraph(
 
      // ── Phase 7: Batch-fetch full metadata ────────────────────────────────
      const topKIds = topK.map((c) => c.paperId);
+     onProgress?.({ phase: 7, message: `Fetching metadata for ${topKIds.length} papers...`, total: topKIds.length, current: 0 });
      console.log(`[Phase 7] Fetching metadata for ${topKIds.length} papers via Semantic Scholar...`);
 
      const metadata = await s2BatchMetadata(topKIds, s2Rl);
+     onProgress?.({ phase: 7, message: `Metadata fetched for ${metadata.size} papers.`, total: topKIds.length, current: metadata.size });
      console.log(
           `[Phase 7] Metadata: ${_metaApiCalls} fetched via API, ${_metaCacheHits} from archive` +
           ` (total: ${metadata.size}).`,
@@ -673,11 +728,13 @@ async function buildSnowballGraph(
      // Brief cooldown after the metadata batch to let the S2 rate-limit window reset
      // before any further API calls (e.g. Phase 9 embedding requests).
      if (!S2_API_KEY) {
+          onProgress?.({ phase: 7, message: "Pausing 3s (Rate limit cooldown)..." });
           console.log('[Phase 7→8] Pausing 3 s to let S2 rate-limit window reset...');
           await new Promise<void>(r => setTimeout(r, 3000));
      }
 
      // ── Phase 8: Build the final ranked list ─────────────────────────────
+     onProgress?.({ phase: 8, message: "Building final ranked list..." });
      let rankedPapers: RankedPaper[] = topK.flatMap((cand) => {
           const p = metadata.get(cand.paperId);
           if (!p?.title) {
@@ -701,12 +758,15 @@ async function buildSnowballGraph(
                     isAcademic: ACADEMIC_DOMAINS.some((d) => domain.includes(d) || url.includes(d)),
                     score: cand.score,
                     bcScore: cand.bcScore,
-                    ccScore: cand.ccScore,                    depth: cand.depth,               } satisfies RankedPaper,
+                    ccScore: cand.ccScore,
+                    depth: cand.depth,
+               } satisfies RankedPaper,
           ];
      });
 
      // ── Optional Phase 9: Embedding-based ranking ────────────────────────
      if (rankMethod === "embedding") {
+          onProgress?.({ phase: 9, message: "Performing semantic re-ranking..." });
           console.log(`[Phase 9] Re-ranking ${rankedPapers.length} candidates using embeddings...`);
           const defaultModel = configManager.getConfig("preferences.defaultEmbeddingModel");
           const modelKey = typeof defaultModel === "object" ? defaultModel?.modelKey : null;
@@ -810,7 +870,7 @@ async function buildSnowballGraph(
           ? (() => { const m = configManager.getConfig("preferences.defaultEmbeddingModel"); return typeof m === "object" ? m?.modelKey : null; })()
           : undefined;
 
-     return {
+     const response = {
           pdfTitle: finalPdfTitle,
           pdfDoi,
           seedPaperId: seedId,
@@ -820,14 +880,37 @@ async function buildSnowballGraph(
           rankMethod,
           embeddingModel: usedEmbeddingModel ?? undefined,
      } satisfies RelatedPapersResponse;
+
+     // Notify subscribers that construction is done
+     relatedPapersEvents.notifyComplete(response);
+
+     return response;
 }
 
-// ── Public dispatcher ─────────────────────────────────────────────────────────
-
 /**
- * Build a related-papers graph using the specified method.
- * This is the single entry point shared by the Next.js API route and the CLI.
+ * Resolve a DOI (and/or title) to a Semantic Scholar seed paper without running
+ * the full graph expansion. This is a lightweight call and can be used by the
+ * frontend or CLI to check cache status before starting the crawl.
  */
+export async function resolveSeedPaper(
+     doi: string | undefined,
+     title: string,
+): Promise<{ s2Id: string; title: string; abstract?: string; edgesCached: boolean } | null> {
+     const rl = new RateLimiter(S2_REQUESTS_PER_SECOND);
+     const result = await s2ResolveSeed(doi, title, rl);
+     if (!result) return null;
+
+     const refsCached = edgeCacheGet(result.id, "references") !== null;
+     const citsCached = edgeCacheGet(result.id, "citations") !== null;
+
+     return {
+          s2Id: result.id,
+          title: result.title ?? title,
+          abstract: result.abstract ?? undefined,
+          edgesCached: refsCached && citsCached,
+     };
+}
+
 export async function buildRelatedPapersGraph(
      method: GraphConstructionMethod,
      pdfTitle: string,
@@ -840,3 +923,28 @@ export async function buildRelatedPapersGraph(
                return buildSnowballGraph(pdfTitle, pdfDoi, config);
      }
 }
+
+
+/**
+ * Returns a list of all papers currently stored in the metadata cache.
+ */
+export async function getCachedPapers(): Promise<{ s2Id: string; title: string | null }[]> {
+     try {
+          const rows = db
+               .select({
+                    s2Id: paperMetadataCache.paperId,
+                    title: paperMetadataCache.title,
+               })
+               .from(paperMetadataCache)
+               .all();
+
+          return rows;
+     } catch (err) {
+          console.error("[Cache] Failed to fetch cached papers:", err);
+          return [];
+     }
+}
+
+/**
+ * Clears the metadata cache
+ */
