@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 
 import type { TaskProgressState } from "./types";
-import folderEvents from "@/server/folderEvents";
 
 // Use globalThis to guarantee a single shared instance across all Next.js
 // module scopes (Turbopack / HMR can create duplicate module instances).
@@ -45,11 +44,6 @@ export function updateTaskProgress(folderName: string, patch: Partial<TaskProgre
 
      states.set(folderName, next);
      taskProgressEmitter.emit("update", next);
-
-     // Notify folder SSE clients when task phase changes (for count updates)
-     if (patch.phase === "completed" || patch.phase === "error") {
-          folderEvents.notifyChange();
-     }
 
      return next;
 }

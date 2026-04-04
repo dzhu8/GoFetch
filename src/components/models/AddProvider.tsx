@@ -6,6 +6,7 @@ import { ModelProviderUISection, UIConfigField } from "@/lib/config/types";
 import { ConfigModelProvider } from "@/lib/models/types";
 import Select from "../Select";
 import { toast } from "sonner";
+import { addProvider } from "@/lib/actions/providers";
 
 type AddProviderProps = {
      isOpen: boolean;
@@ -70,23 +71,16 @@ const AddProvider = ({ isOpen, setIsOpen, providerSections, onProviderAdded }: A
           setIsSubmitting(true);
 
           try {
-               const res = await fetch("/api/providers", {
-                    method: "POST",
-                    headers: {
-                         "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                         name: providerName,
-                         type: selectedProviderType,
-                         config: updatedConfigValues,
-                         chatModels: [],
-                         embeddingModels: [],
-                    }),
+               const data = await addProvider({
+                    name: providerName,
+                    type: selectedProviderType,
+                    config: updatedConfigValues,
+                    chatModels: [],
+                    embeddingModels: [],
                });
 
-               if (!res.ok) {
-                    const error = await res.json();
-                    throw new Error(error.message || "Failed to add provider");
+               if (data.error) {
+                    throw new Error(data.error);
                }
 
                toast.success("Provider added successfully");

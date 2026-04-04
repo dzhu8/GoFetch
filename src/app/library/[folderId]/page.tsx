@@ -130,6 +130,10 @@ export default function FolderDetailPage() {
 
      const handleRecomputeEmbeddings = async (paperId: number, folderName: string) => {
           setRecomputingId(paperId);
+
+          // Optimistic update: immediately show the card as processing
+          setPapers((prev) => prev.map((p) => (p.id === paperId ? { ...p, status: "processing" as const } : p)));
+
           try {
                const data = await recomputePaperEmbeddings(String(paperId));
                if (data.error) {
@@ -138,6 +142,8 @@ export default function FolderDetailPage() {
                trackFolderTask(folderName);
           } catch (error) {
                console.error("Error recomputing embeddings:", error);
+               // Revert optimistic update on failure
+               setPapers((prev) => prev.map((p) => (p.id === paperId ? { ...p, status: "error" as const } : p)));
                setErrorModal(error instanceof Error ? error.message : "Failed to recompute embeddings");
           } finally {
                setRecomputingId(null);
@@ -461,6 +467,7 @@ function PaperCard({
      isComputingRelated: boolean;
 }) {
      const isUploading = paper.status === "uploading" || paper.status === "processing";
+     const isError = paper.status === "error";
      const [isRelatedDropdownOpen, setIsRelatedDropdownOpen] = useState(false);
      const [rankMethod, setRankMethod] = useState<string>("bibliographic");
 
@@ -509,6 +516,61 @@ function PaperCard({
                          <div className="h-4 w-3/4 bg-light-200 dark:bg-dark-200 rounded animate-pulse mb-2" />
                          <div className="h-3 w-full bg-light-200 dark:bg-dark-200 rounded animate-pulse mb-1" />
                          <div className="h-3 w-2/3 bg-light-200 dark:bg-dark-200 rounded animate-pulse" />
+                    </div>
+               </div>
+          );
+     }
+
+     if (isError) {
+          return (
+               <div className="rounded-3xl overflow-hidden bg-light-secondary dark:bg-dark-secondary shadow-sm shadow-light-200/10 dark:shadow-black/25 flex flex-col border border-red-300 dark:border-red-500/40">
+                    {/* Error image placeholder */}
+                    <div className="relative aspect-video overflow-hidden bg-light-200 dark:bg-dark-200">
+                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                              <div className="relative">
+                                   <FileText className="w-10 h-10 text-black/15 dark:text-white/15" />
+                                   <AlertCircle className="w-5 h-5 text-red-500 absolute -top-1 -right-1" />
+                              </div>
+                              <span className="text-sm font-medium text-red-500">
+                                   Failed to Process
+                              </span>
+                         </div>
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col">
+                         <h3 className="font-semibold text-sm mb-2 leading-tight line-clamp-2 text-black dark:text-white">
+                              {paper.title || paper.fileName}
+                         </h3>
+                         <p className="text-red-500/70 text-xs mb-3">
+                              Embedding failed. Retry or delete this paper.
+                         </p>
+                         <div className="mt-auto flex items-center justify-end gap-1 pt-2 border-t border-light-200/50 dark:border-dark-200/50">
+                              <button
+                                   type="button"
+                                   onClick={onRecomputeEmbed}
+                                   disabled={isRecomputingEmbed}
+                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F8B692] text-white text-xs font-medium hover:bg-[#F8B692]/80 active:scale-95 transition-all duration-200 disabled:opacity-50"
+                              >
+                                   {isRecomputingEmbed ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                   ) : (
+                                        <RefreshCcw className="w-3.5 h-3.5" />
+                                   )}
+                                   Retry
+                              </button>
+                              <button
+                                   type="button"
+                                   onClick={onDelete}
+                                   disabled={isDeleting}
+                                   className="p-1.5 rounded-lg text-black/40 dark:text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-colors duration-200 disabled:opacity-50"
+                                   aria-label="Delete paper"
+                              >
+                                   {isDeleting ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                   ) : (
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                   )}
+                              </button>
+                         </div>
                     </div>
                </div>
           );

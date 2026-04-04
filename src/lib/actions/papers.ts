@@ -24,11 +24,14 @@ import { activeProcs } from "@/app/api/papers/upload/processRegistry";
 
 async function triggerPendingEmbeddings(folderId: number, folderName: string): Promise<boolean> {
      const papersToEmbed = db
-          .select({ id: papers.id, fileName: papers.fileName, filePath: papers.filePath })
+          .select({ id: papers.id, fileName: papers.fileName, filePath: papers.filePath, status: papers.status })
           .from(papers)
           .where(eq(papers.folderId, folderId))
           .all()
           .filter((p) => {
+               // Skip papers already marked as errored — they need manual retry.
+               if (p.status === "error") return false;
+
                const hasChunks = db
                     .select()
                     .from(paperChunks)
@@ -48,6 +51,11 @@ async function triggerPendingEmbeddings(folderId: number, folderName: string): P
                     triggered = true;
                } catch (err) {
                     console.warn(`[Library] Failed to process pending embedding for ${paper.fileName}:`, err);
+                    // Mark paper as errored so it isn't re-triggered on every folder open.
+                    db.update(papers)
+                         .set({ status: "error", updatedAt: new Date().toISOString() })
+                         .where(eq(papers.id, paper.id))
+                         .run();
                }
           }
      }
@@ -273,6 +281,14 @@ export async function recomputePaperEmbeddings(id: string) {
           const ocrPath = paper.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
           if (!fs.existsSync(ocrPath)) {
                return { error: "OCR result not found. Please wait for processing." };
+          }
+
+          // Clear error status so the paper shows as in-progress
+          if (paper.status === "error") {
+               db.update(papers)
+                    .set({ status: "ready", updatedAt: new Date().toISOString() })
+                    .where(eq(papers.id, paperId))
+                    .run();
           }
 
           // Re-process chunks from OCR if they were somehow lost or need refresh

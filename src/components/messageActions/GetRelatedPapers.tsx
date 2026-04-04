@@ -9,7 +9,8 @@ import { cn } from "@/lib/utils";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import { useChat } from "@/lib/chat/Chat";
 import { sendSystemNotification } from "@/lib/utils";
-import { buildRelatedPapersGraphAction } from "@/lib/actions/related-papers";
+import { buildRelatedPapersGraphAction, resolvePaperByDoiAction } from "@/lib/actions/related-papers";
+import { getLibraryFolders, createLibraryFolder } from "@/lib/actions/library";
 
 interface LibraryFolder {
      id: number;
@@ -60,12 +61,11 @@ const GetRelatedPapers = () => {
      const fetchFolders = useCallback(async () => {
           setLoadingFolders(true);
           try {
-               const res = await fetch("/api/library-folders");
-               if (!res.ok) throw new Error();
-               const data = await res.json();
+               const data = await getLibraryFolders();
+               if (data.error) throw new Error(data.error);
                setFolders(data.folders ?? []);
-          } catch {
-               toast.error("Failed to load library folders.");
+          } catch (err: any) {
+               toast.error(err.message || "Failed to load library folders.");
           } finally {
                setLoadingFolders(false);
           }
@@ -102,19 +102,11 @@ const GetRelatedPapers = () => {
           setDoiError("");
           setResolving(true);
           try {
-               const res = await fetch(
-                    `/api/related-papers/resolve?doi=${encodeURIComponent(trimmed)}`,
-               );
-               if (res.status === 404) {
-                    setDoiError("Paper not found on Semantic Scholar. Check the DOI and try again.");
+               const data = await resolvePaperByDoiAction(trimmed);
+               if ("error" in data) {
+                    setDoiError(data.error);
                     return;
                }
-               if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    setDoiError(data.error || "Resolution failed.");
-                    return;
-               }
-               const data = await res.json();
                setResolvedSeed(data as ResolvedSeed);
           } catch {
                setDoiError("Network error during resolution.");
@@ -142,16 +134,11 @@ const GetRelatedPapers = () => {
                }
                setIsSavingFolder(true);
                try {
-                    const res = await fetch("/api/library-folders", {
-                         method: "POST",
-                         headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({ name: trimmed }),
-                    });
-                    const data = await res.json();
-                    if (!res.ok) { setFolderCreateError(data.error || "Failed to create folder."); return; }
+                    const data = await createLibraryFolder(trimmed);
+                    if (data.error || !data.folder) { setFolderCreateError(data.error || "Failed to create folder."); return; }
                     resolvedId = data.folder.id;
                     resolvedName = data.folder.name;
-                    setFolders((prev) => [...prev, data.folder]);
+                    setFolders((prev) => [...prev, data.folder!]);
                } catch (err: any) {
                     setFolderCreateError(err.message ?? "Failed to create folder.");
                     return;
@@ -254,7 +241,6 @@ const GetRelatedPapers = () => {
           }
      };
 
-<<<<<<< Updated upstream
      // ── Shared related-papers search ──────────────────────────────────────
      const runRelatedPapersSearch = async (
           params: { pdfTitle?: string; pdfDoi?: string; seedPaperS2Id?: string },
@@ -271,71 +257,17 @@ const GetRelatedPapers = () => {
           setStatusMessage("Initializing graph construction...");
 
           try {
-               const searchRes = await fetch("/api/related-papers", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ...params, stream: true }),
-               });
-=======
-               //  Search for related papers via Semantic Scholar
-               setStatusMessage("Searching for related papers");
+               const finalResult = await buildRelatedPapersGraphAction(
+                    params.pdfTitle ?? "",
+                    params.pdfDoi,
+               );
 
-               const searchData = await buildRelatedPapersGraphAction(pdfTitle, pdfDoi);
->>>>>>> Stashed changes
-
-               if ("error" in searchData) {
-                    throw new Error(searchData.error || "Related papers search failed");
+               if (!finalResult || (finalResult as any).error) {
+                    throw new Error((finalResult as any)?.error || "Related papers search failed");
                }
 
-<<<<<<< Updated upstream
-               const reader = searchRes.body?.getReader();
-               if (!reader) throw new Error("Could not initialize stream reader");
-
-               const decoder = new TextDecoder();
-               let buffer = "";
-               let finalResult: any = null;
-
-               while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop() || "";
-                    for (const line of lines) {
-                         if (!line.trim()) continue;
-                         try {
-                              const msg = JSON.parse(line);
-                              if (msg.type === "progress") {
-                                   let display = msg.message;
-                                   if (msg.total && msg.current !== undefined) {
-                                        // Show percentage or iteration progress
-                                        const pct = Math.round((msg.current / msg.total) * 100);
-                                        display = `[Phase ${msg.phase}] ${msg.message} (${pct}%)`;
-                                   } else if (msg.phase) {
-                                        display = `[Phase ${msg.phase}] ${msg.message}`;
-                                   }
-                                   setStatusMessage(display);
-                              } else if (msg.type === "result") {
-                                   finalResult = msg;
-                              } else if (msg.type === "error") {
-                                   throw new Error(msg.message);
-                              }
-                         } catch (err) {
-                              if (err instanceof Error && err.message !== "Related papers search failed") throw err;
-                              console.error("Error parsing NDJSON chunk:", err);
-                         }
-                    }
-               }
-
-               if (!finalResult) throw new Error("Search produced no results");
-
-               const paperCount = finalResult.rankedPapers?.length ?? 0;
-               addRelatedPapers(finalResult);
-=======
-               //  Add results to chat and navigate 
-               const paperCount = searchData.rankedPapers?.length ?? 0;
-               addRelatedPapers(searchData);
->>>>>>> Stashed changes
+               const paperCount = (finalResult as any).rankedPapers?.length ?? 0;
+               addRelatedPapers(finalResult as any);
                window.history.replaceState(null, "", `/c/${chatId}`);
                toast.success(`Found ${paperCount} related paper${paperCount === 1 ? "" : "s"}`);
                sendSystemNotification(`Related papers for "${shortTitle}"`, {

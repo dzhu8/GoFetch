@@ -197,6 +197,14 @@ async function processEmbeddingQueue() {
           } catch (error) {
                const errMsg = error instanceof Error ? error.message : String(error);
                console.error(`[embed] Failed to embed paper ${paperId}:`, error);
+
+               // Mark the paper as "error" in the database so it won't be
+               // re-triggered automatically on folder open.
+               db.update(papers)
+                    .set({ status: "error", updatedAt: new Date().toISOString() })
+                    .where(eq(papers.id, paperId))
+                    .run();
+
                updateTaskProgress(folderName, {
                     phase: "error",
                     error: errMsg,
