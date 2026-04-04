@@ -1,38 +1,64 @@
 "use server";
 
-import folderRegistry from "@/server/folderRegistry";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { count, eq, isNotNull } from "drizzle-orm";
+
 import db from "@/server/db";
-import { embeddings } from "@/server/db/schema";
-import { count } from "drizzle-orm";
+import { libraryFolders, papers, paperChunks } from "@/server/db/schema";
 
 const execAsync = promisify(exec);
 
 // GET /api/folders - Get all folders with optional GitHub sync data
 export async function getFolders(includeGitData?: boolean) {
      try {
-          const folders = folderRegistry.getFolders();
+          const rows = db.select().from(libraryFolders).orderBy(libraryFolders.createdAt).all();
 
-          // Fetch embedding counts
-          const embeddingCounts = await db
+          // Fetch embedding counts per folder (count paper chunks with non-null embeddings)
+          const embeddingCounts = db
                .select({
-                    folderName: embeddings.folderName,
+                    folderId: papers.folderId,
                     count: count(),
                })
-               .from(embeddings)
-               .groupBy(embeddings.folderName)
+               .from(paperChunks)
+               .innerJoin(papers, eq(paperChunks.paperId, papers.id))
+               .where(isNotNull(paperChunks.embedding))
+               .groupBy(papers.folderId)
                .all();
 
-          const countsMap = new Map(embeddingCounts.map((e) => [e.folderName, e.count]));
+          const countsMap = new Map(embeddingCounts.map((e) => [e.folderId, e.count]));
 
-          const foldersWithCounts = folders.map((folder) => ({
-               ...folder,
-               embeddingCount: countsMap.get(folder.name) || 0,
-          }));
+          // Check git connectivity for each folder
+          const foldersWithCounts = await Promise.all(
+               rows.map(async (folder) => {
+                    let githubUrl: string | null = null;
+                    let isGitConnected = false;
+
+                    try {
+                         const { stdout } = await execAsync("git remote get-url origin", {
+                              cwd: folder.rootPath,
+                         });
+                         const url = stdout.trim();
+                         if (url) {
+                              isGitConnected = true;
+                              githubUrl = url;
+                         }
+                    } catch {
+                         // Not a git repo or no remote
+                    }
+
+                    return {
+                         name: folder.name,
+                         rootPath: folder.rootPath,
+                         updatedAt: folder.updatedAt,
+                         githubUrl,
+                         isGitConnected,
+                         embeddingCount: countsMap.get(folder.id) ?? 0,
+                    };
+               })
+          );
 
           if (!includeGitData) {
-               // Return basic folder information
                return { folders: foldersWithCounts };
           }
 
@@ -122,14 +148,21 @@ export async function addFolder(name: string, rootPath: string) {
                return { error: "Folder name and path are required" };
           }
 
-          const folder = folderRegistry.addFolder(name, rootPath);
+          const row = db
+               .insert(libraryFolders)
+               .values({ name: name.trim(), rootPath: rootPath.trim() })
+               .returning()
+               .get();
 
           return {
                message: "Folder added successfully",
-               folder,
+               folder: row,
           };
-     } catch (error) {
+     } catch (error: any) {
           console.error("Error adding folder:", error);
+          if (error?.message?.includes("UNIQUE constraint failed")) {
+               return { error: "A folder with that name already exists", message: "A folder with that name already exists" };
+          }
           return {
                error: "Failed to add folder",
                message: error instanceof Error ? error.message : "Unknown error",
@@ -141,7 +174,11 @@ export async function addFolder(name: string, rootPath: string) {
 export async function getFolder(name: string) {
      try {
           const folderName = decodeURIComponent(name);
-          const folder = folderRegistry.getFolderByName(folderName);
+          const folder = db
+               .select()
+               .from(libraryFolders)
+               .where(eq(libraryFolders.name, folderName))
+               .get();
 
           if (!folder) {
                return { error: "Folder not found" };
@@ -163,7 +200,22 @@ export async function updateFolder(name: string, rootPath: string) {
                return { error: "Root path is required" };
           }
 
-          const folder = folderRegistry.updateFolder(folderName, rootPath);
+          const existing = db
+               .select()
+               .from(libraryFolders)
+               .where(eq(libraryFolders.name, folderName))
+               .get();
+
+          if (!existing) {
+               return { error: "Folder not found", message: "Folder not found" };
+          }
+
+          db.update(libraryFolders)
+               .set({ rootPath, updatedAt: new Date().toISOString() })
+               .where(eq(libraryFolders.id, existing.id))
+               .run();
+
+          const folder = db.select().from(libraryFolders).where(eq(libraryFolders.id, existing.id)).get();
 
           return {
                message: "Folder updated successfully",
@@ -182,7 +234,19 @@ export async function updateFolder(name: string, rootPath: string) {
 export async function deleteFolder(name: string) {
      try {
           const folderName = decodeURIComponent(name);
-          folderRegistry.removeFolder(folderName);
+
+          const existing = db
+               .select({ id: libraryFolders.id })
+               .from(libraryFolders)
+               .where(eq(libraryFolders.name, folderName))
+               .get();
+
+          if (!existing) {
+               return { error: "Folder not found", message: "Folder not found" };
+          }
+
+          // Delete folder (papers cascade via FK)
+          db.delete(libraryFolders).where(eq(libraryFolders.id, existing.id)).run();
 
           return {
                message: "Folder removed successfully",
@@ -199,8 +263,11 @@ export async function deleteFolder(name: string) {
 // POST /api/folders/[name]/sync - Pull from remote for a specific folder
 export async function syncFolder(name: string) {
      try {
-          const folderName = name;
-          const folder = folderRegistry.getFolderByName(folderName);
+          const folder = db
+               .select()
+               .from(libraryFolders)
+               .where(eq(libraryFolders.name, name))
+               .get();
 
           if (!folder) {
                return { error: "Folder not found" };
