@@ -3,6 +3,7 @@
 import { Message } from "@/components/ChatWindow";
 import modelRegistry from "@/server/providerRegistry";
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 const SUGGESTIONS_PROMPT = `Based on the chat history above, generate exactly 3 short, relevant follow-up questions or suggestions for the user. 
 The suggestions should help the user explore the topic deeper or refine their research.
@@ -14,15 +15,18 @@ export const getSuggestions = async (chatHistory: Message[], chatModel: { provid
      }
 
      try {
-          const model = await modelRegistry.getModel(chatModel.providerId, chatModel.key);
+          const model: BaseChatModel | null = await modelRegistry.getModel(chatModel.providerId, chatModel.key);
           if (!model) {
                return [];
           }
 
-          const history = chatHistory.map((m) => {
-               if (m.role === "user") return new HumanMessage(m.content);
-               return new AIMessage(m.content);
-          });
+          const history = chatHistory
+               .map((m) => {
+                    if (m.role === "user") return new HumanMessage(m.content);
+                    if (m.role === "assistant") return new AIMessage(m.content);
+                    return null;
+               })
+               .filter((m): m is HumanMessage | AIMessage => m !== null);
 
           // Only keep last few turns for context if too long
           const slicedHistory = history.slice(-6);
@@ -32,8 +36,8 @@ export const getSuggestions = async (chatHistory: Message[], chatModel: { provid
           const content = typeof response.content === "string" ? response.content : "";
           const suggestions = content
                .split("\n")
-               .map((s) => s.trim())
-               .filter((s) => s.length > 0 && !s.startsWith("-") && !s.match(/^\d\./))
+               .map((s: string) => s.trim())
+               .filter((s: string) => s.length > 0 && !s.startsWith("-") && !s.match(/^\d\./))
                .slice(0, 3);
 
           return suggestions;

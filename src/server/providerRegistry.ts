@@ -5,6 +5,7 @@ import { OllamaProvider } from "@/lib/models/providers/OllamaProvider";
 import { OpenAIProvider } from "@/lib/models/providers/OpenAIProvider";
 import { PaddleOCRProvider } from "@/lib/models/providers/PaddleOCRProvider";
 import { getConfiguredModelProviders, setConfiguredModelProviders } from "./serverRegistry";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 type ProviderFactory = new (config: ConfigModelProvider) => BaseModelProvider;
 
@@ -116,6 +117,14 @@ export class ModelRegistry {
 
      getProviderById(id: string): RegisteredProvider | undefined {
           return this.activeProviders.find((provider) => provider.id === id);
+     }
+
+     async getModel(providerId: string, modelKey: string): Promise<BaseChatModel | null> {
+          const provider = this.getProviderById(providerId);
+          if (!provider) {
+               return null;
+          }
+          return (await provider.provider.loadChatModel(modelKey)) as BaseChatModel;
      }
 
      addProvider(config: ConfigModelProvider): RegisteredProvider {
