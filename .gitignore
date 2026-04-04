@@ -1,6 +1,7 @@
 **/test/*
 **/dist/*
 data/*
+docs/temporary/*
 deprecated/*
 drizzle/*
 temp/*
