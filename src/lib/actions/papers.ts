@@ -57,6 +57,16 @@ async function triggerPendingEmbeddings(folderId: number, folderName: string): P
                          .where(eq(papers.id, paper.id))
                          .run();
                }
+          } else if (
+               (paper.status === "uploading" || paper.status === "processing") &&
+               !activeProcs.has(paper.id)
+          ) {
+               // OCR file missing and no active child process — this paper is orphaned.
+               console.warn(`[Library] Orphaned paper detected (no OCR output, no active process): ${paper.fileName}`);
+               db.update(papers)
+                    .set({ status: "error", updatedAt: new Date().toISOString() })
+                    .where(eq(papers.id, paper.id))
+                    .run();
           }
      }
      return triggered;
@@ -280,7 +290,7 @@ export async function recomputePaperEmbeddings(id: string) {
 
           const ocrPath = paper.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
           if (!fs.existsSync(ocrPath)) {
-               return { error: "OCR result not found. Please wait for processing." };
+               return { error: "OCR result not found. Please delete this paper and re-upload it." };
           }
 
           // Clear error status so the paper shows as in-progress

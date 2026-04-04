@@ -228,7 +228,7 @@ Checks first 3 pages for explicit `doc_title` label blocks and DOI. Returns `{ti
 
 ### Usage in Codebase
 
-- `/src/app/api/papers/upload/route.ts` -- Extracts metadata for duplicate checking.
+- `/src/app/api/papers/upload/route.ts` -- Extracts metadata for duplicate checking. Also cleans up existing `"error"` papers with the same filename in the same folder before inserting a new record, so re-uploads replace broken entries.
 - `/src/app/api/papers/[id]/related-papers/route.ts` -- Title/DOI for Semantic Scholar lookup.
 - `/src/app/api/cli/library/route.ts` and `/src/app/api/cli/related-papers/route.ts` -- Library and related-papers operations.
 - `/src/components/messageActions/GetRelatedPapers.tsx` -- Client-side title/DOI extraction from uploaded PDF.
@@ -334,6 +334,10 @@ Adds paper to a global embedding queue (maintained on `globalThis`). Increments 
 Fetches paper chunks from DB, resolves embedding model from settings/registry, embeds in batches of 10, stores vectors as `Float32Array` buffers. Updates progress message with chunk completion count.
 
 **Queue processing** is serialized: `processEmbeddingQueue()` uses `isProcessingQueue` flag to prevent concurrent processing. On completion of all papers for a folder, emits `"completed"`.
+
+### Orphaned Paper Detection (`actions/papers.ts`)
+
+`triggerPendingEmbeddings()` detects orphaned papers — those stuck in `"uploading"` or `"processing"` status with no `.ocr.json` sidecar on disk and no active OCR child process (`activeProcs`). These are marked `"error"` immediately so the UI shows the error card with Retry/Delete options instead of an infinite spinner.
 
 ### Initial Folder Embeddings (`initial.ts`)
 

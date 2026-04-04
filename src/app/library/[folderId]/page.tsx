@@ -109,6 +109,11 @@ export default function FolderDetailPage() {
                return;
           }
 
+          // Immediately remove any errored paper with the same filename so the
+          // error card is replaced by the new upload's spinner, not shown alongside it.
+          const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          setPapers((prev) => prev.filter((p) => !(p.fileName === sanitized && p.status === "error")));
+
           startParseJob(file, parseInt(folderId, 10), folder?.name ?? folderId);
           // Refresh paper list after a short delay so the new DB entry appears
           setTimeout(fetchPapers, 3000);
@@ -221,11 +226,21 @@ export default function FolderDetailPage() {
                          const freshPapers: Paper[] = data.papers || [];
                          setPapers((prev) => {
                               const freshMap = new Map(freshPapers.map((p: Paper) => [p.id, p]));
-                              return prev.map((p) => {
-                                   if (p.id < 0) return p; // temp paper, keep as is
-                                   const fresh = freshMap.get(p.id);
-                                   return fresh || p;
-                              });
+                              // Merge fresh data into existing list; drop papers that
+                              // the server has deleted (e.g. stale error entries replaced
+                              // by a new upload).
+                              const merged = prev
+                                   .filter((p) => p.id < 0 || freshMap.has(p.id))
+                                   .map((p) => {
+                                        if (p.id < 0) return p;
+                                        return freshMap.get(p.id) ?? p;
+                                   });
+                              // Also include any new papers from the server that we don't have yet
+                              const existingIds = new Set(merged.map((p) => p.id));
+                              for (const fp of freshPapers) {
+                                   if (!existingIds.has(fp.id)) merged.push(fp);
+                              }
+                              return merged;
                          });
                     }
                } catch {}

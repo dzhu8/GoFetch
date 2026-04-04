@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders, paperFolderLinks } from "@/server/db/schema";
+import { papers, libraryFolders, paperFolderLinks, paperChunks } from "@/server/db/schema";
 import { and, eq } from "drizzle-orm";
 import { spawn } from "child_process";
 import fs from "fs";
@@ -98,6 +98,18 @@ export async function POST(req: NextRequest) {
                          // ── Post-metadata checkpoint: run full OCR, but check page 0 early ────
                          pdfDestPath = path.join(folder.rootPath, sanitizedName);
                          fs.writeFileSync(pdfDestPath, pdfBuffer);
+
+                         // Clean up any previous "error" paper with the same filename in this folder
+                         // so re-uploading replaces the broken entry instead of creating a duplicate.
+                         const staleError = db
+                              .select({ id: papers.id })
+                              .from(papers)
+                              .where(and(eq(papers.folderId, folderId), eq(papers.fileName, sanitizedName), eq(papers.status, "error")))
+                              .get();
+                         if (staleError) {
+                              db.delete(paperChunks).where(eq(paperChunks.paperId, staleError.id)).run();
+                              db.delete(papers).where(eq(papers.id, staleError.id)).run();
+                         }
 
                          paperRow = db
                               .insert(papers)
