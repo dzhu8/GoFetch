@@ -38,6 +38,8 @@ type ChatContext = {
      chatHistory: [string, string][];
      files: File[];
      fileIds: string[];
+     attachedPaperIds: number[];
+     setAttachedPaperIds: React.Dispatch<React.SetStateAction<number[]>>;
      chatId: string | undefined;
      isMessagesLoaded: boolean;
      loading: boolean;
@@ -212,6 +214,8 @@ export const chatContext = createContext<ChatContext>({
      chatId: "",
      fileIds: [],
      files: [],
+     attachedPaperIds: [],
+     setAttachedPaperIds: () => {},
      hasError: false,
      isMessagesLoaded: false,
      isReady: false,
@@ -258,6 +262,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
      const [files, setFiles] = useState<File[]>([]);
      const [fileIds, setFileIds] = useState<string[]>([]);
+     const [attachedPaperIds, setAttachedPaperIds] = useState<number[]>([]);
 
      const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
 
@@ -427,6 +432,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                setChatHistory([]);
                setFiles([]);
                setFileIds([]);
+               setAttachedPaperIds([]);
                setIsMessagesLoaded(false);
                setNotFound(false);
                setNewChatCreated(false);
@@ -657,6 +663,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     },
                     chatId: chatId!,
                     files: fileIds,
+                    attachedPaperIds: attachedPaperIds.length > 0 ? attachedPaperIds : undefined,
                     history: rewrite
                          ? chatHistory.slice(0, messageIndex === -1 ? undefined : messageIndex)
                          : chatHistory,
@@ -833,6 +840,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     chatHistory,
                     files,
                     fileIds,
+                    attachedPaperIds,
+                    setAttachedPaperIds,
                     chatId,
                     hasError,
                     isMessagesLoaded,

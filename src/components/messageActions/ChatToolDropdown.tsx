@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/react";
-import { ChevronDown, Paperclip, FileText, Plus, GraduationCap, ScanText, LucideIcon } from "lucide-react";
+import { ChevronDown, FileText, Plus, GraduationCap, ScanText, LucideIcon } from "lucide-react";
 import { Fragment } from "react";
 import ParsePDF from "./ParsePDF";
 import GetRelatedPapers from "./GetRelatedPapers";
@@ -66,11 +66,6 @@ const ChatToolDropdown = () => {
             <PopoverPanel className="absolute left-0 bottom-full mb-2 z-50 w-72 origin-bottom-left">
               <div className="bg-light-primary dark:bg-dark-primary border border-light-200 dark:border-dark-200 rounded-xl shadow-xl overflow-hidden p-1 flex flex-col">
                 <div className="flex flex-col space-y-1">
-                  <OverlayToolItem
-                    label="Attach Files"
-                    description="Provide files as context for question answering"
-                    icon={Paperclip}
-                  />
                   <OverlayToolItem
                     label="Parse PDF"
                     description="Upload a PDF to extract and embed its contents"

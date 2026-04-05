@@ -5,6 +5,7 @@ import TextareaAutosize from "react-textarea-autosize";
 import { useChat } from "@/lib/chat/Chat";
 import ModelSelector from "./messageActions/ChatModelSelector";
 import ChatToolDropdown from "./messageActions/ChatToolDropdown";
+import PdfSelector from "./messageActions/PdfSelector";
 import GoFetchDog from "../../public/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
@@ -73,6 +74,7 @@ const EmptyChatMessageInput = () => {
                                    <div className="flex flex-row items-center space-x-1">
                                         <ModelSelector />
                                         <ChatToolDropdown />
+                                        <PdfSelector />
                                         {focusMode === "academic" && (
                                              <div className="flex items-center space-x-2 px-3 py-1.5 bg-sky-500/10 text-sky-500 rounded-lg text-xs font-medium border border-sky-500/20 whitespace-nowrap min-w-max">
                                                   <div className="flex items-center space-x-1">

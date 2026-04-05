@@ -3,6 +3,7 @@ import { ArrowUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import ChatToolDropdown from "./messageActions/ChatToolDropdown";
+import PdfSelector from "./messageActions/PdfSelector";
 import { useChat } from "@/lib/chat/Chat";
 
 const MessageInput = () => {
@@ -64,7 +65,12 @@ const MessageInput = () => {
                     mode === "multi" ? "flex-col rounded-2xl" : "flex-row rounded-full"
                )}
           >
-               {mode === "single" && <ChatToolDropdown />}
+               {mode === "single" && (
+                    <>
+                         <ChatToolDropdown />
+                         <PdfSelector />
+                    </>
+               )}
                <TextareaAutosize
                     ref={inputRef}
                     value={message}
@@ -87,7 +93,10 @@ const MessageInput = () => {
                )}
                {mode === "multi" && (
                     <div className="flex flex-row items-center justify-between w-full pt-2">
-                         <ChatToolDropdown />
+                         <div className="flex flex-row items-center space-x-1">
+                              <ChatToolDropdown />
+                              <PdfSelector />
+                         </div>
                          <div className="flex flex-row items-center space-x-4">
                               <button
                                    disabled={message.trim().length === 0 || loading}

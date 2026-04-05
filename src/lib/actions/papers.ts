@@ -87,6 +87,30 @@ function tryUnlink(filePath: string | null | undefined) {
 }
 
 // ---------------------------------------------------------------------------
+// List all ready papers (for PDF context selector)
+// ---------------------------------------------------------------------------
+
+export async function listReadyPapers() {
+     try {
+          const rows = db
+               .select({
+                    id: papers.id,
+                    title: papers.title,
+                    fileName: papers.fileName,
+               })
+               .from(papers)
+               .where(eq(papers.status, "ready"))
+               .orderBy(papers.createdAt)
+               .all();
+
+          return { papers: rows };
+     } catch (error) {
+          console.error("Error listing ready papers:", error);
+          return { error: "Failed to list papers" };
+     }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/papers?folderId=123
 // ---------------------------------------------------------------------------
 

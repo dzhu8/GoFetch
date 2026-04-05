@@ -32,6 +32,7 @@ const bodySchema = z.object({
           .default([]),
      files: z.array(z.string()).optional().default([]),
      folderNames: z.array(z.string()).optional(),
+     attachedPaperIds: z.array(z.number()).optional(),
      chatModel: chatModelSchema,
      systemInstructions: z.string().nullable().optional().default(""),
 });
@@ -277,21 +278,36 @@ export const POST = async (req: Request) => {
                }
           });
 
-          // Determine folder names to search
-          // If not provided, use all registered folders
-          const folderNames = body.folderNames ?? getAllFolderNames();
+          // Route to PDF context agent when papers are attached
+          let stream: EventEmitter;
 
-          // Get the appropriate search agent
-          const agent = getSearchAgent(body.focusMode);
+          if (body.attachedPaperIds && body.attachedPaperIds.length > 0) {
+               const { PdfContextAgent } = require("@/lib/search/pdfContext/agent");
+               const pdfAgent = new PdfContextAgent();
+               stream = await pdfAgent.searchAndAnswer(
+                    message.content,
+                    history,
+                    llm,
+                    body.systemInstructions as string,
+                    body.attachedPaperIds
+               );
+          } else {
+               // Determine folder names to search
+               // If not provided, use all registered folders
+               const folderNames = body.folderNames ?? getAllFolderNames();
 
-          // Call searchAndAnswer with the new signature
-          const stream = await agent.searchAndAnswer(
-               message.content,
-               history,
-               llm,
-               body.systemInstructions as string,
-               [folderNames] // searchRetrieverChainArgs - folderNames for CodeSearchAgent
-          );
+               // Get the appropriate search agent
+               const agent = getSearchAgent(body.focusMode);
+
+               // Call searchAndAnswer with the new signature
+               stream = await agent.searchAndAnswer(
+                    message.content,
+                    history,
+                    llm,
+                    body.systemInstructions as string,
+                    [folderNames] // searchRetrieverChainArgs - folderNames for CodeSearchAgent
+               );
+          }
 
           const responseStream = new TransformStream();
           const writer = responseStream.writable.getWriter();

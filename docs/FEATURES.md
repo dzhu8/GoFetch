@@ -654,11 +654,11 @@ Filters by `bcThreshold` and `ccThreshold`.
 
 ## 11. `search/`
 
-Files: [index.ts](src/lib/search/index.ts), [baseSearchAgent.ts](src/lib/search/baseSearchAgent.ts), [HNSWSearch.ts](src/lib/search/HNSWSearch.ts), `academicSearch/` subfolder, and `webSearch/` subfolder.
+Files: [index.ts](src/lib/search/index.ts), [baseSearchAgent.ts](src/lib/search/baseSearchAgent.ts), [HNSWSearch.ts](src/lib/search/HNSWSearch.ts), `academicSearch/` subfolder, `webSearch/` subfolder, and `pdfContext/` subfolder.
 
 ### Purpose
 
-The complete search infrastructure: academic search using SearXNG + LLM filtering, and general web search using SearXNG. Both share a streaming architecture for real-time results. Note: Direct code search has been deprecated.
+The complete search infrastructure: academic search using SearXNG + LLM filtering, general web search using SearXNG, and PDF-grounded question answering. All share a streaming architecture for real-time results. Note: Direct code search has been deprecated.
 
 ### Module Entry (`index.ts`)
 
@@ -697,4 +697,19 @@ Executes a specialized research pipeline:
 2. **Retrieval**: Parallel SearXNG queries with academic-only engines.
 3. **Refinement**: Uses the LLM as a judge to filter the top 45 results down to the most relevant ~15 sources based on title and abstract.
 4. **Synthesis**: Streams a technical response with strict inline citation requirements.
+
+### PDF Context Search (`pdfContext/`)
+
+Files: [agent.ts](src/lib/search/pdfContext/agent.ts).
+
+**`PdfContextAgent`** provides question-answering grounded exclusively in user-uploaded PDF content:
+
+1. **Query Embedding**: Embeds the user's query via `embedQuery()` (configured default embedding model).
+2. **Chunk Retrieval**: Fetches all chunks from `paperChunks` for the selected `paperIds`. Loads embeddings from `paperChunkEmbeddings` (per-model cache), falling back to the legacy `paperChunks.embedding` column.
+3. **Cosine Ranking**: Ranks chunks by cosine similarity against the query vector using `computeSimilarity()`, selects top 10.
+4. **Context Assembly**: Formats chunks as numbered excerpts with section type and paper title metadata.
+5. **System Prompt**: Instructs the LLM to answer using ONLY the provided excerpts, with explicit "not relevant" fallback language and inline citation requirements (`[1]`, `[2]`, etc.).
+6. **Streaming**: Emits the standard `status → sources → response → end` event sequence via EventEmitter.
+
+**Integration**: The chat route (`/api/chat`) detects `attachedPaperIds` in the request body and routes to `PdfContextAgent` instead of the default web search agent. The client-side `PdfSelector` component (in `messageActions/`) provides a popover listing all `status = "ready"` papers for toggle-based selection, stored as `attachedPaperIds` in chat context.
 
