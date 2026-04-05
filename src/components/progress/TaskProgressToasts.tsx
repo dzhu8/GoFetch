@@ -82,7 +82,7 @@ export default function TaskProgressToasts() {
      }
 
      return (
-          <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3 w-full max-w-sm">
+          <div className="flex flex-col items-end gap-3 w-full pointer-events-none">
                {visibleEntries.map((progress) => {
                     const percent = getProgressPercent(progress);
                     const secondaryText = getSecondaryText(progress);
@@ -95,7 +95,7 @@ export default function TaskProgressToasts() {
                     return (
                          <div
                               key={progress.folderName}
-                              className="w-full bg-light-primary/95 dark:bg-dark-primary/95 border border-light-200 dark:border-dark-200 rounded-xl p-4 shadow-lg backdrop-blur"
+                              className="pointer-events-auto w-full bg-light-primary/95 dark:bg-dark-primary/95 border border-light-200 dark:border-dark-200 rounded-xl p-4 shadow-lg backdrop-blur"
                          >
                               <div className="flex items-start justify-between gap-3">
                                    <div>

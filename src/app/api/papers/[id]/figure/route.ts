@@ -39,7 +39,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                headers: {
                     "Content-Type": mimeType,
                     "Content-Length": String(fileBuffer.length),
-                    "Cache-Control": "public, max-age=3600",
+                    "Cache-Control": "no-cache",
                },
           });
      } catch (error) {

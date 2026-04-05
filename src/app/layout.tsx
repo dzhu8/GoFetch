@@ -60,8 +60,10 @@ export default async function RootLayout({
                               ) : (
                                    <SetupWizard configSections={configSections} />
                               )}
-                              <TaskProgressToasts />
-                              <PdfParseToasts />
+                              <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3 w-full max-w-sm pointer-events-none">
+                                   <PdfParseToasts />
+                                   <TaskProgressToasts />
+                              </div>
                               </PdfParseProvider>
                          </TaskProgressProvider>
                     </ThemeProvider>

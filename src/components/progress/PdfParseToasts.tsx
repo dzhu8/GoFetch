@@ -59,7 +59,7 @@ export default function PdfParseToasts() {
      if (activeJobs.length === 0 && queuedJobs.length === 0) return null;
 
      return (
-          <div className="fixed bottom-20 right-4 z-50 flex flex-col items-end gap-3 w-full max-w-sm pointer-events-none">
+          <div className="flex flex-col items-end gap-3 w-full pointer-events-none">
                {/* Active / complete / error job toasts */}
                {activeJobs.map((job) => (
                     <div

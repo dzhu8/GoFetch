@@ -13,6 +13,7 @@ import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 import fs from "fs";
 import type { Buffer } from "node:buffer";
 import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
+import { clearTaskProgress } from "@/lib/embed/progress";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import configManager from "@/server";
 import { buildRelatedPapersGraph, GraphConstructionMethod } from "@/lib/relatedPapers/graph";
@@ -243,22 +244,33 @@ export async function deletePaper(id: string, folderId?: number) {
                fs.unlinkSync(paper.filePath);
           }
 
-          if (paper.firstFigurePath) {
-               const folder = db
-                    .select()
-                    .from(libraryFolders)
-                    .where(eq(libraryFolders.id, paper.folderId))
-                    .get();
-               if (folder) {
-                    const figPath = require("path").join(folder.rootPath, paper.firstFigurePath);
-                    if (fs.existsSync(figPath)) {
-                         fs.unlinkSync(figPath);
-                    }
+          const folder = db
+               .select()
+               .from(libraryFolders)
+               .where(eq(libraryFolders.id, paper.folderId))
+               .get();
+
+          if (paper.firstFigurePath && folder) {
+               const figPath = require("path").join(folder.rootPath, paper.firstFigurePath);
+               if (fs.existsSync(figPath)) {
+                    fs.unlinkSync(figPath);
                }
+          }
+
+          // Delete the OCR JSON sidecar (e.g. paper.pdf -> paper.ocr.json)
+          const ocrPath = paper.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
+          if (fs.existsSync(ocrPath)) {
+               fs.unlinkSync(ocrPath);
           }
 
           db.delete(paperChunks).where(eq(paperChunks.paperId, paperId)).run();
           db.delete(papers).where(eq(papers.id, paperId)).run();
+
+          // Clear stale embedding-progress state so a re-upload doesn't
+          // immediately show the old "All N paper(s) embedded" toast.
+          if (folder) {
+               clearTaskProgress(folder.name);
+          }
 
           return { message: "Paper deleted successfully" };
      } catch (error) {

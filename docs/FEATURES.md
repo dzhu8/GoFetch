@@ -339,6 +339,10 @@ Fetches paper chunks from DB, resolves embedding model from settings/registry, e
 
 `triggerPendingEmbeddings()` detects orphaned papers — those stuck in `"uploading"` or `"processing"` status with no `.ocr.json` sidecar on disk and no active OCR child process (`activeProcs`). These are marked `"error"` immediately so the UI shows the error card with Retry/Delete options instead of an infinite spinner.
 
+### Paper Deletion Cleanup (`actions/papers.ts`)
+
+`deletePaper()` performs full cleanup: removes the PDF file, the extracted figure image, the `.ocr.json` OCR sidecar, all `paperChunks` rows, and the `papers` DB record. The figure serving route (`/api/papers/[id]/figure`) uses `Cache-Control: no-cache` to prevent browsers from serving stale cached figures when SQLite reuses a deleted paper's rowid for a newly uploaded paper.
+
 ### Initial Folder Embeddings (`initial.ts`)
 
 #### `scheduleInitialEmbedding(folder)`

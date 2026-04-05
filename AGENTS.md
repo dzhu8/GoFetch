@@ -26,3 +26,4 @@ Before making any changes to the core logic (especially in `src/lib`), **always 
 1. **Check Documentation First**: Use `FEATURES.md` to understand how a component fits into the larger system before editing.
 2. **Respect Streaming**: Many API routes use streaming JSON. Ensure edits to `chat/` or API handlers maintain this protocol.
 3. **Type Safety**: Maintain strict TypeScript typing across `src/lib` and `src/types`.
+4. **Update Interface Docs**: When modifying or adding interface components (in `src/components/`, `src/app/`, or any UI-facing code), **update [docs/INTERFACE.md](docs/INTERFACE.md)** with the description of your changes. This file maps `src/lib` feature modules to the UI components that surface them.
