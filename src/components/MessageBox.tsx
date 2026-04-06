@@ -19,6 +19,7 @@ import MessageSources from "./MessageSources";
 import ThinkBox from "./ThinkBox";
 import { useChat, Section } from "@/lib/chat/Chat";
 import Citation from "./Citation";
+import { MathDisplay, MathInline, preprocessMath } from "./MathBlock";
 
 const ThinkTagProcessor = ({ children, thinkingEnded }: { children: React.ReactNode; thinkingEnded: boolean }) => {
      return <ThinkBox content={children as string} thinkingEnded={thinkingEnded} />;
@@ -54,8 +55,19 @@ const MessageBox = ({
                citation: {
                     component: Citation,
                },
+               mathblock: {
+                    component: MathDisplay,
+               },
+               mathinline: {
+                    component: MathInline,
+               },
           },
      };
+
+     const processedMessage = React.useMemo(
+          () => preprocessMath(parsedMessage),
+          [parsedMessage],
+     );
 
      return (
           <div className="space-y-6">
@@ -100,7 +112,7 @@ const MessageBox = ({
                                              )}
                                              options={markdownOverrides}
                                         >
-                                             {parsedMessage}
+                                             {processedMessage}
                                         </Markdown>
 
                                         {loading && isLast ? null : (

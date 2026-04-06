@@ -47,7 +47,9 @@ export async function POST(req: NextRequest) {
                return NextResponse.json({ error: "Folder not found" }, { status: 404 });
           }
 
-          const sanitizedName = pdf.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const sanitizedName = pdf.name
+               .replace(/[^a-zA-Z0-9._-]/g, "_")
+               .replace(/\.{2,}/g, ".");
           const pdfBuffer = Buffer.from(await pdf.arrayBuffer());
 
           // Build the Python env (CUDA DLL path) once for reuse

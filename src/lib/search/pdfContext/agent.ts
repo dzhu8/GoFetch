@@ -1,18 +1,30 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
 import EventEmitter from "events";
+import fs from "node:fs/promises";
 import db from "@/server/db";
 import { paperChunks, paperChunkEmbeddings, papers } from "@/server/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import computeSimilarity from "@/lib/utils/computeSimilarity";
 import { embedQuery } from "@/lib/search/embedding";
 import configManager from "@/server/index";
+import type { OCRDocument } from "@/lib/embed/paperProcess";
+import { PaperReconstructor } from "@/lib/paperReconstructor";
 
 interface RankedChunk {
      content: string;
      sectionType: string;
      paperTitle: string;
+     paperId: number;
      score: number;
+}
+
+interface PaperContext {
+     paperId: number;
+     paperTitle: string;
+     hasOcr: boolean;
+     content: string;
+     bestScore: number;
 }
 
 function bufferToVector(buf: Buffer): number[] {
@@ -20,27 +32,45 @@ function bufferToVector(buf: Buffer): number[] {
      return Array.from(floatView);
 }
 
-function buildContextString(chunks: RankedChunk[]): string {
-     return chunks
-          .map(
-               (chunk, i) =>
-                    `[${i + 1}] (Section: ${chunk.sectionType}, Paper: "${chunk.paperTitle}") ${chunk.content}`
-          )
-          .join("\n\n");
+function buildContextString(paperContexts: PaperContext[]): string {
+     return paperContexts
+          .map((pc, i) => {
+               const label = `[Paper ${i + 1}] "${pc.paperTitle}"`;
+               if (pc.hasOcr) {
+                    return `${label} (Full OCR document):\n${pc.content}`;
+               }
+               return `${label} (Abstract only):\n${pc.content}`;
+          })
+          .join("\n\n---\n\n");
 }
 
 function getPdfSystemPrompt(context: string, systemInstructions: string): string {
-     return `You are answering questions using ONLY the provided PDF excerpts as context. If none of the provided excerpts are relevant to the user's question, clearly state: "The provided PDF(s) do not appear to contain information relevant to this question." Do not fabricate or infer information beyond what is explicitly present in the excerpts.
+     return `You are answering questions using ONLY the provided paper contents as context. Each paper is provided either as full OCR JSON (structured document content) or as an abstract. If none of the provided papers are relevant to the user's question, clearly state: "The provided PDF(s) do not appear to contain information relevant to this question." Do not fabricate or infer information beyond what is explicitly present in the papers.
+
+### Reading OCR JSON
+Each OCR JSON paper contains an array of pages, each with a \`parsing_res_list\` of blocks. Each block has:
+- \`block_label\`: the type of content (e.g. "paragraph_title", "abstract", "figure_title", "table", "display_formula", "text")
+- \`block_content\`: the actual text
+
+**Helpful reading hints:**
+- \`"figure_title"\` blocks are a good first stop for identifying key experimental systems and computational applications — use the keywords found there to guide your reading of surrounding \`"text"\` blocks.
+- \`"paragraph_title"\` blocks mark section headings — use them to navigate the document structure.
+- \`"table"\` blocks contain tabular data that may summarize key results.
+- \`"abstract"\` blocks provide a high-level summary of the paper.
+- \`"display_formula"\` blocks contain mathematical expressions relevant to the methodology.
 
 ### Citation Requirements
-- Use inline citations like [1], [2], etc. immediately after the claim they support, corresponding to the numbered excerpts below.
-- Example: "The results showed a significant improvement [1]."
+- Use inline citations like [Paper 1], [Paper 2], etc. immediately after the claim they support, corresponding to the numbered papers below.
+- Example: "The results showed a significant improvement [Paper 1]."
 - DO NOT create a bibliography or reference list at the end.
-- ONLY cite excerpts provided in the <pdf_context> block below.
+- ONLY cite papers provided in the <pdf_context> block below.
 
 ### Formatting
 - Start directly with the answer — do not include a top-level title.
 - Use Markdown for clarity (bold, headings, bullet points).
+
+### TESTING: OCR Content Regurgitation
+THIS IS A TEMPORARY INSTRUCTION FOR TESTING PURPOSES. After your answer, include a section titled "## Raw OCR Content" and reproduce the full OCR JSON contents for each paper that was provided in OCR format. This helps us verify the content is being passed correctly and will be removed soon.
 
 ${systemInstructions ? `### User Instructions\n${systemInstructions}\n` : ""}
 
@@ -151,6 +181,7 @@ async function executeSearch(
                     content: chunk.content,
                     sectionType: chunk.sectionType,
                     paperTitle: paperTitleMap.get(chunk.paperId) ?? "Unknown",
+                    paperId: chunk.paperId,
                     score,
                });
           }
@@ -160,49 +191,117 @@ async function executeSearch(
           const topK: number = configManager.getConfig("preferences.librarySearchTopK", 25);
           const topChunks = scored.filter((c) => c.score >= scoreThreshold).slice(0, topK);
 
-          // Step 4: Emit sources (one per paper, best score)
-          const paperSourceMap = new Map<string, { score: number; sectionType: string }>();
+          // Step 4: Identify relevant papers and load full OCR JSON or abstract
+          const relevantPaperIds = [...new Set(topChunks.map((c) => c.paperId))];
+
+          // Build a map of paper file paths and abstracts
+          const paperDetailRows = db
+               .select({
+                    id: papers.id,
+                    title: papers.title,
+                    fileName: papers.fileName,
+                    filePath: papers.filePath,
+                    abstract: papers.abstract,
+               })
+               .from(papers)
+               .where(inArray(papers.id, relevantPaperIds))
+               .all();
+
+          const paperDetailMap = new Map(paperDetailRows.map((p) => [p.id, p]));
+
+          // Compute best score per paper
+          const paperBestScore = new Map<number, number>();
           for (const chunk of topChunks) {
-               const existing = paperSourceMap.get(chunk.paperTitle);
-               if (!existing || chunk.score > existing.score) {
-                    paperSourceMap.set(chunk.paperTitle, { score: chunk.score, sectionType: chunk.sectionType });
-               }
+               const existing = paperBestScore.get(chunk.paperId) ?? 0;
+               if (chunk.score > existing) paperBestScore.set(chunk.paperId, chunk.score);
           }
-          const sources = Array.from(paperSourceMap.entries()).map(([title, { score, sectionType }]) => ({
-               pageContent: "",
-               metadata: { title, url: "", sectionType, score },
-          }));
 
-          emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
-
-          // Step 5: Generate response
           emitter.emit(
                "data",
                JSON.stringify({
                     type: "status",
-                    data: { stage: "generating", message: "Generating answer..." },
+                    data: { stage: "loading", message: "Loading full paper contents..." },
                })
           );
 
-          const context = buildContextString(topChunks);
-          const systemPrompt = getPdfSystemPrompt(context, systemInstructions);
+          const paperContexts: PaperContext[] = [];
+          for (const paperId of relevantPaperIds) {
+               const detail = paperDetailMap.get(paperId);
+               if (!detail) continue;
 
-          const chatHistory: BaseMessage[] = history.flatMap(([role, content]): BaseMessage[] =>
-               role === "human" ? [new HumanMessage(content)] : [new AIMessage(content)]
+               const title = detail.title || detail.fileName;
+               const ocrPath = detail.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
+
+               let hasOcr = false;
+               let content = "";
+
+               try {
+                    await fs.access(ocrPath);
+                    content = await fs.readFile(ocrPath, "utf-8");
+                    hasOcr = true;
+               } catch {
+                    // No OCR file — fall back to abstract
+                    content = detail.abstract || "No abstract available.";
+               }
+
+               paperContexts.push({
+                    paperId,
+                    paperTitle: title,
+                    hasOcr,
+                    content,
+                    bestScore: paperBestScore.get(paperId) ?? 0,
+               });
+          }
+
+          // Sort by best score descending
+          paperContexts.sort((a, b) => b.bestScore - a.bestScore);
+
+          // Emit sources (one per paper, best score)
+          const sources = paperContexts.map((pc) => ({
+               pageContent: "",
+               metadata: {
+                    title: pc.paperTitle,
+                    url: "",
+                    sectionType: pc.hasOcr ? "full_ocr" : "abstract",
+                    score: pc.bestScore,
+               },
+          }));
+
+          emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
+
+          // Step 5: Bypass LLM — reconstruct papers from OCR and emit for testing
+          // TODO: Restore LLM generation once paper retrieval is verified
+          emitter.emit(
+               "data",
+               JSON.stringify({
+                    type: "status",
+                    data: { stage: "reconstructing", message: "Reconstructing paper contents..." },
+               })
           );
 
-          const llmStream = await llm.stream([
-               new SystemMessage(systemPrompt),
-               ...chatHistory,
-               new HumanMessage(query),
-          ]);
+          const outputParts: string[] = [];
+          for (let i = 0; i < paperContexts.length; i++) {
+               const pc = paperContexts[i];
+               const header = `## [Paper ${i + 1}] "${pc.paperTitle}"\n**Score:** ${pc.bestScore.toFixed(4)} | **Type:** ${pc.hasOcr ? "Full OCR" : "Abstract only"}`;
 
-          for await (const chunk of llmStream) {
-               const text = typeof chunk.content === "string" ? chunk.content : "";
-               if (text) {
-                    emitter.emit("data", JSON.stringify({ type: "response", data: text }));
+               if (pc.hasOcr) {
+                    try {
+                         const ocrDoc: OCRDocument = JSON.parse(pc.content);
+                         const detail = paperDetailMap.get(pc.paperId);
+                         const reconstructor = new PaperReconstructor(ocrDoc, detail!.filePath, pc.paperId);
+                         const reconstructed = await reconstructor.reconstruct();
+                         outputParts.push(`${header}\n\n${reconstructed}`);
+                    } catch (err) {
+                         console.error(`[pdfContext] Failed to reconstruct paper ${pc.paperId}:`, err);
+                         outputParts.push(`${header}\n\n*Failed to reconstruct paper from OCR.*`);
+                    }
+               } else {
+                    outputParts.push(`${header}\n\n${pc.content}`);
                }
           }
+
+          const output = outputParts.join("\n\n---\n\n") || "No papers matched the query above the similarity threshold.";
+          emitter.emit("data", JSON.stringify({ type: "response", data: output }));
 
           emitter.emit("end");
      } catch (err: any) {

@@ -336,8 +336,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                     let suggestions: string[] = [];
 
                     if (aiMessage) {
-                         const citationRegex = /\[([^\]]+)\]/g;
-                         const regex = /\[(\d+)\]/g;
+                         const citationRegex = /(?<!!)\[([^\]]+)\]/g;
+                         const regex = /(?<!!)\[(\d+)\]/g;
 
                          if (processedMessage.includes("<think>")) {
                               const openThinkTag = processedMessage.match(/<think>/g)?.length || 0;

@@ -5,6 +5,7 @@ export const revalidate = 60; // Revalidate every 60 seconds
 import type { Metadata } from "next";
 import { Montserrat } from "next/font/google";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import Sidebar from "@/components/Sidebar";
 import configManager from "@/server";

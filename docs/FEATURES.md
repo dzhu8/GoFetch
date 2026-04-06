@@ -704,16 +704,27 @@ Executes a specialized research pipeline:
 
 ### PDF Context Search (`pdfContext/`)
 
-Files: [agent.ts](src/lib/search/pdfContext/agent.ts).
+Files: [agent.ts](src/lib/search/pdfContext/agent.ts). Paper reconstruction logic lives in [`src/lib/paperReconstructor/`](src/lib/paperReconstructor/index.ts) (shared with the upload pipeline).
 
 **`PdfContextAgent`** provides question-answering grounded exclusively in user-uploaded PDF content:
 
 1. **Query Embedding**: Embeds the user's query via `embedQuery()` (configured default embedding model).
 2. **Chunk Retrieval**: Fetches all chunks from `paperChunks` for the selected `paperIds`. Loads embeddings from `paperChunkEmbeddings` (per-model cache), falling back to the legacy `paperChunks.embedding` column.
-3. **Cosine Ranking**: Ranks chunks by cosine similarity against the query vector using `computeSimilarity()`, selects top 10.
-4. **Context Assembly**: Formats chunks as numbered excerpts with section type and paper title metadata.
-5. **System Prompt**: Instructs the LLM to answer using ONLY the provided excerpts, with explicit "not relevant" fallback language and inline citation requirements (`[1]`, `[2]`, etc.).
-6. **Streaming**: Emits the standard `status → sources → response → end` event sequence via EventEmitter.
+3. **Cosine Ranking**: Ranks chunks by cosine similarity against the query vector using `computeSimilarity()`, applies configurable score threshold and top-K limit. The embeddings search serves as a *relevance filter* — it determines which papers to include, not which chunks to display.
+4. **Full Paper Loading**: Maps top-scoring chunks back to their source `paperId`, then loads the full `.ocr.json` file from disk for each relevant paper (path derived as `filePath.replace(/\.pdf$/i, "") + ".ocr.json"`). For papers without OCR results, falls back to the `papers.abstract` column. Papers are sorted by best chunk score descending.
+5. **Paper Reconstruction**: For papers with OCR, the `PaperReconstructor` class transforms raw OCR JSON into rich Markdown preserving document order. Block-by-block handling: `paragraph_title` → `## heading`, `abstract` → italic text, `text` → paragraphs, `display_formula` → `$$...$$` LaTeX (rendered by KaTeX in the chat UI), `table` → HTML tables (passed through from OCR), `image`/`chart` → figure PNGs extracted via PyMuPDF and served through `/api/papers/[id]/extracted-figure/[filename]`. Adjacent image/chart blocks are clustered using Union-Find (same algorithm as first-figure extraction in the upload pipeline) to form composite figures. Extracted PNGs are cached alongside the PDF for subsequent queries. For papers without OCR, the abstract is rendered as-is.
+6. **System Prompt**: Instructs the LLM to answer using ONLY the provided paper contents, with inline citation requirements (`[Paper 1]`, `[Paper 2]`, etc.). Includes guidance on reading OCR JSON structure (`block_label` / `block_content`), with hints about useful labels: `"figure_title"` for identifying key experimental systems, `"paragraph_title"` for navigation, `"table"` for results summaries, etc. **Temporary**: includes a testing instruction for the model to regurgitate raw OCR JSON contents (to be removed in TODO #3).
+7. **Streaming**: Emits the standard `status → sources → response → end` event sequence via EventEmitter, with `"loading"` and `"reconstructing"` status stages while reading OCR files and running paper reconstruction. Sources report `sectionType` as `"full_ocr"` or `"abstract"` per paper. **Temporary**: the LLM is bypassed — reconstructed paper contents are emitted directly as the response for visual verification (TODO #4 testing mode).
+
+**`PaperReconstructor`** (`PaperReconstructor.ts`) transforms an `OCRDocument` into structured Markdown:
+- Iterates through pages and `parsing_res_list` blocks in document order.
+- Text-based blocks are converted to Markdown inline; `display_formula` blocks preserve `$$...$$` delimiters for KaTeX rendering.
+- `image`/`chart` blocks are clustered by spatial proximity (Union-Find with dilated overlap + vertical gap heuristics), then batch-extracted as PNGs via a single PyMuPDF subprocess per paper. Extraction regions use normalized bounding box coordinates with 1% padding at 2× zoom.
+- Extracted figures are cached as `{pdfBasename}_extracted_p{page}_f{index}.png` alongside the source PDF.
+- Figure captions are associated by spatial proximity to the nearest `figure_title` block below each cluster.
+- The `/api/papers/[id]/extracted-figure/[filename]` route serves cached figure PNGs with path-traversal protection.
+
+**LaTeX Rendering** (chat UI): The `MathBlock` component (`src/components/MathBlock.tsx`) adds KaTeX math rendering to `MessageBox`. A `preprocessMath()` function converts `$$...$$` and `$...$` delimiters into custom `<mathblock>` / `<mathinline>` HTML tags with base64-encoded LaTeX content (preventing markdown-to-jsx from mangling special characters). These are registered as `markdown-to-jsx` overrides and rendered client-side via `katex.renderToString()`. KaTeX CSS is imported globally in `layout.tsx`.
 
 **Integration**: The chat route (`/api/chat`) detects `attachedPaperIds` in the request body and routes to `PdfContextAgent` instead of the default web search agent. The client-side `PdfSelector` component (in `messageActions/`) provides a popover listing all `status = "ready"` papers for toggle-based selection, stored as `attachedPaperIds` in chat context.
 
