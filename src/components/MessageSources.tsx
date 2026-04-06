@@ -1,8 +1,9 @@
 /* eslint-disable @next/next/no-img-element */
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from "@headlessui/react";
 import { Document } from "@langchain/core/documents";
-import { File } from "lucide-react";
 import { Fragment, useState } from "react";
+
+const isLocalSource = (url: string | undefined) => !url || url === "File";
 
 const MessageSources = ({ sources }: { sources: Document[] }) => {
      const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -30,11 +31,15 @@ const MessageSources = ({ sources }: { sources: Document[] }) => {
                               {source.metadata.title}
                          </p>
                          <div className="flex flex-row items-center justify-between">
-                              <div className="flex flex-row items-center space-x-1">
-                                   {source.metadata.url === "File" ? (
-                                        <div className="bg-dark-200 hover:bg-dark-100 transition duration-200 flex items-center justify-center w-6 h-6 rounded-full">
-                                             <File size={12} className="text-white/70" />
-                                        </div>
+                              <div className="flex flex-row items-center space-x-1 min-w-0">
+                                   {isLocalSource(source.metadata.url) ? (
+                                        <img
+                                             src="/assets/pdf.svg"
+                                             width={16}
+                                             height={16}
+                                             alt="pdf"
+                                             className="h-4 w-4"
+                                        />
                                    ) : (
                                         <img
                                              src={`https://s2.googleusercontent.com/s2/favicons?domain_url=${source.metadata.url}`}
@@ -45,7 +50,9 @@ const MessageSources = ({ sources }: { sources: Document[] }) => {
                                         />
                                    )}
                                    <p className="text-xs text-black/50 dark:text-white/50 overflow-hidden whitespace-nowrap text-ellipsis">
-                                        {source.metadata.url.replace(/.+\/\/|www.|\..+/g, "")}
+                                        {isLocalSource(source.metadata.url)
+                                             ? source.metadata.title
+                                             : source.metadata.url.replace(/.+\/\/|www.|\..+/g, "")}
                                    </p>
                               </div>
                               <div className="flex flex-row items-center space-x-1 text-black/50 dark:text-white/50 text-xs">
@@ -60,15 +67,17 @@ const MessageSources = ({ sources }: { sources: Document[] }) => {
                          onClick={openModal}
                          className="bg-light-100 hover:bg-light-200 dark:bg-dark-100 dark:hover:bg-dark-200 transition duration-200 rounded-lg p-3 flex flex-col space-y-2 font-medium"
                     >
-                         <div className="flex flex-row items-center space-x-1">
+                         <div className="flex flex-row items-center space-x-1 min-w-0">
                               {sources.slice(3, 6).map((source, i) => {
-                                   return source.metadata.url === "File" ? (
-                                        <div
+                                   return isLocalSource(source.metadata.url) ? (
+                                        <img
                                              key={i}
-                                             className="bg-dark-200 hover:bg-dark-100 transition duration-200 flex items-center justify-center w-6 h-6 rounded-full"
-                                        >
-                                             <File size={12} className="text-white/70" />
-                                        </div>
+                                             src="/assets/pdf.svg"
+                                             width={16}
+                                             height={16}
+                                             alt="pdf"
+                                             className="h-4 w-4"
+                                        />
                                    ) : (
                                         <img
                                              key={i}
@@ -113,14 +122,15 @@ const MessageSources = ({ sources }: { sources: Document[] }) => {
                                                                  {source.metadata.title}
                                                             </p>
                                                             <div className="flex flex-row items-center justify-between">
-                                                                 <div className="flex flex-row items-center space-x-1">
-                                                                      {source.metadata.url === "File" ? (
-                                                                           <div className="bg-dark-200 hover:bg-dark-100 transition duration-200 flex items-center justify-center w-6 h-6 rounded-full">
-                                                                                <File
-                                                                                     size={12}
-                                                                                     className="text-white/70"
-                                                                                />
-                                                                           </div>
+                                                                 <div className="flex flex-row items-center space-x-1 min-w-0">
+                                                                      {isLocalSource(source.metadata.url) ? (
+                                                                           <img
+                                                                                src="/assets/pdf.svg"
+                                                                                width={16}
+                                                                                height={16}
+                                                                                alt="pdf"
+                                                                                className="h-4 w-4"
+                                                                           />
                                                                       ) : (
                                                                            <img
                                                                                 src={`https://s2.googleusercontent.com/s2/favicons?domain_url=${source.metadata.url}`}
@@ -131,10 +141,12 @@ const MessageSources = ({ sources }: { sources: Document[] }) => {
                                                                            />
                                                                       )}
                                                                       <p className="text-xs text-black/50 dark:text-white/50 overflow-hidden whitespace-nowrap text-ellipsis">
-                                                                           {source.metadata.url.replace(
-                                                                                /.+\/\/|www.|\..+/g,
-                                                                                ""
-                                                                           )}
+                                                                           {isLocalSource(source.metadata.url)
+                                                                                ? source.metadata.title
+                                                                                : source.metadata.url.replace(
+                                                                                       /.+\/\/|www.|\..+/g,
+                                                                                       ""
+                                                                                  )}
                                                                       </p>
                                                                  </div>
                                                                  <div className="flex flex-row items-center space-x-1 text-black/50 dark:text-white/50 text-xs">

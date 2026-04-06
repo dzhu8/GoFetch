@@ -6,8 +6,7 @@ import { paperChunks, paperChunkEmbeddings, papers } from "@/server/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import computeSimilarity from "@/lib/utils/computeSimilarity";
 import { embedQuery } from "@/lib/search/embedding";
-
-const TOP_K = 10;
+import configManager from "@/server/index";
 
 interface RankedChunk {
      content: string;
@@ -157,17 +156,21 @@ async function executeSearch(
           }
 
           scored.sort((a, b) => b.score - a.score);
-          const topChunks = scored.slice(0, TOP_K);
+          const scoreThreshold: number = configManager.getConfig("preferences.librarySearchScoreThreshold", 0.3);
+          const topK: number = configManager.getConfig("preferences.librarySearchTopK", 25);
+          const topChunks = scored.filter((c) => c.score >= scoreThreshold).slice(0, topK);
 
-          // Step 4: Emit sources
-          const sources = topChunks.map((chunk) => ({
-               pageContent: chunk.content,
-               metadata: {
-                    title: chunk.paperTitle,
-                    url: "",
-                    sectionType: chunk.sectionType,
-                    score: chunk.score,
-               },
+          // Step 4: Emit sources (one per paper, best score)
+          const paperSourceMap = new Map<string, { score: number; sectionType: string }>();
+          for (const chunk of topChunks) {
+               const existing = paperSourceMap.get(chunk.paperTitle);
+               if (!existing || chunk.score > existing.score) {
+                    paperSourceMap.set(chunk.paperTitle, { score: chunk.score, sectionType: chunk.sectionType });
+               }
+          }
+          const sources = Array.from(paperSourceMap.entries()).map(([title, { score, sectionType }]) => ({
+               pageContent: "",
+               metadata: { title, url: "", sectionType, score },
           }));
 
           emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));

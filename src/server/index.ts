@@ -33,6 +33,8 @@ class ConfigManager {
                hnswScoreThreshold: 0.3,
                textChunkMaxTokens: 1000,
                textChunkOverlapTokens: 100,
+               librarySearchTopK: 25,
+               librarySearchScoreThreshold: 0.3,
           },
           personalization: {
                graphConstructionMethod: "snowball",
@@ -170,6 +172,33 @@ class ConfigManager {
                     min: 0,
                     max: 500,
                     placeholder: "100",
+                    scope: "server",
+               },
+               {
+                    name: "Library Search Top K",
+                    key: "librarySearchTopK",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Maximum number of top-scoring chunks to include as context when searching over uploaded PDFs.",
+                    default: 25,
+                    min: 1,
+                    max: 100,
+                    placeholder: "25",
+                    scope: "server",
+               },
+               {
+                    name: "Library Search Score Threshold",
+                    key: "librarySearchScoreThreshold",
+                    type: "number",
+                    required: false,
+                    description:
+                         "Minimum cosine similarity score (0-1) for a chunk to be included in library search results.",
+                    default: 0.3,
+                    min: 0,
+                    max: 1,
+                    step: 0.05,
+                    placeholder: "0.3",
                     scope: "server",
                },
           ],
@@ -485,6 +514,12 @@ class ConfigManager {
           }
           if (this.currentConfig.preferences.textChunkOverlapTokens === undefined) {
                this.currentConfig.preferences.textChunkOverlapTokens = 100;
+          }
+          if (this.currentConfig.preferences.librarySearchTopK === undefined) {
+               this.currentConfig.preferences.librarySearchTopK = 25;
+          }
+          if (this.currentConfig.preferences.librarySearchScoreThreshold === undefined) {
+               this.currentConfig.preferences.librarySearchScoreThreshold = 0.3;
           }
           if (!this.currentConfig.search || typeof this.currentConfig.search !== "object") {
                this.currentConfig.search = {};
