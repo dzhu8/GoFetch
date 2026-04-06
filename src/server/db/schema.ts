@@ -265,6 +265,31 @@ export const paperChunkEmbeddings = sqliteTable(
      })
 );
 
+// ── Paper sections (reconstructed from OCR) ─────────────────────────────────
+
+export const paperSections = sqliteTable(
+     "paper_sections",
+     {
+          id: integer("id").primaryKey(),
+          paperId: integer("paper_id")
+               .notNull()
+               .references(() => papers.id, { onDelete: "cascade" }),
+          sectionType: text("section_type", {
+               enum: ["main_text", "methods", "references", "figures"],
+          }).notNull(),
+          content: text("content").notNull(),
+          createdAt: text("created_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+     },
+     (table) => ({
+          paperSectionIdx: uniqueIndex("paper_sections_paper_type_idx").on(
+               table.paperId,
+               table.sectionType,
+          ),
+     })
+);
+
 export const academicSearches = sqliteTable("academic_searches", {
      id: integer("id").primaryKey(),
      chatId: text("chat_id").notNull(),

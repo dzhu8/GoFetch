@@ -8,7 +8,7 @@ import os from "os";
 import path from "path";
 import { extractDocumentMetadata } from "@/lib/citations/parseReferences";
 import { activeProcs } from "./processRegistry";
-import { processPaperOCR, queuePaperEmbedding } from "@/lib/embed/paperProcess";
+import { processPaperOCR, queuePaperEmbedding, queuePaperReconstruction } from "@/lib/embed/paperProcess";
 
 export const maxDuration = 300;
 
@@ -309,6 +309,15 @@ export async function POST(req: NextRequest) {
                               } catch (err) {
                                    console.warn("[Paper upload] Failed to process chunks or queue embedding:", err);
                               }
+
+                              // Queue background section reconstruction (independent of embedding)
+                              queuePaperReconstruction(
+                                   paperRow.id,
+                                   folder.name,
+                                   paperRow.fileName ?? pdf.name,
+                                   jsonDestPath,
+                                   pdfDestPath!,
+                              );
                          }
 
                          const metadata = extractDocumentMetadata(ocrResult);

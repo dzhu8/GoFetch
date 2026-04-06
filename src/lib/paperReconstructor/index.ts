@@ -32,6 +32,20 @@ interface ExtractedFigure {
      docOrder: number;
 }
 
+export interface FigureEntry {
+     filename: string;
+     caption: string;
+     pageIndex: number;
+     docOrder: number;
+}
+
+export interface ReconstructedSections {
+     mainText: string;
+     methods: string | null;
+     references: string;
+     figures: FigureEntry[];
+}
+
 // ── Union-Find clustering (ported from upload/route.ts) ──────────────────────
 
 function unionBboxes(boxes: BBox[]): BBox {
@@ -183,6 +197,39 @@ print("EXTRACTED_ALL")
 
 // ── PaperReconstructor class ─────────────────────────────────────────────────
 
+const METHODS_HEADING_PATTERNS = [
+     /^methods$/i,
+     /^materials?\s+and\s+methods$/i,
+     /^methods?\s+and\s+materials?$/i,
+     /^experimental$/i,
+     /^experimental\s+section$/i,
+     /^experimental\s+methods?$/i,
+     /^materials?$/i,
+     /^methodology$/i,
+     /^procedures?$/i,
+     /^computational\s+methods?$/i,
+     /^experimental\s+procedures?$/i,
+     /^synthesis$/i,
+     /^characterization$/i,
+];
+
+const REFERENCES_HEADING_PATTERNS = [
+     /^references$/i,
+     /^bibliography$/i,
+     /^works\s+cited$/i,
+     /^literature\s+cited$/i,
+];
+
+function isMethodsHeading(text: string): boolean {
+     const trimmed = text.trim();
+     return METHODS_HEADING_PATTERNS.some((p) => p.test(trimmed));
+}
+
+function isReferencesHeading(text: string): boolean {
+     const trimmed = text.trim();
+     return REFERENCES_HEADING_PATTERNS.some((p) => p.test(trimmed));
+}
+
 export class PaperReconstructor {
      private ocrDoc: OCRDocument;
      private pdfPath: string;
@@ -287,6 +334,143 @@ export class PaperReconstructor {
           }
 
           return markdown;
+     }
+
+     /**
+      * Reconstruct the OCR document into four distinct sections for database storage.
+      * - mainText: title, abstract, body text (including figure captions, tables, formulas)
+      * - methods: content under Methods/Materials/Experimental headings (null if none found)
+      * - references: parsed reference list as numbered Markdown
+      * - figures: extracted figure PNGs with captions as structured data
+      */
+     async reconstructSections(): Promise<ReconstructedSections> {
+          const mainParts: { docOrder: number; markdown: string }[] = [];
+          const methodsParts: { docOrder: number; markdown: string }[] = [];
+          const figureRegions: FigureRegion[] = [];
+
+          let inMethodsSection = false;
+          let inReferencesSection = false;
+
+          for (const page of this.ocrDoc.pages) {
+               const pageIndex = page.data?.page_index ?? page.page ?? 0;
+               const pageWidth = page.data?.width ?? 1;
+               const pageHeight = page.data?.height ?? 1;
+               const blocks = page.data?.parsing_res_list ?? [];
+
+               // Collect figure regions (same as reconstruct())
+               const captionMap = this.buildCaptionMap(blocks, pageIndex);
+               const visualBlocks: { index: number; bbox: BBox }[] = [];
+               for (let i = 0; i < blocks.length; i++) {
+                    const block = blocks[i];
+                    if (!["image", "chart"].includes(block.block_label)) continue;
+                    const b = block.block_bbox;
+                    if (!b || b.length < 4) continue;
+                    visualBlocks.push({ index: i, bbox: { x0: b[0], y0: b[1], x1: b[2], y1: b[3] } });
+               }
+
+               if (visualBlocks.length > 0) {
+                    const margin = Math.min(30, 0.015 * pageHeight);
+                    const clusters = clusterBboxes(visualBlocks.map((v) => v.bbox), margin, 40);
+                    for (const cluster of clusters) {
+                         const union = unionBboxes(cluster);
+                         const area = totalArea(cluster);
+                         if (area < 0.01 * pageWidth * pageHeight) continue;
+                         const caption = captionMap.find((c) =>
+                              c.pageIndex === pageIndex &&
+                              Math.abs(c.bbox.y0 - union.y1) < 0.15 * pageHeight
+                         );
+                         const docOrder = pageIndex * 10000 + Math.round(union.y0);
+                         figureRegions.push({ pageIndex, bbox: union, pageWidth, pageHeight, docOrder, caption: caption?.text ?? "" });
+                    }
+               }
+
+               // Second pass: route text blocks to mainText or methods
+               for (let i = 0; i < blocks.length; i++) {
+                    const block = blocks[i];
+                    const docOrder = pageIndex * 10000 + i;
+                    const content = (block.block_content ?? "").trim();
+
+                    // Detect section transitions on paragraph_title blocks
+                    if (block.block_label === "paragraph_title" && content) {
+                         if (isReferencesHeading(content)) {
+                              inReferencesSection = true;
+                              inMethodsSection = false;
+                              continue; // Skip the heading itself; references come from parseReferences()
+                         }
+                         if (isMethodsHeading(content)) {
+                              inMethodsSection = true;
+                              inReferencesSection = false;
+                         } else if (inMethodsSection) {
+                              // A non-methods heading ends the methods section
+                              inMethodsSection = false;
+                         }
+                         if (inReferencesSection) continue;
+                    }
+
+                    // Skip blocks in the references zone (handled separately)
+                    if (inReferencesSection) continue;
+                    if (block.block_label === "reference_content") continue;
+
+                    // Figure captions always go to mainText (duplicated in figures section too)
+                    if (block.block_label === "figure_title" && content) {
+                         mainParts.push({ docOrder, markdown: `\n*${content}*\n` });
+                         continue;
+                    }
+
+                    const md = this.renderBlock(block, docOrder);
+                    if (!md) continue;
+
+                    if (inMethodsSection) {
+                         methodsParts.push(md);
+                    } else {
+                         mainParts.push(md);
+                    }
+               }
+          }
+
+          // Extract figures
+          const extractedFigures = await extractFigureRegions(this.pdfPath, figureRegions);
+
+          // Insert figures into mainText for inline rendering (same as reconstruct())
+          for (const fig of extractedFigures) {
+               const imgUrl = `/api/papers/${this.paperId}/extracted-figure/${encodeURIComponent(fig.filename)}`;
+               let md = `\n![${fig.caption || "Figure"}](${imgUrl})\n`;
+               if (fig.caption) {
+                    md += `\n*${fig.caption}*\n`;
+               }
+               mainParts.push({ docOrder: fig.docOrder, markdown: md });
+          }
+
+          // Build mainText
+          mainParts.sort((a, b) => a.docOrder - b.docOrder);
+          const mainText = mainParts.map((p) => p.markdown).join("\n");
+
+          // Build methods (null if no methods section found)
+          let methods: string | null = null;
+          if (methodsParts.length > 0) {
+               methodsParts.sort((a, b) => a.docOrder - b.docOrder);
+               methods = methodsParts.map((p) => p.markdown).join("\n");
+          }
+
+          // Build references
+          const refs = parseReferences(this.ocrDoc);
+          let references = "";
+          if (refs.length > 0) {
+               references = refs.map((ref) => `${ref.refNum}. ${ref.text}`).join("\n");
+          }
+
+          // Build figures list
+          const figures: FigureEntry[] = extractedFigures.map((fig) => {
+               const region = figureRegions.find((r) => r.docOrder === fig.docOrder);
+               return {
+                    filename: fig.filename,
+                    caption: fig.caption,
+                    pageIndex: region?.pageIndex ?? 0,
+                    docOrder: fig.docOrder,
+               };
+          });
+
+          return { mainText, methods, references, figures };
      }
 
      /**

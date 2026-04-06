@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import db from "@/server/db";
-import { paperChunks, papers } from "@/server/db/schema";
+import { paperChunks, papers, paperSections } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { resolveModelPreference } from "@/lib/models/preferenceResolver";
 import modelRegistry from "@/server/providerRegistry";
@@ -312,4 +312,81 @@ export async function embedPaperChunks(paperId: number, folderName: string, pape
                message: `Embedding "${paperName}" (${processed}/${chunks.length} chunks)...`
           });
      }
+}
+
+// ── Paper reconstruction queue ──────────────────────────────────────────────
+// Runs PaperReconstructor.reconstructSections() in the background after upload,
+// persisting results to the paperSections table. Independent of the embedding queue.
+
+interface ReconstructionJob {
+     paperId: number;
+     folderName: string;
+     paperName: string;
+     ocrJsonPath: string;
+     pdfPath: string;
+}
+
+const GLOBAL_KEY_RECON_QUEUE = Symbol.for("gofetch.reconstructionQueue");
+const GLOBAL_KEY_RECON_PROCESSING = Symbol.for("gofetch.isProcessingReconQueue");
+
+if (!g[GLOBAL_KEY_RECON_QUEUE]) g[GLOBAL_KEY_RECON_QUEUE] = [] as ReconstructionJob[];
+if (g[GLOBAL_KEY_RECON_PROCESSING] === undefined) g[GLOBAL_KEY_RECON_PROCESSING] = false;
+
+const reconstructionQueue = g[GLOBAL_KEY_RECON_QUEUE] as ReconstructionJob[];
+
+async function processReconstructionQueue() {
+     if (g[GLOBAL_KEY_RECON_PROCESSING] || reconstructionQueue.length === 0) return;
+     g[GLOBAL_KEY_RECON_PROCESSING] = true;
+
+     // Lazy import to avoid circular dependency
+     const { PaperReconstructor } = await import("@/lib/paperReconstructor");
+
+     while (reconstructionQueue.length > 0) {
+          const job = reconstructionQueue.shift()!;
+          console.log(`[PaperReconstruction] Processing paper ${job.paperId}: ${job.paperName}`);
+
+          try {
+               const ocrRaw = await fs.readFile(job.ocrJsonPath, "utf-8");
+               const ocrDoc: OCRDocument = JSON.parse(ocrRaw);
+               const reconstructor = new PaperReconstructor(ocrDoc, job.pdfPath, job.paperId);
+               const sections = await reconstructor.reconstructSections();
+
+               type SectionType = "main_text" | "methods" | "references" | "figures";
+               const rows: { paperId: number; sectionType: SectionType; content: string }[] = [
+                    { paperId: job.paperId, sectionType: "main_text", content: sections.mainText },
+                    { paperId: job.paperId, sectionType: "references", content: sections.references },
+                    { paperId: job.paperId, sectionType: "figures", content: JSON.stringify(sections.figures) },
+               ];
+               if (sections.methods) {
+                    rows.push({ paperId: job.paperId, sectionType: "methods", content: sections.methods });
+               }
+
+               db.transaction((tx) => {
+                    for (const row of rows) {
+                         tx.insert(paperSections)
+                              .values(row)
+                              .onConflictDoNothing()
+                              .run();
+                    }
+               });
+
+               console.log(`[PaperReconstruction] Completed paper ${job.paperId}: ${job.paperName}`);
+          } catch (err) {
+               console.error(`[PaperReconstruction] Failed paper ${job.paperId}:`, err);
+               // Non-fatal — don't affect paper status, just log and continue
+          }
+     }
+
+     g[GLOBAL_KEY_RECON_PROCESSING] = false;
+}
+
+export function queuePaperReconstruction(
+     paperId: number,
+     folderName: string,
+     paperName: string,
+     ocrJsonPath: string,
+     pdfPath: string,
+) {
+     reconstructionQueue.push({ paperId, folderName, paperName, ocrJsonPath, pdfPath });
+     processReconstructionQueue();
 }

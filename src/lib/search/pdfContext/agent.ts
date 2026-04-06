@@ -3,8 +3,8 @@ import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from "@langchain/
 import EventEmitter from "events";
 import fs from "node:fs/promises";
 import db from "@/server/db";
-import { paperChunks, paperChunkEmbeddings, papers } from "@/server/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { paperChunks, paperChunkEmbeddings, papers, paperSections } from "@/server/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import computeSimilarity from "@/lib/utils/computeSimilarity";
 import { embedQuery } from "@/lib/search/embedding";
 import configManager from "@/server/index";
@@ -269,7 +269,7 @@ async function executeSearch(
 
           emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
 
-          // Step 5: Bypass LLM — reconstruct papers from OCR and emit for testing
+          // Step 5: Bypass LLM — load pre-computed sections (or reconstruct on-the-fly with lazy backfill)
           // TODO: Restore LLM generation once paper retrieval is verified
           emitter.emit(
                "data",
@@ -284,19 +284,63 @@ async function executeSearch(
                const pc = paperContexts[i];
                const header = `## [Paper ${i + 1}] "${pc.paperTitle}"\n**Score:** ${pc.bestScore.toFixed(4)} | **Type:** ${pc.hasOcr ? "Full OCR" : "Abstract only"}`;
 
-               if (pc.hasOcr) {
+               if (!pc.hasOcr) {
+                    outputParts.push(`${header}\n\n${pc.content}`);
+                    continue;
+               }
+
+               // Check for pre-computed sections in paperSections table
+               const cachedSections = db
+                    .select({ sectionType: paperSections.sectionType, content: paperSections.content })
+                    .from(paperSections)
+                    .where(eq(paperSections.paperId, pc.paperId))
+                    .all();
+
+               if (cachedSections.length > 0) {
+                    // Use cached sections
+                    const sectionMap = new Map(cachedSections.map((s) => [s.sectionType, s.content]));
+                    const parts: string[] = [];
+                    const mainText = sectionMap.get("main_text");
+                    if (mainText) parts.push(mainText);
+                    const methods = sectionMap.get("methods");
+                    if (methods) parts.push(`\n## Methods\n${methods}`);
+                    const references = sectionMap.get("references");
+                    if (references) parts.push(`\n## References\n${references}`);
+                    outputParts.push(`${header}\n\n${parts.join("\n")}`);
+               } else {
+                    // Lazy backfill: reconstruct on-the-fly, persist for next time
                     try {
                          const ocrDoc: OCRDocument = JSON.parse(pc.content);
                          const detail = paperDetailMap.get(pc.paperId);
                          const reconstructor = new PaperReconstructor(ocrDoc, detail!.filePath, pc.paperId);
-                         const reconstructed = await reconstructor.reconstruct();
-                         outputParts.push(`${header}\n\n${reconstructed}`);
+                         const sections = await reconstructor.reconstructSections();
+
+                         // Persist to paperSections for future queries
+                         type SectionType = "main_text" | "methods" | "references" | "figures";
+                         const sectionRows: { paperId: number; sectionType: SectionType; content: string }[] = [
+                              { paperId: pc.paperId, sectionType: "main_text", content: sections.mainText },
+                              { paperId: pc.paperId, sectionType: "references", content: sections.references },
+                              { paperId: pc.paperId, sectionType: "figures", content: JSON.stringify(sections.figures) },
+                         ];
+                         if (sections.methods) {
+                              sectionRows.push({ paperId: pc.paperId, sectionType: "methods", content: sections.methods });
+                         }
+                         for (const row of sectionRows) {
+                              db.insert(paperSections)
+                                   .values(row)
+                                   .onConflictDoNothing()
+                                   .run();
+                         }
+
+                         // Build output from freshly computed sections
+                         const parts: string[] = [sections.mainText];
+                         if (sections.methods) parts.push(`\n## Methods\n${sections.methods}`);
+                         if (sections.references) parts.push(`\n## References\n${sections.references}`);
+                         outputParts.push(`${header}\n\n${parts.join("\n")}`);
                     } catch (err) {
                          console.error(`[pdfContext] Failed to reconstruct paper ${pc.paperId}:`, err);
                          outputParts.push(`${header}\n\n*Failed to reconstruct paper from OCR.*`);
                     }
-               } else {
-                    outputParts.push(`${header}\n\n${pc.content}`);
                }
           }
 
