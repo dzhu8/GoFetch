@@ -239,22 +239,10 @@ export async function deletePaper(id: string, folderId?: number) {
                // No other associations -- fall through to full delete below
           }
 
-          // Full delete: remove file, figure, chunks, and record
+          // Full delete: remove file, chunks, and record
+          // (extracted figures are cleaned up via CASCADE on the papers FK)
           if (fs.existsSync(paper.filePath)) {
                fs.unlinkSync(paper.filePath);
-          }
-
-          const folder = db
-               .select()
-               .from(libraryFolders)
-               .where(eq(libraryFolders.id, paper.folderId))
-               .get();
-
-          if (paper.firstFigurePath && folder) {
-               const figPath = require("path").join(folder.rootPath, paper.firstFigurePath);
-               if (fs.existsSync(figPath)) {
-                    fs.unlinkSync(figPath);
-               }
           }
 
           // Delete the OCR JSON sidecar (e.g. paper.pdf -> paper.ocr.json)
@@ -268,6 +256,11 @@ export async function deletePaper(id: string, folderId?: number) {
 
           // Clear stale embedding-progress state so a re-upload doesn't
           // immediately show the old "All N paper(s) embedded" toast.
+          const folder = db
+               .select()
+               .from(libraryFolders)
+               .where(eq(libraryFolders.id, paper.folderId))
+               .get();
           if (folder) {
                clearTaskProgress(folder.name);
           }
@@ -621,8 +614,7 @@ export async function cancelPaperUpload(id: string) {
           const ocrJsonPath = paperRow.filePath.replace(/\.pdf$/i, "") + ".ocr.json";
           tryUnlink(ocrJsonPath);
 
-          // Delete the extracted first figure image if present
-          tryUnlink(paperRow.firstFigurePath);
+          // Extracted figures are cleaned up via CASCADE on the papers FK
 
           // Remove the DB record entirely
           try {

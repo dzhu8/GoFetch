@@ -70,7 +70,7 @@ Uploaded academic papers with metadata.
 | abstract | text | |
 | semanticScholarId | text | S2 paper ID |
 | citation | text | Formatted citation string |
-| firstFigurePath | text | Path to extracted Figure 1 image |
+| firstFigurePath | text | Filename key for Figure 1 in extracted_figures table |
 | status | text | "uploading", "processing", "ready", "error" |
 | createdAt | text | |
 | updatedAt | text | |
@@ -85,6 +85,22 @@ Many-to-many links for papers that appear in multiple library folders. The canon
 | createdAt | text | |
 
 PK: (paperId, folderId)
+
+### extractedFigures
+Extracted figure images stored as blobs. Includes both the first figure thumbnail and all batch-extracted figures from paper reconstruction. Cascade-deleted when the parent paper is removed.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer | PK |
+| paperId | integer | FK → papers.id (cascade delete) |
+| filename | text | Logical filename key (e.g. `paper_fig1.png`, `paper_extracted_p2_f0.png`) |
+| pageIndex | integer | Source PDF page |
+| docOrder | integer | Position in document for ordering |
+| caption | text | Figure caption from OCR |
+| imageData | blob | PNG image bytes |
+| createdAt | text | |
+
+**Unique constraint:** (paperId, filename)
 
 ### paperChunks
 OCR-extracted text chunks from papers, used for embedding and search.

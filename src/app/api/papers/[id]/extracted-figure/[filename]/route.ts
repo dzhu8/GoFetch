@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
-import fs from "fs";
-import path from "path";
+import { extractedFigures } from "@/server/db/schema";
+import { and, eq } from "drizzle-orm";
 
 type RouteParams = { params: Promise<{ id: string; filename: string }> };
 
-// GET /api/papers/[id]/extracted-figure/[filename] — serve an extracted figure PNG
+// GET /api/papers/[id]/extracted-figure/[filename] — serve an extracted figure PNG from DB
 export async function GET(_req: NextRequest, { params }: RouteParams) {
      try {
           const { id, filename } = await params;
@@ -16,30 +14,24 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                return NextResponse.json({ error: "Invalid paper ID" }, { status: 400 });
           }
 
-          // Sanitize filename to prevent path traversal
-          const safeName = path.basename(filename);
-          if (safeName !== filename) {
-               return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
-          }
+          const fig = db
+               .select({ imageData: extractedFigures.imageData })
+               .from(extractedFigures)
+               .where(and(eq(extractedFigures.paperId, paperId), eq(extractedFigures.filename, filename)))
+               .get();
 
-          const paper = db.select().from(papers).where(eq(papers.id, paperId)).get();
-          if (!paper || !paper.filePath) {
-               return NextResponse.json({ error: "Paper not found" }, { status: 404 });
-          }
-
-          // Extracted figures are stored alongside the PDF
-          const pdfDir = path.dirname(paper.filePath);
-          const figPath = path.join(pdfDir, safeName);
-
-          if (!fs.existsSync(figPath)) {
+          if (!fig || !fig.imageData) {
                return NextResponse.json({ error: "Extracted figure not found" }, { status: 404 });
           }
 
-          const fileBuffer = fs.readFileSync(figPath);
-          return new NextResponse(fileBuffer, {
+          const buffer = Buffer.isBuffer(fig.imageData)
+               ? fig.imageData
+               : Buffer.from(fig.imageData as ArrayBuffer);
+
+          return new NextResponse(buffer, {
                headers: {
                     "Content-Type": "image/png",
-                    "Content-Length": String(fileBuffer.length),
+                    "Content-Length": String(buffer.length),
                     "Cache-Control": "public, max-age=86400",
                },
           });

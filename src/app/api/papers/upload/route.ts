@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders, paperFolderLinks, paperChunks } from "@/server/db/schema";
+import { papers, libraryFolders, paperFolderLinks, paperChunks, extractedFigures } from "@/server/db/schema";
 import { and, eq } from "drizzle-orm";
 import { spawn } from "child_process";
 import fs from "fs";
@@ -328,7 +328,7 @@ export async function POST(req: NextRequest) {
 
                          let firstFigurePath: string | null = null;
                          try {
-                              firstFigurePath = await extractFirstFigure(ocrResult, pdfDestPath!, folder.rootPath, sanitizedName);
+                              firstFigurePath = await extractFirstFigure(ocrResult, pdfDestPath!, sanitizedName, paperRow.id);
                          } catch (e) {
                               console.warn("[Paper upload] Could not extract first figure:", e);
                          }
@@ -839,8 +839,8 @@ function locateFigureBbox(ocrResult: any): LocatedFigure | null {
 async function extractFirstFigure(
      ocrResult: any,
      pdfPath: string,
-     folderRoot: string,
      pdfName: string,
+     paperId: number,
 ): Promise<string | null> {
      const located = locateFigureBbox(ocrResult);
      if (!located) return null;
@@ -853,8 +853,8 @@ async function extractFirstFigure(
      const ny1 = bbox.y1 / pageHeight;
 
      const figName = pdfName.replace(/\.pdf$/i, "") + "_fig1.png";
-     const figDestPath = path.join(folderRoot, figName);
      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-fig-"));
+     const tmpFigPath = path.join(tempDir, figName);
 
      // Small Python script: normalised coords → fitz clip → PNG
      const figScript = `
@@ -891,7 +891,7 @@ print("EXTRACTED")
                     "python",
                     [scriptPath, pdfPath, String(pageIndex),
                      String(nx0), String(ny0), String(nx1), String(ny1),
-                     figDestPath],
+                     tmpFigPath],
                     { cwd: tempDir, env: process.env },
                );
                let stdout = "";
@@ -908,7 +908,21 @@ print("EXTRACTED")
                });
           });
 
-          if (result.includes("EXTRACTED") && fs.existsSync(figDestPath)) return figName;
+          if (result.includes("EXTRACTED") && fs.existsSync(tmpFigPath)) {
+               const imageData = fs.readFileSync(tmpFigPath);
+               db.insert(extractedFigures)
+                    .values({
+                         paperId,
+                         filename: figName,
+                         pageIndex,
+                         docOrder: 0,
+                         caption: "",
+                         imageData,
+                    })
+                    .onConflictDoNothing()
+                    .run();
+               return figName;
+          }
           return null;
      } finally {
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}

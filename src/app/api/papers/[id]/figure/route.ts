@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { papers, libraryFolders } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
-import fs from "fs";
-import path from "path";
+import { papers, extractedFigures } from "@/server/db/schema";
+import { and, eq } from "drizzle-orm";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// GET /api/papers/[id]/figure — serve the first figure image
+// GET /api/papers/[id]/figure — serve the first figure image from DB
 export async function GET(_req: NextRequest, { params }: RouteParams) {
      try {
           const { id } = await params;
@@ -16,29 +14,29 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
                return NextResponse.json({ error: "Invalid paper ID" }, { status: 400 });
           }
 
-          const paper = db.select().from(papers).where(eq(papers.id, paperId)).get();
+          const paper = db.select({ firstFigurePath: papers.firstFigurePath }).from(papers).where(eq(papers.id, paperId)).get();
           if (!paper || !paper.firstFigurePath) {
                return NextResponse.json({ error: "Figure not found" }, { status: 404 });
           }
 
-          const folder = db.select().from(libraryFolders).where(eq(libraryFolders.id, paper.folderId)).get();
-          if (!folder) {
-               return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+          const fig = db
+               .select({ imageData: extractedFigures.imageData })
+               .from(extractedFigures)
+               .where(and(eq(extractedFigures.paperId, paperId), eq(extractedFigures.filename, paper.firstFigurePath)))
+               .get();
+
+          if (!fig || !fig.imageData) {
+               return NextResponse.json({ error: "Figure file not found" }, { status: 404 });
           }
 
-          const figPath = path.join(folder.rootPath, paper.firstFigurePath);
-          if (!fs.existsSync(figPath)) {
-               return NextResponse.json({ error: "Figure file not found on disk" }, { status: 404 });
-          }
+          const buffer = Buffer.isBuffer(fig.imageData)
+               ? fig.imageData
+               : Buffer.from(fig.imageData as ArrayBuffer);
 
-          const fileBuffer = fs.readFileSync(figPath);
-          const ext = path.extname(figPath).toLowerCase();
-          const mimeType = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
-
-          return new NextResponse(fileBuffer, {
+          return new NextResponse(buffer, {
                headers: {
-                    "Content-Type": mimeType,
-                    "Content-Length": String(fileBuffer.length),
+                    "Content-Type": "image/png",
+                    "Content-Length": String(buffer.length),
                     "Cache-Control": "no-cache",
                },
           });

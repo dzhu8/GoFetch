@@ -290,6 +290,32 @@ export const paperSections = sqliteTable(
      })
 );
 
+// ── Extracted figures (blob storage) ─────────────────────────────────────────
+
+export const extractedFigures = sqliteTable(
+     "extracted_figures",
+     {
+          id: integer("id").primaryKey(),
+          paperId: integer("paper_id")
+               .notNull()
+               .references(() => papers.id, { onDelete: "cascade" }),
+          filename: text("filename").notNull(),
+          pageIndex: integer("page_index").notNull(),
+          docOrder: integer("doc_order").notNull(),
+          caption: text("caption").notNull().default(""),
+          imageData: blob("image_data").notNull(),
+          createdAt: text("created_at")
+               .notNull()
+               .default(sql`CURRENT_TIMESTAMP`),
+     },
+     (table) => ({
+          paperFilenameIdx: uniqueIndex("extracted_figures_paper_filename_idx").on(
+               table.paperId,
+               table.filename,
+          ),
+     })
+);
+
 export const academicSearches = sqliteTable("academic_searches", {
      id: integer("id").primaryKey(),
      chatId: text("chat_id").notNull(),

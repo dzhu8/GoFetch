@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/server/db";
-import { libraryFolders, papers } from "@/server/db/schema";
+import { libraryFolders, papers, extractedFigures } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { spawn } from "child_process";
 import fs from "fs";
@@ -304,7 +304,7 @@ export async function POST(req: NextRequest) {
                                    // Look for figure
                                    let firstFigurePath: string | null = null;
                                    try {
-                                        firstFigurePath = await extractFirstFigure(ocrResult, filePath, targetDir, fileName);
+                                        firstFigurePath = await extractFirstFigure(ocrResult, filePath, fileName, paperId);
                                    } catch (e) {
                                         console.warn("[CLI Library POST] Figure extraction failed:", e);
                                    }
@@ -557,8 +557,8 @@ function locateFigureBbox(ocrResult: any): LocatedFigure | null {
 async function extractFirstFigure(
      ocrResult: any,
      pdfPath: string,
-     folderRoot: string,
-     pdfName: string
+     pdfName: string,
+     paperId: number,
 ): Promise<string | null> {
      const located = locateFigureBbox(ocrResult);
      if (!located) return null;
@@ -570,8 +570,8 @@ async function extractFirstFigure(
      const ny1 = bbox.y1 / pageHeight;
 
      const figName = pdfName.replace(/\.pdf$/i, "") + "_fig1.png";
-     const figDestPath = path.join(folderRoot, figName);
      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-fig-"));
+     const tmpFigPath = path.join(tempDir, figName);
 
      const figScript = `
 import fitz, sys
@@ -597,7 +597,7 @@ page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), clip=clip).save(sys.argv[7]); prin
                          String(ny0),
                          String(nx1),
                          String(ny1),
-                         figDestPath,
+                         tmpFigPath,
                     ],
                     { cwd: tempDir, env: process.env }
                );
@@ -607,7 +607,22 @@ page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), clip=clip).save(sys.argv[7]); prin
                     code === 0 ? resolve(stdout) : reject(new Error(`Exit ${code}`))
                );
           });
-          return result.includes("EXTRACTED") && fs.existsSync(figDestPath) ? figName : null;
+          if (result.includes("EXTRACTED") && fs.existsSync(tmpFigPath)) {
+               const imageData = fs.readFileSync(tmpFigPath);
+               db.insert(extractedFigures)
+                    .values({
+                         paperId,
+                         filename: figName,
+                         pageIndex,
+                         docOrder: 0,
+                         caption: "",
+                         imageData,
+                    })
+                    .onConflictDoNothing()
+                    .run();
+               return figName;
+          }
+          return null;
      } finally {
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
      }

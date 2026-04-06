@@ -5,6 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import configManager from "@/server/index";
+import db from "@/server/db";
+import { extractedFigures } from "@/server/db/schema";
+import { and, eq } from "drizzle-orm";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,31 +99,44 @@ function clusterBboxes(boxes: BBox[], margin: number, vertGap: number): BBox[][]
 
 /**
  * Batch-extract multiple figure regions from a single PDF.
- * Spawns one Python process for all regions. Caches PNGs alongside the PDF.
+ * Spawns one Python process for all regions. Stores PNGs as blobs in SQLite.
  */
 async function extractFigureRegions(
      pdfPath: string,
      regions: FigureRegion[],
+     paperId: number,
 ): Promise<ExtractedFigure[]> {
-     const pdfDir = path.dirname(pdfPath);
      const pdfBasename = path.basename(pdfPath, path.extname(pdfPath));
      const results: ExtractedFigure[] = [];
 
-     // Build extraction jobs, skipping already-cached figures
-     const jobs: { region: FigureRegion; filename: string; destPath: string }[] = [];
+     // Build extraction jobs, skipping already-cached figures (check DB)
+     const jobs: { region: FigureRegion; filename: string; tmpPath: string }[] = [];
      for (let i = 0; i < regions.length; i++) {
           const r = regions[i];
           const filename = `${pdfBasename}_extracted_p${r.pageIndex}_f${i}.png`;
-          const destPath = path.join(pdfDir, filename);
 
-          if (fs.existsSync(destPath)) {
+          const cached = db
+               .select({ id: extractedFigures.id })
+               .from(extractedFigures)
+               .where(and(eq(extractedFigures.paperId, paperId), eq(extractedFigures.filename, filename)))
+               .get();
+
+          if (cached) {
                results.push({ filename, caption: r.caption, docOrder: r.docOrder });
           } else {
-               jobs.push({ region: r, filename, destPath });
+               jobs.push({ region: r, filename, tmpPath: "" }); // tmpPath set below
           }
      }
 
      if (jobs.length === 0) return results;
+
+     // Extract to a temp directory, then read bytes into DB
+     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-fig-batch-"));
+
+     // Assign temp output paths
+     for (const job of jobs) {
+          job.tmpPath = path.join(tempDir, job.filename);
+     }
 
      // Build a JSON manifest of regions to extract
      const manifest = jobs.map((j) => ({
@@ -129,7 +145,7 @@ async function extractFigureRegions(
           ny0: j.region.bbox.y0 / j.region.pageHeight,
           nx1: j.region.bbox.x1 / j.region.pageWidth,
           ny1: j.region.bbox.y1 / j.region.pageHeight,
-          out: j.destPath,
+          out: j.tmpPath,
      }));
 
      const pythonScript = `
@@ -156,7 +172,6 @@ for item in manifest:
 print("EXTRACTED_ALL")
 `.trimStart();
 
-     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gofetch-fig-batch-"));
      const scriptPath = path.join(tempDir, "batch_crop.py");
      fs.writeFileSync(scriptPath, pythonScript);
 
@@ -179,18 +194,30 @@ print("EXTRACTED_ALL")
           });
      } catch (err) {
           console.error("[PaperReconstructor] Figure extraction failed:", err);
-          // Return whatever we have cached; skip failed extractions
           return results;
-     } finally {
-          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
      }
 
-     // Collect successfully extracted files
+     // Read extracted PNGs and store as blobs in DB
      for (const job of jobs) {
-          if (fs.existsSync(job.destPath)) {
+          if (fs.existsSync(job.tmpPath)) {
+               const imageData = fs.readFileSync(job.tmpPath);
+               db.insert(extractedFigures)
+                    .values({
+                         paperId,
+                         filename: job.filename,
+                         pageIndex: job.region.pageIndex,
+                         docOrder: job.region.docOrder,
+                         caption: job.region.caption,
+                         imageData,
+                    })
+                    .onConflictDoNothing()
+                    .run();
                results.push({ filename: job.filename, caption: job.region.caption, docOrder: job.region.docOrder });
           }
      }
+
+     // Clean up temp directory
+     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
 
      return results;
 }
@@ -308,10 +335,10 @@ export class PaperReconstructor {
           }
 
           // Extract all figures in one batch
-          const extractedFigures = await extractFigureRegions(this.pdfPath, figureRegions);
+          const extractedFigs = await extractFigureRegions(this.pdfPath, figureRegions, this.paperId);
 
           // Insert extracted figures into the parts array
-          for (const fig of extractedFigures) {
+          for (const fig of extractedFigs) {
                const imgUrl = `/api/papers/${this.paperId}/extracted-figure/${encodeURIComponent(fig.filename)}`;
                let md = `\n![${fig.caption || "Figure"}](${imgUrl})\n`;
                if (fig.caption) {
@@ -429,10 +456,10 @@ export class PaperReconstructor {
           }
 
           // Extract figures
-          const extractedFigures = await extractFigureRegions(this.pdfPath, figureRegions);
+          const extractedFigs = await extractFigureRegions(this.pdfPath, figureRegions, this.paperId);
 
           // Insert figures into mainText for inline rendering (same as reconstruct())
-          for (const fig of extractedFigures) {
+          for (const fig of extractedFigs) {
                const imgUrl = `/api/papers/${this.paperId}/extracted-figure/${encodeURIComponent(fig.filename)}`;
                let md = `\n![${fig.caption || "Figure"}](${imgUrl})\n`;
                if (fig.caption) {
@@ -460,7 +487,7 @@ export class PaperReconstructor {
           }
 
           // Build figures list
-          const figures: FigureEntry[] = extractedFigures.map((fig) => {
+          const figures: FigureEntry[] = extractedFigs.map((fig) => {
                const region = figureRegions.find((r) => r.docOrder === fig.docOrder);
                return {
                     filename: fig.filename,

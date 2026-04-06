@@ -49,6 +49,18 @@ sqlite.exec(`
           created_at     INTEGER NOT NULL,
           PRIMARY KEY (s2_paper_id, rank_method)
      );
+
+     CREATE TABLE IF NOT EXISTS extracted_figures (
+          id          INTEGER PRIMARY KEY,
+          paper_id    INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+          filename    TEXT    NOT NULL,
+          page_index  INTEGER NOT NULL,
+          doc_order   INTEGER NOT NULL,
+          caption     TEXT    NOT NULL DEFAULT '',
+          image_data  BLOB    NOT NULL,
+          created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(paper_id, filename)
+     );
 `);
 
 // Add depth column to related_papers if it doesn't exist yet (idempotent).
