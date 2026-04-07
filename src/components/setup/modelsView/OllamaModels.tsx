@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Download, Loader2, Star } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Download, Loader2, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { getOllamaModels } from "@/lib/actions/ollama";
+import { getOllamaModels, deleteOllamaModel } from "@/lib/actions/ollama";
 import { getProviders, updateProvider } from "@/lib/actions/providers";
 
 interface OllamaModel {
@@ -60,6 +60,7 @@ const OllamaModels = ({
      const [downloadProgress, setDownloadProgress] = useState<DownloadProgress>({});
      const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({});
      const [updatingModels, setUpdatingModels] = useState<Set<string>>(new Set());
+     const [deletingModels, setDeletingModels] = useState<Set<string>>(new Set());
 
      const resolvedBaseUrl = (ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL).trim();
 
@@ -271,6 +272,34 @@ const OllamaModels = ({
           }
      };
 
+     const handleDelete = async (modelName: string) => {
+          try {
+               setDeletingModels((prev) => new Set(prev).add(modelName));
+
+               const result = await deleteOllamaModel(modelName, providerId, resolvedBaseUrl);
+
+               if (result.error) {
+                    throw new Error(result.error);
+               }
+
+               toast.success(`${modelName} uninstalled successfully`);
+               await fetchModels();
+
+               if (onModelUpdate) {
+                    onModelUpdate();
+               }
+          } catch (error) {
+               console.error("Error deleting model:", error);
+               toast.error(error instanceof Error ? error.message : "Failed to uninstall model");
+          } finally {
+               setDeletingModels((prev) => {
+                    const next = new Set(prev);
+                    next.delete(modelName);
+                    return next;
+               });
+          }
+     };
+
      if (isLoading) {
           return (
                <div className="flex items-center justify-center py-8 md:py-12">
@@ -323,6 +352,7 @@ const OllamaModels = ({
                                    <div className="px-4 pb-4 space-y-3">
                                         {modelsInFamily.map((model) => {
                                              const isDownloading = downloadingModels.has(model.name);
+                                             const isDeleting = deletingModels.has(model.name);
                                              const progress = downloadProgress[model.name];
                                              const isInstalled = model.installed;
                                              const isChatUpdating = updatingModels.has(`${model.name}-chat`);
@@ -355,10 +385,24 @@ const OllamaModels = ({
                                                                  </div>
                                                                  <div className="w-full md:w-auto">
                                                                       {isInstalled ? (
-                                                                           <div className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-light-200 dark:bg-dark-200 text-xs text-black/70 dark:text-black/70">
-                                                                                <Check className="w-4 h-4" />
-                                                                                Installed
-                                                                           </div>
+                                                                           <button
+                                                                                type="button"
+                                                                                onClick={() => handleDelete(model.name)}
+                                                                                disabled={isDeleting}
+                                                                                className="w-full md:w-auto flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-light-200 dark:bg-dark-200 text-xs text-black/70 dark:text-white/70 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                                                                           >
+                                                                                {isDeleting ? (
+                                                                                     <>
+                                                                                          <Loader2 className="w-4 h-4 animate-spin" />
+                                                                                          Uninstalling...
+                                                                                     </>
+                                                                                ) : (
+                                                                                     <>
+                                                                                          <Trash2 className="w-4 h-4" />
+                                                                                          Uninstall
+                                                                                     </>
+                                                                                )}
+                                                                           </button>
                                                                       ) : isDownloading && progress ? (
                                                                            <div className="w-full md:w-48">
                                                                                 <div className="w-full bg-gray-200 rounded-full h-2">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, Download, Loader2, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2, Star, Trash2 } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
@@ -32,7 +32,9 @@ interface ModelFamilyGroupProps {
      models: ModelRow[];
      providerId: string;
      onDownload: (model: ModelRow) => void;
+     onDelete?: (model: ModelRow) => void;
      downloadingMap: Record<string, boolean>;
+     deletingMap?: Record<string, boolean>;
      downloadProgressMap: Record<string, DownloadProgressState>;
      onTest: (model: ModelRow) => void;
 }
@@ -73,7 +75,9 @@ const ModelFamilyGroup = ({
      models,
      providerId,
      onDownload,
+     onDelete,
      downloadingMap,
+     deletingMap = {},
      downloadProgressMap,
      onTest,
 }: ModelFamilyGroupProps) => {
@@ -138,6 +142,7 @@ const ModelFamilyGroup = ({
                          {models.map((model) => {
                               const rowKey = `${providerId}:${model.key}`;
                               const isDownloading = Boolean(downloadingMap[rowKey]);
+                              const isDeleting = Boolean(deletingMap[rowKey]);
                               const progress = downloadProgressMap[rowKey];
 
                               return (
@@ -227,7 +232,28 @@ const ModelFamilyGroup = ({
                                                   </div>
                                              ) : model.action === "download" ? (
                                                   <>
-                                                       {!model.installed && (
+                                                       {model.installed ? (
+                                                            onDelete && (
+                                                                 <button
+                                                                      type="button"
+                                                                      onClick={() => onDelete(model)}
+                                                                      disabled={isDeleting}
+                                                                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-light-200 dark:border-dark-200 text-xs text-black/60 dark:text-white/60 hover:bg-red-100 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-900/30 dark:hover:text-red-400 dark:hover:border-red-900/40 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                                                                 >
+                                                                      {isDeleting ? (
+                                                                           <>
+                                                                                <Loader2 size={14} className="animate-spin" />
+                                                                                Uninstalling...
+                                                                           </>
+                                                                      ) : (
+                                                                           <>
+                                                                                <Trash2 size={14} />
+                                                                                Uninstall
+                                                                           </>
+                                                                      )}
+                                                                 </button>
+                                                            )
+                                                       ) : (
                                                             <button
                                                                  type="button"
                                                                  onClick={() => onDownload(model)}

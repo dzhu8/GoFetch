@@ -1,5 +1,5 @@
 import { ChatOllama, OllamaEmbeddings } from "@langchain/ollama";
-import { ConfigModelProvider, Model } from "@/lib/models/types";
+import { ConfigModelProvider, Model, ModelList } from "@/lib/models/types";
 import { BaseModelProvider, ProviderModelMetadata } from "./BaseModelProvider";
 import { listOllamaModels, OllamaTag } from "../ollamaClient";
 
@@ -40,7 +40,7 @@ function inferFamily(tag: OllamaTag): ModelFamily {
      return inferOllamaFamilyFromName(tag.name);
 }
 
-const RECOMMENDED_KEYWORDS = ["qwen3-embedding:8b", "gpt-oss:20b", "gemma3:27b"];
+const RECOMMENDED_KEYWORDS = ["qwen3-embedding:8b", "gemma4:31b"];
 
 export function isRecommendedOllamaModel(name: string): boolean {
      const lower = name.toLowerCase();
@@ -161,6 +161,29 @@ export class OllamaProvider extends BaseModelProvider<ChatOllama, OllamaEmbeddin
                model: modelKey,
                baseUrl: baseUrl ?? DEFAULT_OLLAMA_URL,
           });
+     }
+
+     /**
+      * Filter registered models against what is actually installed in Ollama
+      * so that deleted models disappear from dropdowns on next refresh.
+      */
+     async getModelList(): Promise<ModelList> {
+          let installedNames: Set<string>;
+          try {
+               const tags = await listOllamaModels();
+               installedNames = new Set(tags.map((t) => t.name));
+          } catch {
+               // Ollama unreachable — fall back to config as-is
+               return super.getModelList();
+          }
+
+          const isInstalled = (m: Model) => installedNames.has(m.key);
+
+          return {
+               chat: this.getAvailableChatModels().filter(isInstalled),
+               embedding: this.getAvailableEmbeddingModels().filter(isInstalled),
+               ocr: this.getAvailableOCRModels().filter(isInstalled),
+          };
      }
 
      getModelMetadata(modelKey: string): ProviderModelMetadata | undefined {

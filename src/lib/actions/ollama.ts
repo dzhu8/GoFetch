@@ -2,6 +2,7 @@
 
 import { inferOllamaFamilyFromName, isRecommendedOllamaModel } from "@/lib/models/providers/OllamaProvider";
 import type { OllamaTag } from "@/lib/models/ollamaClient";
+import type { ConfigModelProvider } from "@/lib/models/types";
 import modelRegistry from "@/server/providerRegistry";
 
 const formatSize = (bytes: number): string => {
@@ -62,7 +63,7 @@ const AVAILABLE_MODELS = [
           contextWindow: 131072, // 128K
           description: "Meta's Llama 3.1 8B model - balanced performance",
           family: "Llama",
-          recommended: true,
+          recommended: false,
      },
      {
           name: "llama3.3:70b",
@@ -117,6 +118,14 @@ const AVAILABLE_MODELS = [
           size: "16 GB",
           contextWindow: 131072, // 128K
           description: "Google's Gemma 3 27B - high-end performance",
+          family: "Gemma",
+          recommended: false,
+     },
+     {
+          name: "gemma4:31b",
+          size: "20 GB",
+          contextwindow: 262144, // 256K
+          description: "Google's Gemma 4 31B - state-of-the-art capabilities",
           family: "Gemma",
           recommended: true,
      },
@@ -190,7 +199,7 @@ const AVAILABLE_MODELS = [
           contextWindow: 131072, // 128K
           description: "Open-source GPT 20B - versatile general-purpose model",
           family: "GPT-OSS",
-          recommended: true,
+          recommended: false,
      },
      {
           name: "gpt-oss:120b",
@@ -421,5 +430,48 @@ export async function getOllamaModels(baseURL?: string, providerId?: string) {
      } catch (error) {
           console.error("Error fetching Ollama models:", error);
           return { error: error instanceof Error ? error.message : "Failed to fetch models" };
+     }
+}
+
+// ── DELETE /api/ollama/delete ─────────────────────────────────────────
+
+export async function deleteOllamaModel(modelName: string, providerId?: string, baseURL?: string) {
+     const resolvedBaseURL = (baseURL ?? "http://127.0.0.1:11434").trim().replace(/\/$/, "");
+
+     try {
+          // 1. Delete from Ollama
+          const res = await fetch(`${resolvedBaseURL}/api/delete`, {
+               method: "DELETE",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({ model: modelName }),
+          });
+
+          if (!res.ok) {
+               const text = await res.text();
+               throw new Error(text || "Ollama failed to delete the model");
+          }
+
+          // 2. Deregister from provider config so dropdowns update immediately
+          if (providerId) {
+               const provider = modelRegistry.getProviderById(providerId);
+               if (provider) {
+                    const chatModels = (provider.chatModels ?? []).filter((m) => m.key !== modelName);
+                    const embeddingModels = (provider.embeddingModels ?? []).filter((m) => m.key !== modelName);
+                    const ocrModels = (provider.ocrModels ?? []).filter((m) => m.key !== modelName);
+
+                    const { provider: _instance, ...config } = provider;
+                    modelRegistry.updateProvider({
+                         ...config,
+                         chatModels,
+                         embeddingModels,
+                         ocrModels,
+                    } as ConfigModelProvider);
+               }
+          }
+
+          return { success: true };
+     } catch (error) {
+          console.error("Error deleting Ollama model:", error);
+          return { error: error instanceof Error ? error.message : "Failed to delete model" };
      }
 }

@@ -26,7 +26,7 @@ import AddProvider from "@/components/models/AddProvider";
 import type { ModelProviderUISection } from "@/lib/config/types";
 import { getConfig } from "@/lib/actions/config";
 import { getProviders, addProvider, updateProvider, deleteProvider, getProviderModels } from "@/lib/actions/providers";
-import { getOllamaModels } from "@/lib/actions/ollama";
+import { getOllamaModels, deleteOllamaModel } from "@/lib/actions/ollama";
 import { getPaddleOCRModels } from "@/lib/actions/paddleocr";
 import { testEmbedding } from "@/lib/actions/test-embedding";
 
@@ -121,6 +121,7 @@ const ModelsPage = () => {
      const [errorMessage, setErrorMessage] = useState<string | null>(null);
      const [downloadingMap, setDownloadingMap] = useState<Record<string, boolean>>({});
      const [downloadProgressMap, setDownloadProgressMap] = useState<Record<string, DownloadProgressState>>({});
+     const [deletingMap, setDeletingMap] = useState<Record<string, boolean>>({});
      const [installLogMap, setInstallLogMap] = useState<Record<string, string>>({});
      const [cudaError, setCudaError] = useState<string | null>(null);
      const [activeTestConfig, setActiveTestConfig] = useState<TestModalConfig | null>(null);
@@ -569,6 +570,40 @@ const ModelsPage = () => {
           [loadModelsForProvider, providerLookup, registerModelWithProvider]
      );
 
+     const handleDeleteModel = useCallback(
+          async (providerId: string, model: NormalizedModelRow) => {
+               const provider = providerLookup.get(providerId);
+               if (!provider) {
+                    toast.error("Provider not found. Please refresh and try again.");
+                    return;
+               }
+
+               const key = `${providerId}:${model.key}`;
+               setDeletingMap((prev) => ({ ...prev, [key]: true }));
+
+               try {
+                    const result = await deleteOllamaModel(model.key, providerId);
+
+                    if (result.error) {
+                         throw new Error(result.error);
+                    }
+
+                    toast.success(`${model.displayName} uninstalled successfully`);
+                    await loadModelsForProvider(provider, { suppressSpinner: true });
+               } catch (error) {
+                    console.error("Delete failed", error);
+                    toast.error(error instanceof Error ? error.message : "Failed to uninstall model");
+               } finally {
+                    setDeletingMap((prev) => {
+                         const next = { ...prev };
+                         delete next[key];
+                         return next;
+                    });
+               }
+          },
+          [loadModelsForProvider, providerLookup]
+     );
+
      const openTestModal = useCallback((provider: MinimalProvider, model: NormalizedModelRow) => {
           setActiveTestConfig({
                providerId: provider.id,
@@ -678,7 +713,9 @@ const ModelsPage = () => {
                                         models={familyModels}
                                         providerId={provider.id}
                                         onDownload={(m) => handleDownload(provider.id, m)}
+                                        onDelete={provider.type === "ollama" ? (m) => handleDeleteModel(provider.id, m) : undefined}
                                         downloadingMap={downloadingMap}
+                                        deletingMap={deletingMap}
                                         downloadProgressMap={downloadProgressMap}
                                         onTest={(m) => openTestModal(provider, m)}
                                    />

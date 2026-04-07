@@ -454,6 +454,10 @@ Extends `BaseModelProvider<ChatOllama, OllamaEmbeddings>` (from `@langchain/olla
 
 **`loadChatModel`** -> `ChatOllama`, **`loadEmbeddingModel`** -> `OllamaEmbeddings`, **`loadOCRModel`** -> `ChatOllama` (vision model for OCR). All with baseUrl from config.
 
+**`getModelList()` (override)** -- Queries the local Ollama server (`/api/tags`) and filters registered chat/embedding/OCR models against actually installed models. This ensures deleted or externally removed models are pruned from all downstream consumers (settings dropdowns, chat model selector, library search modal, etc.) on the next data fetch. Falls back to the base implementation if Ollama is unreachable.
+
+**Model deletion** -- `deleteOllamaModel()` server action (in `actions/ollama.ts`) handles full model removal: calls Ollama `DELETE /api/delete`, then deregisters the model from the provider's `chatModels`/`embeddingModels`/`ocrModels` via `modelRegistry.updateProvider()`. This persists to disk config, so the model disappears from all dropdowns and preference resolution on next refresh. `resolveModelPreference()` auto-falls-back to the first remaining model if the deleted model was the active preference.
+
 ### PaddleOCR Provider (`PaddleOCRProvider.ts`)
 
 OCR-only. Single curated model: `PaddleOCR-VL` (requires GPU/CUDA). `loadOCRModel()` returns lightweight `{ modelKey, providerType: "paddleocr" }` (signals configuration, doesn't instantiate native code). Chat and embedding methods throw.

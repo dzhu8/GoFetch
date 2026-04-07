@@ -123,13 +123,13 @@ The chunking pipeline is entirely server-side. It is consumed by `embed/initial.
 
 **[ModelSelect.tsx](../src/components/setup/modelsView/ModelSelect.tsx)** — Setup-phase model selector for default chat/embedding models. Imports `models/types`, `models/modelPreference`, `chat/Chat`.
 
-**[OllamaModels.tsx](../src/components/setup/modelsView/OllamaModels.tsx)** — Displays locally available Ollama models grouped by family with download progress and chat/embedding toggles. Uses `actions/ollama` and `actions/providers`.
+**[OllamaModels.tsx](../src/components/setup/modelsView/OllamaModels.tsx)** — Displays locally available Ollama models grouped by family with download progress, chat/embedding toggles, and per-model uninstall. Uses `actions/ollama` (including `deleteOllamaModel`) and `actions/providers`.
 
-**[ModelFamilyGroup.tsx](../src/components/setup/modelsView/ModelFamilyGroup.tsx)** — Collapsible model family group (Llama, Qwen, Gemma, etc.) with family-specific icons/colors, download actions, and embedding test support. Also used on the Models page.
+**[ModelFamilyGroup.tsx](../src/components/setup/modelsView/ModelFamilyGroup.tsx)** — Collapsible model family group (Llama, Qwen, Gemma, etc.) with family-specific icons/colors, download/uninstall actions, and embedding test support. Accepts `onDelete`/`deletingMap` props to show an Uninstall button (with spinner) for installed downloadable models. Also used on the Models page.
 
 **[AddProvider.tsx](../src/components/models/AddProvider.tsx)** — Dialog for adding new model provider connections. Dynamically renders config fields based on provider type from `config/types`. Uses `actions/providers`.
 
-**Models page** ([models/page.tsx](../src/app/models/page.tsx)) — Lists all providers and their models (chat, embedding, OCR) with metadata (size, context window, pricing). Supports adding/updating/deleting providers, downloading Ollama models, and testing embeddings via a sample-text modal.
+**Models page** ([models/page.tsx](../src/app/models/page.tsx)) — Lists all providers and their models (chat, embedding, OCR) with metadata (size, context window, pricing). Supports adding/updating/deleting providers, downloading/uninstalling Ollama models, and testing embeddings via a sample-text modal. Uninstalling a model calls `deleteOllamaModel()` which removes it from both Ollama and the provider registry, so it disappears from all downstream dropdowns on next data fetch.
 
 ---
 
