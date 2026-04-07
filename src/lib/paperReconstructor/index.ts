@@ -46,6 +46,7 @@ export interface ReconstructedSections {
      mainText: string;
      methods: string | null;
      references: string;
+     figureCaptions: string;
      figures: FigureEntry[];
 }
 
@@ -373,6 +374,7 @@ export class PaperReconstructor {
      async reconstructSections(): Promise<ReconstructedSections> {
           const mainParts: { docOrder: number; markdown: string }[] = [];
           const methodsParts: { docOrder: number; markdown: string }[] = [];
+          const figureCaptionParts: { docOrder: number; markdown: string }[] = [];
           const figureRegions: FigureRegion[] = [];
 
           let inMethodsSection = false;
@@ -438,9 +440,9 @@ export class PaperReconstructor {
                     if (inReferencesSection) continue;
                     if (block.block_label === "reference_content") continue;
 
-                    // Figure captions always go to mainText (duplicated in figures section too)
+                    // Figure captions go to their own section (separate from mainText)
                     if (block.block_label === "figure_title" && content) {
-                         mainParts.push({ docOrder, markdown: `\n*${content}*\n` });
+                         figureCaptionParts.push({ docOrder, markdown: `\n*${content}*\n` });
                          continue;
                     }
 
@@ -479,6 +481,10 @@ export class PaperReconstructor {
                methods = methodsParts.map((p) => p.markdown).join("\n");
           }
 
+          // Build figure captions
+          figureCaptionParts.sort((a, b) => a.docOrder - b.docOrder);
+          const figureCaptions = figureCaptionParts.map((p) => p.markdown).join("\n");
+
           // Build references
           const refs = parseReferences(this.ocrDoc);
           let references = "";
@@ -497,7 +503,7 @@ export class PaperReconstructor {
                };
           });
 
-          return { mainText, methods, references, figures };
+          return { mainText, methods, references, figureCaptions, figures };
      }
 
      /**

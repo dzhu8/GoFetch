@@ -28,6 +28,7 @@ Each OCR JSON paper contains an array of pages, each with a \`parsing_res_list\`
 ### Formatting
 - Start directly with the answer — do not include a top-level title.
 - Use Markdown for clarity (bold, headings, bullet points).
+- You MUST wrap your entire final answer in <output></output> tags. Everything before <output> is internal reasoning and will not be shown to the user.
 
 ${systemInstructions ? `### User Instructions\n${systemInstructions}\n` : ""}
 
@@ -52,8 +53,6 @@ ${reconstructedText}
 
 **Task:** Reorganize the paper text above into clearly labeled sections for each figure.
 
-**Standard sections:** Preserve the existing section structure (Introduction, Results, Discussion, Conclusion, Methods, etc.) with their headers. Reproduce the text within each section faithfully.
-
 **Figure sections:** Scan the body text for all passages that reference or discuss specific figures (e.g. "Figure 1", "Figure 1A", "Fig. 2B", "Figures 3 and 4", "Figure S1", etc.). For each distinct figure number, create a subsection headed "### Figure 1", "### Figure 2", etc. Under each, collect all text passages from the paper that describe, analyze, or discuss that figure. Include enough surrounding context for each passage to be understandable on its own. If a passage discusses multiple figures, include it under each relevant figure subsection. Order figure subsections numerically.
 
 **Rules:**
@@ -61,4 +60,5 @@ ${reconstructedText}
 - Do not fabricate content — only reorganize and excerpt text that is present.
 - Preserve Markdown formatting (bold, headers, formulas, image links, tables).
 - If a paper has no figure references in its text, omit the Figure Descriptions section for that paper.
-- Keep each paper's header line (## [Paper N] ...) intact.`;
+- Keep each paper's header line (## [Paper N] ...) intact.
+- You MUST wrap your entire final output in <output></output> tags. Everything before <output> is internal reasoning and will not be shown to the user.`;

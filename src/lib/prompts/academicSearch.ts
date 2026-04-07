@@ -61,6 +61,7 @@ Your answer must be:
 - Start directly with the introduction — do not include a top-level title.
 - Conclude with a brief synthesis or "Takeaways" section that summarizes key findings.
 - Use Markdown for clarity (bold, italics, headings, bullet points).
+- You MUST wrap your entire final answer in <output></output> tags. Everything before <output> is internal reasoning and will not be shown to the user.
 
 ### Special Cases
 - If the query involves technical, historical, or complex topics, include detailed background and explanatory sections.

@@ -275,7 +275,7 @@ export const paperSections = sqliteTable(
                .notNull()
                .references(() => papers.id, { onDelete: "cascade" }),
           sectionType: text("section_type", {
-               enum: ["main_text", "methods", "references", "figures"],
+               enum: ["main_text", "methods", "references", "figure_captions", "figures"],
           }).notNull(),
           content: text("content").notNull(),
           createdAt: text("created_at")

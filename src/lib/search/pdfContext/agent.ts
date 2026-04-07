@@ -1,7 +1,7 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
 import EventEmitter from "events";
-import { eq, and, inArray } from "drizzle-orm";
+import { and, inArray, or, eq } from "drizzle-orm";
 import db from "@/server/db";
 import { papers, paperSections } from "@/server/db/schema";
 import { getPdfOrganizerPrompt } from "@/lib/prompts/pdfContext";
@@ -49,32 +49,44 @@ export class PdfContextAgent {
                const sections = db
                     .select({
                          paperId: paperSections.paperId,
+                         sectionType: paperSections.sectionType,
                          content: paperSections.content,
                     })
                     .from(paperSections)
                     .where(
                          and(
                               inArray(paperSections.paperId, paperIds),
-                              eq(paperSections.sectionType, "main_text"),
+                              or(
+                                   eq(paperSections.sectionType, "main_text"),
+                                   eq(paperSections.sectionType, "figure_captions"),
+                              ),
                          ),
                     )
                     .all();
 
-               console.log("[pdfContext] Found %d main_text section(s)", sections.length);
+               console.log("[pdfContext] Found %d section(s) (main_text + figure_captions)", sections.length);
 
-               const contentByPaper = new Map<number, string>();
+               const mainTextByPaper = new Map<number, string>();
+               const captionsByPaper = new Map<number, string>();
                for (const s of sections) {
-                    contentByPaper.set(s.paperId, s.content);
+                    if (s.sectionType === "main_text") {
+                         mainTextByPaper.set(s.paperId, s.content);
+                    } else if (s.sectionType === "figure_captions") {
+                         captionsByPaper.set(s.paperId, s.content);
+                    }
                }
 
                // Build combined reconstructed text with paper headers
                const reconstructedParts: string[] = [];
                for (const paper of paperRows) {
-                    const mainText = contentByPaper.get(paper.id);
+                    const mainText = mainTextByPaper.get(paper.id);
                     if (mainText) {
-                         reconstructedParts.push(
-                              `## [Paper ${paper.id}] ${paper.title || paper.fileName}\n\n${mainText}`,
-                         );
+                         const captions = captionsByPaper.get(paper.id);
+                         let combined = `## [Paper ${paper.id}] ${paper.title || paper.fileName}\n\n${mainText}`;
+                         if (captions) {
+                              combined += `\n\n### Figure Captions\n\n${captions}`;
+                         }
+                         reconstructedParts.push(combined);
                     }
                }
 
@@ -94,36 +106,66 @@ export class PdfContextAgent {
 
                // Emit sources (paper metadata)
                const sources = paperRows
-                    .filter((p) => contentByPaper.has(p.id))
+                    .filter((p) => mainTextByPaper.has(p.id))
                     .map((p) => ({
-                         pageContent: contentByPaper.get(p.id)!.slice(0, 200),
+                         pageContent: mainTextByPaper.get(p.id)!.slice(0, 200),
                          metadata: { title: p.title || p.fileName, paperId: p.id },
                     }));
                emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
 
-               // Use organizer prompt to reorganize text by figures
+               // DEBUG: dump raw reconstruction to the client instead of calling the LLM
                emitter.emit(
                     "data",
-                    JSON.stringify({
-                         type: "status",
-                         data: { stage: "generating", message: "Organizing figure descriptions..." },
-                    }),
+                    JSON.stringify({ type: "response", data: reconstructedText }),
                );
 
-               const organizerPrompt = getPdfOrganizerPrompt(reconstructedText);
-               console.log("[pdfContext] Organizer prompt length: %d chars", organizerPrompt.length);
+               // // Use organizer prompt to reorganize text by figures
+               // emitter.emit(
+               //      "data",
+               //      JSON.stringify({
+               //           type: "status",
+               //           data: { stage: "generating", message: "Organizing figure descriptions..." },
+               //      }),
+               // );
 
-               const llmStream = await llm.stream([
-                    new SystemMessage(organizerPrompt),
-                    new HumanMessage("Reorganize the paper text above according to the instructions."),
-               ]);
+               // const organizerPrompt = getPdfOrganizerPrompt(reconstructedText);
+               // console.log("[pdfContext] Organizer prompt length: %d chars", organizerPrompt.length);
 
-               for await (const chunk of llmStream) {
-                    const text = typeof chunk.content === "string" ? chunk.content : "";
-                    if (text) {
-                         emitter.emit("data", JSON.stringify({ type: "response", data: text }));
-                    }
-               }
+               // const llmStream = await llm.stream([
+               //      new SystemMessage(organizerPrompt),
+               //      new HumanMessage("Reorganize the paper text above according to the instructions."),
+               // ]);
+
+               // let outputStarted = false;
+               // let buffer = "";
+               // for await (const chunk of llmStream) {
+               //      const text = typeof chunk.content === "string" ? chunk.content : "";
+               //      if (!text) continue;
+
+               //      if (outputStarted) {
+               //           buffer += text;
+               //           const endIdx = buffer.indexOf("</output>");
+               //           if (endIdx !== -1) {
+               //                const finalText = buffer.slice(0, endIdx);
+               //                if (finalText) {
+               //                     emitter.emit("data", JSON.stringify({ type: "response", data: finalText }));
+               //                }
+               //                break;
+               //           }
+               //           const safe = buffer.length - "</output>".length;
+               //           if (safe > 0) {
+               //                emitter.emit("data", JSON.stringify({ type: "response", data: buffer.slice(0, safe) }));
+               //                buffer = buffer.slice(safe);
+               //           }
+               //      } else {
+               //           buffer += text;
+               //           const startIdx = buffer.indexOf("<output>");
+               //           if (startIdx !== -1) {
+               //                outputStarted = true;
+               //                buffer = buffer.slice(startIdx + "<output>".length);
+               //           }
+               //      }
+               // }
 
                emitter.emit("end");
           } catch (err: any) {

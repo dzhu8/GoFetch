@@ -134,12 +134,43 @@ export abstract class BaseSearchAgent {
       * Handles the streaming of events from the chain.
       */
      protected async handleStream(stream: AsyncGenerator<StreamEvent, any, any>, emitter: eventEmitter): Promise<void> {
+          let outputStarted = false;
+          let buffer = "";
+
           for await (const event of stream) {
                if (event.event === "on_chain_end" && event.name === "FinalSourceRetriever") {
                     emitter.emit("data", JSON.stringify({ type: "sources", data: event.data.output }));
                }
                if (event.event === "on_chain_stream" && event.name === "FinalResponseGenerator") {
-                    emitter.emit("data", JSON.stringify({ type: "response", data: event.data.chunk }));
+                    const text = typeof event.data.chunk === "string" ? event.data.chunk : "";
+                    if (!text) continue;
+
+                    if (outputStarted) {
+                         buffer += text;
+                         const endIdx = buffer.indexOf("</output>");
+                         if (endIdx !== -1) {
+                              const finalText = buffer.slice(0, endIdx);
+                              if (finalText) {
+                                   emitter.emit("data", JSON.stringify({ type: "response", data: finalText }));
+                              }
+                              // Stop streaming response chunks after closing tag
+                              outputStarted = false;
+                              buffer = "";
+                              continue;
+                         }
+                         const safe = buffer.length - "</output>".length;
+                         if (safe > 0) {
+                              emitter.emit("data", JSON.stringify({ type: "response", data: buffer.slice(0, safe) }));
+                              buffer = buffer.slice(safe);
+                         }
+                    } else {
+                         buffer += text;
+                         const startIdx = buffer.indexOf("<output>");
+                         if (startIdx !== -1) {
+                              outputStarted = true;
+                              buffer = buffer.slice(startIdx + "<output>".length);
+                         }
+                    }
                }
                if (event.event === "on_chain_end" && event.name === "FinalResponseGenerator") {
                     emitter.emit("end");

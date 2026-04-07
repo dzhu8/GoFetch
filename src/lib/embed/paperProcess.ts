@@ -351,10 +351,11 @@ async function processReconstructionQueue() {
                const reconstructor = new PaperReconstructor(ocrDoc, job.pdfPath, job.paperId);
                const sections = await reconstructor.reconstructSections();
 
-               type SectionType = "main_text" | "methods" | "references" | "figures";
+               type SectionType = "main_text" | "methods" | "references" | "figure_captions" | "figures";
                const rows: { paperId: number; sectionType: SectionType; content: string }[] = [
                     { paperId: job.paperId, sectionType: "main_text", content: sections.mainText },
                     { paperId: job.paperId, sectionType: "references", content: sections.references },
+                    { paperId: job.paperId, sectionType: "figure_captions", content: sections.figureCaptions },
                     { paperId: job.paperId, sectionType: "figures", content: JSON.stringify(sections.figures) },
                ];
                if (sections.methods) {

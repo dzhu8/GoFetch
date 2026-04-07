@@ -128,10 +128,36 @@ async function executeSearch(
                new HumanMessage(standaloneQuery),
           ]);
 
+          let outputStarted = false;
+          let buffer = "";
           for await (const chunk of llmStream) {
                const text = typeof chunk.content === "string" ? chunk.content : "";
-               if (text) {
-                    emitter.emit("data", JSON.stringify({ type: "response", data: text }));
+               if (!text) continue;
+
+               if (outputStarted) {
+                    // Check if this chunk contains the closing tag
+                    buffer += text;
+                    const endIdx = buffer.indexOf("</output>");
+                    if (endIdx !== -1) {
+                         const finalText = buffer.slice(0, endIdx);
+                         if (finalText) {
+                              emitter.emit("data", JSON.stringify({ type: "response", data: finalText }));
+                         }
+                         break;
+                    }
+                    // Flush buffer but keep a tail that could contain a partial "</output>"
+                    const safe = buffer.length - "</output>".length;
+                    if (safe > 0) {
+                         emitter.emit("data", JSON.stringify({ type: "response", data: buffer.slice(0, safe) }));
+                         buffer = buffer.slice(safe);
+                    }
+               } else {
+                    buffer += text;
+                    const startIdx = buffer.indexOf("<output>");
+                    if (startIdx !== -1) {
+                         outputStarted = true;
+                         buffer = buffer.slice(startIdx + "<output>".length);
+                    }
                }
           }
 

@@ -45,6 +45,7 @@ Your answer must be:
 ### Formatting
 - Start directly with the answer — do not include a top-level title.
 - Use Markdown for clarity (bold, headings, bullet points).
+- You MUST wrap your entire final answer in <output></output> tags. Everything before <output> is internal reasoning and will not be shown to the user.
 
 ### Special Cases
 - If the results are insufficient, state: "The retrieved results did not contain enough information to fully answer this question."
