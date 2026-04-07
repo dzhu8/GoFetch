@@ -65,6 +65,28 @@ function totalArea(boxes: BBox[]): number {
      return boxes.reduce((s, b) => s + (b.x1 - b.x0) * (b.y1 - b.y0), 0);
 }
 
+function bboxArea(b: BBox): number {
+     return Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+}
+
+/** Fraction of block `a` that is overlapped by box `b` (0–1). */
+function overlapFraction(a: BBox, b: BBox): number {
+     const area = bboxArea(a);
+     if (area <= 0) return 0;
+     const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
+     const iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+     return (ix * iy) / area;
+}
+
+/**
+ * Returns true if the block's bbox overlaps any of the given image/chart
+ * bboxes by more than `threshold` fraction of the block's area.
+ * Used to filter text embedded inside figures (panel labels, axis titles, etc.).
+ */
+function isInsideFigure(blockBbox: BBox, figureBboxes: BBox[], threshold = 0.3): boolean {
+     return figureBboxes.some((fig) => overlapFraction(blockBbox, fig) > threshold);
+}
+
 function clusterBboxes(boxes: BBox[], margin: number, vertGap: number): BBox[][] {
      const n = boxes.length;
      const parent = Array.from({ length: n }, (_, i) => i);
@@ -258,15 +280,99 @@ function isReferencesHeading(text: string): boolean {
      return REFERENCES_HEADING_PATTERNS.some((p) => p.test(trimmed));
 }
 
+/** Detect figure captions mislabeled as "text" by OCR.
+ *  Matches "Figure 1.", "Figure 1:", "Fig. 1 |", "Fig. 1.", etc. */
+const FIGURE_CAPTION_RE = /^(Figure|Fig\.)\s*\d+\s*[.|:]/i;
+
+/** Detect figure sub-panel descriptions mislabeled as "text" by OCR.
+ *  Matches patterns like "(A) ...", "(B) ...", "(C and D) ...", "(D-G) ...",
+ *  and also lowercase comma-separated style: "a, ...", "b, ..." */
+const FIGURE_PANEL_RE = /^(\([A-Z](\s*([-–]|and|to)\s*[A-Z])?\)\s|[a-z],\s)/;
+
+function isFigureCaption(text: string): boolean {
+     return FIGURE_CAPTION_RE.test(text.trim());
+}
+
+function isFigurePanelDescription(text: string): boolean {
+     return FIGURE_PANEL_RE.test(text.trim());
+}
+
+/**
+ * Pre-scan all pages to find short text strings that repeat near the top or
+ * bottom of multiple pages — these are header/footer noise that the OCR engine
+ * mislabeled (e.g. "Cell Systems", "Article", journal citation lines).
+ *
+ * Returns a Set of normalised strings to skip during reconstruction.
+ */
+function detectRepeatedHeaderFooter(
+     pages: OCRPage[],
+     /** Fraction of page height considered "near top" or "near bottom" */
+     edgeFraction = 0.12,
+     /** Maximum character length to consider a candidate */
+     maxLen = 120,
+     /** Minimum number of pages a string must appear on to be treated as noise */
+     minPages = 3,
+): Set<string> {
+     // Map normalised text → set of page indices it appears on
+     const occurrences = new Map<string, Set<number>>();
+
+     for (const page of pages) {
+          const pageIndex = page.data?.page_index ?? page.page ?? 0;
+          const pageHeight = page.data?.height ?? 1;
+          const topThreshold = edgeFraction * pageHeight;
+          const bottomThreshold = (1 - edgeFraction) * pageHeight;
+          const blocks = page.data?.parsing_res_list ?? [];
+
+          for (const block of blocks) {
+               // Label-agnostic: position + repetition is sufficient signal
+               const content = (block.block_content ?? "").trim();
+               if (!content || content.length > maxLen) continue;
+
+               const bbox = block.block_bbox;
+               if (!bbox || bbox.length < 4) continue;
+               const y0 = bbox[1] as number;
+               const y1 = bbox[3] as number;
+
+               // Block must sit near the top or bottom edge of the page
+               if (y0 > topThreshold && y1 < bottomThreshold) continue;
+
+               const key = content.toLowerCase().replace(/\s+/g, " ");
+               if (!occurrences.has(key)) occurrences.set(key, new Set());
+               occurrences.get(key)!.add(pageIndex);
+          }
+     }
+
+     const skipSet = new Set<string>();
+     for (const [key, pageSet] of occurrences) {
+          if (pageSet.size >= minPages) skipSet.add(key);
+     }
+     return skipSet;
+}
+
 export class PaperReconstructor {
      private ocrDoc: OCRDocument;
      private pdfPath: string;
      private paperId: number;
+     private headerFooterNoise: Set<string> | null = null;
 
      constructor(ocrDoc: OCRDocument, pdfPath: string, paperId: number) {
           this.ocrDoc = ocrDoc;
           this.pdfPath = pdfPath;
           this.paperId = paperId;
+     }
+
+     /** Lazily compute and cache the header/footer noise set */
+     private getHeaderFooterNoise(): Set<string> {
+          if (!this.headerFooterNoise) {
+               this.headerFooterNoise = detectRepeatedHeaderFooter(this.ocrDoc.pages);
+          }
+          return this.headerFooterNoise;
+     }
+
+     /** Check whether a block's content matches detected header/footer noise */
+     private isHeaderFooterNoise(content: string): boolean {
+          const key = content.trim().toLowerCase().replace(/\s+/g, " ");
+          return this.getHeaderFooterNoise().has(key);
      }
 
      /**
@@ -326,9 +432,22 @@ export class PaperReconstructor {
                     }
                }
 
+               // Collect figure bboxes on this page for in-figure text filtering
+               const pageFigureBboxes = visualBlocks.map((v) => v.bbox);
+
                // Second pass: build markdown for text-based blocks
                for (let i = 0; i < blocks.length; i++) {
                     const block = blocks[i];
+                    const content = (block.block_content ?? "").trim();
+                    if (content && this.isHeaderFooterNoise(content)) continue;
+
+                    // Skip text embedded inside figure regions (panel labels, axis text, etc.)
+                    const b = block.block_bbox;
+                    if (b && b.length >= 4) {
+                         const blockBox: BBox = { x0: b[0], y0: b[1], x1: b[2], y1: b[3] };
+                         if (isInsideFigure(blockBox, pageFigureBboxes)) continue;
+                    }
+
                     const docOrder = pageIndex * 10000 + i;
                     const md = this.renderBlock(block, docOrder);
                     if (md) parts.push(md);
@@ -413,11 +532,24 @@ export class PaperReconstructor {
                     }
                }
 
+               // Collect figure bboxes on this page for in-figure text filtering
+               const pageFigureBboxes = visualBlocks.map((v) => v.bbox);
+
                // Second pass: route text blocks to mainText or methods
                for (let i = 0; i < blocks.length; i++) {
                     const block = blocks[i];
                     const docOrder = pageIndex * 10000 + i;
                     const content = (block.block_content ?? "").trim();
+
+                    // Skip repeated header/footer noise mislabeled as text
+                    if (content && this.isHeaderFooterNoise(content)) continue;
+
+                    // Skip text embedded inside figure regions (panel labels, axis text, etc.)
+                    const bb = block.block_bbox;
+                    if (bb && bb.length >= 4) {
+                         const blockBox: BBox = { x0: bb[0], y0: bb[1], x1: bb[2], y1: bb[3] };
+                         if (isInsideFigure(blockBox, pageFigureBboxes)) continue;
+                    }
 
                     // Detect section transitions on paragraph_title blocks
                     if (block.block_label === "paragraph_title" && content) {
@@ -446,6 +578,14 @@ export class PaperReconstructor {
                          continue;
                     }
 
+                    // Full figure captions (e.g. "Fig. 1 | ...", "Figure 2. ...")
+                    // and sub-panel descriptions (e.g. "(A) ...", "a, ...")
+                    // are often mislabeled as "text" or "vision_footnote" by OCR
+                    if (content && (isFigureCaption(content) || isFigurePanelDescription(content))) {
+                         figureCaptionParts.push({ docOrder, markdown: `\n${content}\n` });
+                         continue;
+                    }
+
                     const md = this.renderBlock(block, docOrder);
                     if (!md) continue;
 
@@ -460,15 +600,15 @@ export class PaperReconstructor {
           // Extract figures
           const extractedFigs = await extractFigureRegions(this.pdfPath, figureRegions, this.paperId);
 
-          // Insert figures into mainText for inline rendering (same as reconstruct())
-          for (const fig of extractedFigs) {
-               const imgUrl = `/api/papers/${this.paperId}/extracted-figure/${encodeURIComponent(fig.filename)}`;
-               let md = `\n![${fig.caption || "Figure"}](${imgUrl})\n`;
-               if (fig.caption) {
-                    md += `\n*${fig.caption}*\n`;
-               }
-               mainParts.push({ docOrder: fig.docOrder, markdown: md });
-          }
+          // // Insert figures into mainText for inline rendering (same as reconstruct())
+          // for (const fig of extractedFigs) {
+          //      const imgUrl = `/api/papers/${this.paperId}/extracted-figure/${encodeURIComponent(fig.filename)}`;
+          //      let md = `\n![${fig.caption || "Figure"}](${imgUrl})\n`;
+          //      if (fig.caption) {
+          //           md += `\n*${fig.caption}*\n`;
+          //      }
+          //      mainParts.push({ docOrder: fig.docOrder, markdown: md });
+          // }
 
           // Build mainText
           mainParts.sort((a, b) => a.docOrder - b.docOrder);

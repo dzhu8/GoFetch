@@ -722,12 +722,16 @@ Files: [agent.ts](src/lib/search/pdfContext/agent.ts). Paper reconstruction logi
 
 **`PaperReconstructor`** (`src/lib/paperReconstructor/index.ts`) transforms an `OCRDocument` into structured Markdown:
 - **`reconstruct()`** — Returns a single monolithic Markdown string (all sections joined). Used for backward-compatible full-document rendering.
-- **`reconstructSections()`** — Returns `{ mainText, methods, references, figures }`. Section splitting uses `paragraph_title` blocks: when a heading matches known methods patterns (e.g., "Methods", "Materials and Methods", "Experimental Section", "Computational Methods"), subsequent blocks are routed to the `methods` accumulator until a non-methods heading is encountered. References are detected similarly and parsed via `parseReferences()`. Figure captions (`figure_title` blocks) are duplicated: they appear in `mainText` for natural reading flow and in the `figures` array for independent retrieval.
+- **`reconstructSections()`** — Returns `{ mainText, methods, references, figureCaptions, figures }`. Section splitting uses `paragraph_title` blocks: when a heading matches known methods patterns (e.g., "Methods", "Materials and Methods", "Experimental Section", "Computational Methods"), subsequent blocks are routed to the `methods` accumulator until a non-methods heading is encountered. References are detected similarly and parsed via `parseReferences()`. Figure captions (`figure_title` blocks) and sub-panel descriptions (text blocks matching `(A) ...`, `(B) ...`, etc.) are routed to a dedicated `figureCaptions` section, separate from `mainText`.
 - Iterates through pages and `parsing_res_list` blocks in document order.
 - Text-based blocks are converted to Markdown inline; `display_formula` blocks preserve `$$...$$` delimiters for KaTeX rendering.
 - `image`/`chart` blocks are clustered by spatial proximity (Union-Find with dilated overlap + vertical gap heuristics), then batch-extracted as PNGs via a single PyMuPDF subprocess per paper. Extraction regions use normalized bounding box coordinates with 1% padding at 2× zoom.
 - Extracted figures are cached as `{pdfBasename}_extracted_p{page}_f{index}.png` alongside the source PDF.
 - Figure captions are associated by spatial proximity to the nearest `figure_title` block below each cluster.
+- **Noise filtering** — Three heuristics remove OCR artifacts from all reconstructed output:
+  1. **Header/footer detection**: A label-agnostic pre-scan identifies short text strings that repeat near the top or bottom 12% of 3+ pages (e.g., journal names, citation lines). These are excluded regardless of their OCR label.
+  2. **Sub-panel description reclassification**: Text blocks starting with `(A) ...`, `(B) ...`, `(C and D) ...` patterns are recognized as figure sub-panel descriptions mislabeled as `text` by OCR, and routed to `figureCaptions` instead of `mainText`.
+  3. **In-figure text filtering**: Blocks whose bounding box overlaps >30% with any `image`/`chart` block on the same page are skipped entirely. This removes panel labels ("A", "B"), axis titles, and annotations embedded within figure artwork.
 - The `/api/papers/[id]/extracted-figure/[filename]` route serves cached figure PNGs with path-traversal protection.
 
 **Background Reconstruction Pipeline** (`src/lib/embed/paperProcess.ts`):
