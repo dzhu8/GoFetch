@@ -386,11 +386,11 @@ Sets cancellation flag, clears progress. Multiple cancellation checks throughout
 
 ## 6. `models/`
 
-Files: [types.ts](src/lib/models/types.ts), [modelPreference.ts](src/lib/models/modelPreference.ts), [ollamaClient.ts](src/lib/models/ollamaClient.ts), [preferenceResolver.ts](src/lib/models/preferenceResolver.ts), and `providers/` subfolder with [BaseModelProvider.ts](src/lib/models/providers/BaseModelProvider.ts), [OpenAIProvider.ts](src/lib/models/providers/OpenAIProvider.ts), [AnthropicProvider.ts](src/lib/models/providers/AnthropicProvider.ts), [OllamaProvider.ts](src/lib/models/providers/OllamaProvider.ts), [PaddleOCRProvider.ts](src/lib/models/providers/PaddleOCRProvider.ts).
+Files: [types.ts](src/lib/models/types.ts), [modelPreference.ts](src/lib/models/modelPreference.ts), [ollamaClient.ts](src/lib/models/ollamaClient.ts), [preferenceResolver.ts](src/lib/models/preferenceResolver.ts), and `providers/` subfolder with [BaseModelProvider.ts](src/lib/models/providers/BaseModelProvider.ts), [OpenAIProvider.ts](src/lib/models/providers/OpenAIProvider.ts), [AnthropicProvider.ts](src/lib/models/providers/AnthropicProvider.ts), [OllamaProvider.ts](src/lib/models/providers/OllamaProvider.ts), [PaddleOCRProvider.ts](src/lib/models/providers/PaddleOCRProvider.ts), [CopilotProvider.ts](src/lib/models/providers/CopilotProvider.ts).
 
 ### Purpose
 
-Multi-provider LLM/embedding/OCR abstraction layer. Defines the contract for model providers, implements concrete providers for OpenAI, Anthropic, Ollama, and PaddleOCR, and provides preference resolution with fallback logic.
+Multi-provider LLM/embedding/OCR abstraction layer. Defines the contract for model providers, implements concrete providers for OpenAI, Anthropic, Ollama, PaddleOCR, and GitHub Copilot, and provides preference resolution with fallback logic.
 
 ### Core Types (`types.ts`)
 
@@ -461,6 +461,16 @@ Extends `BaseModelProvider<ChatOllama, OllamaEmbeddings>` (from `@langchain/olla
 ### PaddleOCR Provider (`PaddleOCRProvider.ts`)
 
 OCR-only. Single curated model: `PaddleOCR-VL` (requires GPU/CUDA). `loadOCRModel()` returns lightweight `{ modelKey, providerType: "paddleocr" }` (signals configuration, doesn't instantiate native code). Chat and embedding methods throw.
+
+### Copilot Provider (`CopilotProvider.ts`)
+
+Extends `BaseModelProvider<never, never>` (chat-only, no embedding/OCR). Delegates to the Copilot CLI bridge (`src/lib/copilot/bridge.ts`) instead of a LangChain model.
+
+**Default models**: Claude Sonnet 4.5, Claude Sonnet 4, GPT-4o, GPT-4.1, o3-mini. The actual list depends on the user's GitHub plan; overridable via provider config.
+
+**`loadChatModel()`** -- Throws. Never called — the chat route detects `providerId === "copilot"` and delegates to `handleCopilotChat()` before reaching `loadChatModel()`.
+
+**Auto-injection**: `ModelRegistry.injectCopilotProvider()` adds a Copilot provider with fixed id `"copilot"` on startup if one isn't already configured. No manual setup required — appears in the model dropdown immediately.
 
 ### Key Design Patterns
 
@@ -753,4 +763,37 @@ Files: [agent.ts](src/lib/search/pdfContext/agent.ts). Paper reconstruction logi
 **LaTeX Rendering** (chat UI): The `MathBlock` component (`src/components/MathBlock.tsx`) adds KaTeX math rendering to `MessageBox`. A `preprocessMath()` function converts `$$...$$` and `$...$` delimiters into custom `<mathblock>` / `<mathinline>` HTML tags with base64-encoded LaTeX content (preventing markdown-to-jsx from mangling special characters). These are registered as `markdown-to-jsx` overrides and rendered client-side via `katex.renderToString()`. KaTeX CSS is imported globally in `layout.tsx`.
 
 **Integration**: The chat route (`/api/chat`) detects `attachedPaperIds` in the request body and routes to `PdfContextAgent` instead of the default web search agent. The client-side `PdfSelector` component (in `messageActions/`) provides a popover listing all `status = "ready"` papers for toggle-based selection, stored as `attachedPaperIds` in chat context.
+
+## 12. `copilot/`
+
+Files: [bridge.ts](src/lib/copilot/bridge.ts).
+
+### Purpose
+
+Bridges GoFetch's chat pipeline to a headless GitHub Copilot CLI instance, allowing Copilot to serve as the LLM backend. The MCP server (`src/server/mcp/`) runs alongside so Copilot can also call GoFetch tools autonomously.
+
+### Exported Constructs
+
+- **`spawnCopilot(prompt, options?)`** — Low-level utility. Spawns the Copilot CLI (`COPILOT_COMMAND` env var, default `"copilot"`) with the full prompt piped through stdin. Returns an `EventEmitter` emitting the standard `"data"` / `"end"` events compatible with `handleEmitterEvents` in the chat route. Model selection via `options.model` or `COPILOT_MODEL` env var.
+
+- **`handleCopilotChat(params)`** — High-level handler called by the chat route when `chatModel.providerId === "copilot"`. Preprocesses based on the focus mode, builds the full prompt using the existing prompt templates from `src/lib/prompts/`, and spawns Copilot.
+
+### Request Flow
+
+When the chat route receives `providerId: "copilot"`:
+
+1. **PDF context** (`attachedPaperIds` present): Calls `preprocessPdfContext()` to fetch paper text from DB, builds the system prompt via `getPdfOrganizerPrompt()`, spawns Copilot with the combined prompt. Sources are emitted immediately.
+
+2. **Web / academic / default**: Builds a prompt using the appropriate writer template (`getWebWriterPrompt` or `getAcademicWriterPrompt`) with conversation history. Since the classifier step requires an LLM for query reformulation, Copilot receives the user's raw query and is expected to use its own knowledge or MCP tools.
+
+### Configuration
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `COPILOT_COMMAND` | `copilot` | CLI binary to invoke |
+| `COPILOT_MODEL` | *(none)* | Model to use (e.g. `claude-sonnet-4.5`) |
+
+### Integration
+
+The chat route (`/api/chat`) checks `chatModel.providerId` before loading an LLM. When `"copilot"`, it bypasses the model registry entirely and delegates to `handleCopilotChat()`. The returned EventEmitter feeds into the same `handleEmitterEvents` → streaming response → DB persistence pipeline used by all other agents, so the frontend requires no changes.
 

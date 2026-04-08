@@ -8,6 +8,7 @@ import { and, eq, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
 import modelRegistry from "@/server/providerRegistry";
 import { getSearchHandlers, type SearchAgentLike } from "@/lib/search";
+import { handleCopilotChat } from "@/lib/copilot/bridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -260,62 +261,68 @@ export const POST = async (req: Request) => {
                );
           }
 
-          // Load the chat model
-          const provider = modelRegistry.getProviderById(body.chatModel.providerId);
-          if (!provider) {
-               return Response.json(
-                    {
-                         message: `Provider ${body.chatModel.providerId} not found`,
-                    },
-                    { status: 400 }
-               );
-          }
-
-          const llm = (await provider.provider.loadChatModel(body.chatModel.key)) as BaseChatModel;
-
           const humanMessageId = message.messageId ?? crypto.randomBytes(7).toString("hex");
 
-          const history: BaseMessage[] = body.history.map((msg) => {
-               if (msg[0] === "human") {
-                    return new HumanMessage({
-                         content: msg[1],
-                    });
-               } else {
-                    return new AIMessage({
-                         content: msg[1],
-                    });
-               }
-          });
-
-          // Route to PDF context agent when papers are attached
           let stream: EventEmitter;
 
-          if (body.attachedPaperIds && body.attachedPaperIds.length > 0) {
-               const { PdfContextAgent } = require("@/lib/search/pdfContext/agent");
-               const pdfAgent = new PdfContextAgent();
-               stream = await pdfAgent.searchAndAnswer(
-                    message.content,
-                    history,
-                    llm,
-                    body.systemInstructions as string,
-                    body.attachedPaperIds
-               );
+          // ── Copilot path: bypass model registry, delegate to bridge ──────
+          if (body.chatModel.providerId === "copilot") {
+               stream = await handleCopilotChat({
+                    message: message.content,
+                    focusMode: body.focusMode,
+                    history: body.history,
+                    attachedPaperIds: body.attachedPaperIds,
+                    systemInstructions: body.systemInstructions,
+                    model: body.chatModel.key,
+               });
           } else {
-               // Determine folder names to search
-               // If not provided, use all registered folders
-               const folderNames = body.folderNames ?? getAllFolderNames();
+               // ── Standard LLM path ───────────────────────────────────────
+               const provider = modelRegistry.getProviderById(body.chatModel.providerId);
+               if (!provider) {
+                    return Response.json(
+                         {
+                              message: `Provider ${body.chatModel.providerId} not found`,
+                         },
+                         { status: 400 }
+                    );
+               }
 
-               // Get the appropriate search agent
-               const agent = getSearchAgent(body.focusMode);
+               const llm = (await provider.provider.loadChatModel(body.chatModel.key)) as BaseChatModel;
 
-               // Call searchAndAnswer with the new signature
-               stream = await agent.searchAndAnswer(
-                    message.content,
-                    history,
-                    llm,
-                    body.systemInstructions as string,
-                    [folderNames] // searchRetrieverChainArgs - folderNames for CodeSearchAgent
-               );
+               const history: BaseMessage[] = body.history.map((msg) => {
+                    if (msg[0] === "human") {
+                         return new HumanMessage({
+                              content: msg[1],
+                         });
+                    } else {
+                         return new AIMessage({
+                              content: msg[1],
+                         });
+                    }
+               });
+
+               // Route to PDF context agent when papers are attached
+               if (body.attachedPaperIds && body.attachedPaperIds.length > 0) {
+                    const { PdfContextAgent } = require("@/lib/search/pdfContext/agent");
+                    const pdfAgent = new PdfContextAgent();
+                    stream = await pdfAgent.searchAndAnswer(
+                         message.content,
+                         history,
+                         llm,
+                         body.systemInstructions as string,
+                         body.attachedPaperIds
+                    );
+               } else {
+                    const folderNames = body.folderNames ?? getAllFolderNames();
+                    const agent = getSearchAgent(body.focusMode);
+                    stream = await agent.searchAndAnswer(
+                         message.content,
+                         history,
+                         llm,
+                         body.systemInstructions as string,
+                         [folderNames]
+                    );
+               }
           }
 
           const responseStream = new TransformStream();

@@ -46,3 +46,85 @@ Classifies the query (via LLM), runs SearXNG academic search (arxiv, google scho
 - **No LLM filtering in academic preprocess**: The LLM-as-judge step is skipped in the MCP variant. The external agent is the LLM and should decide relevance itself. Results are still sorted by reputable publisher priority.
 - **Shared code**: Each original agent delegates its data-fetching phase to the preprocessing function, avoiding duplication.
 - **Structured returns**: All variants return plain objects (not EventEmitters) since streaming is not needed for MCP tool responses.
+
+---
+
+## MCP Server
+
+**File**: `src/server/mcp/index.ts`
+**Transport**: Streamable HTTP (port 3001 by default, configurable via `MCP_PORT`)
+**Run**: `yarn mcp:server` (standalone) or `yarn dev` (starts MCP + Next.js together)
+
+The MCP server exposes GoFetch's preprocessing and chat-write capabilities to external agents (e.g. GitHub Copilot, Claude Desktop). It uses `@modelcontextprotocol/sdk` with Streamable HTTP transport on `http://localhost:3001/mcp`.
+
+### Tools
+
+#### `queryPdfContext`
+
+Runs the preprocessing portion of `PdfContextAgent` and returns structured context. No internal LLM call — the external agent reasons over the returned text itself.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | string | yes | The user/agent query |
+| `paperIds` | number[] | yes | IDs of papers to use as context |
+
+**Returns** (JSON in text content):
+- `message` — the original query, passed through
+- `reconstructedText` — full paper context with headers, ready for an LLM prompt
+- `sources` — array of `{ pageContent, metadata: { title, paperId } }`
+
+Delegates to `preprocessPdfContext()` from `src/lib/search/pdfContext/agent.ts`.
+
+#### `submitChatResponse`
+
+Writes an externally-crafted assistant response into a GoFetch chat session so it appears in the UI on next load.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chatId` | string | yes | Target chat session ID |
+| `responseText` | string | yes | The assistant message content to display |
+| `sources` | array | no | Source documents (`{ pageContent, metadata }`) to attach |
+| `createIfMissing` | boolean | no | If true, creates the chat when `chatId` doesn't exist (default: false) |
+
+**Returns** (JSON in text content):
+- `success` — boolean
+- `chatId` — echoed back
+- `messageId` — ID of the inserted assistant message
+
+Inserts a `role: "assistant"` row (and optionally a `role: "source"` row) into the `messages` table. The `ChatProvider` picks these up via `loadMessages()` → `getChat(chatId)` on next navigation.
+
+### Configuration
+
+**GitHub Copilot** — registered automatically by `yarn dev`, or manually:
+
+```bash
+gh copilot mcp add --name gofetch --url http://localhost:3001/mcp
+```
+
+**Claude Desktop / Claude Code** — add to the MCP config (uses the HTTP endpoint):
+
+```json
+{
+  "mcpServers": {
+    "gofetch": {
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+### Startup
+
+`yarn dev` runs a platform-specific script (`scripts/dev.sh` on macOS/Linux, `scripts/dev.cmd` on Windows) that:
+
+1. Checks `gh auth status` and runs `gh auth login` if needed
+2. Registers the MCP server with GitHub Copilot (`gh copilot mcp add`)
+3. Starts Next.js (port 3000) and the MCP server (port 3001) concurrently
+
+To start the MCP server standalone: `yarn mcp:server`
+
+### Copilot Bridge Integration
+
+When the frontend sends `chatModel.providerId: "copilot"` in the chat request, the `/api/chat` route bypasses the model registry and spawns the Copilot CLI headlessly via `src/lib/copilot/bridge.ts`. The MCP server runs alongside, so Copilot can call `queryPdfContext` / `submitChatResponse` autonomously if instructed.
+
+See `copilot/` section in [FEATURES.md](FEATURES.md) for full details.

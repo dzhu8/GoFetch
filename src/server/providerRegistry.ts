@@ -1,6 +1,7 @@
 import { ConfigModelProvider, EmbeddingModelClient, MinimalProvider, ModelList } from "@/lib/models/types";
 import { AnthropicProvider } from "@/lib/models/providers/AnthropicProvider";
 import { BaseModelProvider } from "@/lib/models/providers/BaseModelProvider";
+import { CopilotProvider } from "@/lib/models/providers/CopilotProvider";
 import { OllamaProvider } from "@/lib/models/providers/OllamaProvider";
 import { OpenAIProvider } from "@/lib/models/providers/OpenAIProvider";
 import { PaddleOCRProvider } from "@/lib/models/providers/PaddleOCRProvider";
@@ -14,6 +15,7 @@ const providerFactories: Record<string, ProviderFactory> = {
      anthropic: AnthropicProvider,
      ollama: OllamaProvider,
      paddleocr: PaddleOCRProvider,
+     copilot: CopilotProvider,
 };
 
 export type RegisteredProvider<
@@ -28,6 +30,7 @@ export class ModelRegistry {
 
      constructor() {
           this.initializeActiveProviders();
+          this.injectCopilotProvider();
           this.debugEmbeddingRegistration("qwen3-embedding:8b");
      }
 
@@ -36,6 +39,31 @@ export class ModelRegistry {
           this.activeProviders = configuredProviders
                .map((config) => this.createProvider(config))
                .filter((config): config is RegisteredProvider => Boolean(config));
+     }
+
+     /**
+      * Auto-inject a Copilot provider if one isn't already configured.
+      * Uses a fixed id ("copilot") so the chat route can match on providerId.
+      */
+     private injectCopilotProvider() {
+          if (this.activeProviders.some((p) => p.type === "copilot")) return;
+
+          const copilotConfig: ConfigModelProvider = {
+               id: "copilot",
+               name: "GitHub Copilot",
+               type: "copilot",
+               chatModels: [],   // CopilotProvider falls back to its own default list
+               embeddingModels: [],
+               ocrModels: [],
+               config: {},
+               hash: "copilot-auto",
+          };
+
+          const instance = this.createProvider(copilotConfig);
+          if (instance) {
+               this.activeProviders.push(instance);
+               console.log("[ModelRegistry] Auto-injected GitHub Copilot provider.");
+          }
      }
 
      private debugEmbeddingRegistration(modelKey: string) {
