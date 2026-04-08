@@ -96,9 +96,11 @@ const handleEmitterEvents = async (
      chatId: string
 ) => {
      let receivedMessage = "";
+     let closed = false;
      const aiMessageId = crypto.randomBytes(7).toString("hex");
 
      stream.on("data", (data) => {
+          if (closed) return;
           const parsedData = JSON.parse(data);
           if (parsedData.type === "response") {
                writer.write(
@@ -145,10 +147,21 @@ const handleEmitterEvents = async (
                          }) + "\n"
                     )
                );
+          } else if (parsedData.type === "error") {
+               writer.write(
+                    encoder.encode(
+                         JSON.stringify({
+                              type: "error",
+                              data: parsedData.data,
+                              messageId: aiMessageId,
+                         }) + "\n"
+                    )
+               );
           }
      });
 
      stream.on("end", () => {
+          closed = true;
           writer.write(
                encoder.encode(
                     JSON.stringify({

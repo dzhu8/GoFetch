@@ -20,9 +20,8 @@ export interface CopilotOptions {
  * Spawn the Copilot CLI headlessly and stream the response as events
  * compatible with handleEmitterEvents in the chat route.
  *
- * The full prompt is written to stdin (avoids OS command-line length limits on
- * Windows ~8 kB / Linux ~2 MB).  The process is expected to write its response
- * to stdout and exit.
+ * The prompt is passed via `-p` (non-interactive mode).  The process writes
+ * its response to stdout and exits.
  */
 export function spawnCopilot(
      prompt: string,
@@ -33,9 +32,20 @@ export function spawnCopilot(
      setImmediate(() => {
           const model = options?.model ?? COPILOT_MODEL;
 
+          const [cmd, ...cmdPrefix] = COPILOT_COMMAND.split(/\s+/);
+
+          // When invoked via "gh copilot", insert "--" so gh doesn't
+          // swallow flags meant for the Copilot CLI.
+          const separator = cmdPrefix.length > 0 ? ["--"] : [];
+
+          // Pass the prompt via stdin instead of -p to avoid ENAMETOOLONG
+          // on Windows when the prompt (system instructions + history + PDF
+          // context) exceeds the ~32 KB CreateProcess command-line limit.
+          // Copilot reads from stdin when it detects a pipe (non-TTY).
           const args = [
-               "-p", "-",     // read prompt from stdin
-               "-s",          // silent — response text only
+               ...cmdPrefix,
+               ...separator,
+               "-s",
                "--no-ask-user",
                "--allow-all-tools",
           ];
@@ -52,14 +62,12 @@ export function spawnCopilot(
                }),
           );
 
-          const proc = spawn(COPILOT_COMMAND, args, {
+          const proc = spawn(cmd, args, {
                stdio: ["pipe", "pipe", "pipe"],
                env: { ...process.env },
           });
 
-          // Write prompt through stdin to avoid arg-length limits
-          proc.stdin.write(prompt);
-          proc.stdin.end();
+          proc.stdin!.end(prompt);
 
           proc.stdout.on("data", (chunk: Buffer) => {
                emitter.emit(
@@ -68,18 +76,25 @@ export function spawnCopilot(
                );
           });
 
+          let stderrChunks: string[] = [];
           proc.stderr.on("data", (chunk: Buffer) => {
                const text = chunk.toString().trim();
-               if (text) console.error("[copilot stderr]", text);
+               if (text) {
+                    console.error("[copilot stderr]", text);
+                    stderrChunks.push(text);
+               }
           });
 
           proc.on("close", (code) => {
                if (code !== 0) {
+                    const detail = stderrChunks.length > 0
+                         ? `\n\n\`\`\`\n${stderrChunks.join("\n")}\n\`\`\``
+                         : "";
                     emitter.emit(
                          "data",
                          JSON.stringify({
                               type: "response",
-                              data: `\n\n*(Copilot exited with code ${code})*`,
+                              data: `\n\n*(Copilot exited with code ${code})*${detail}`,
                          }),
                     );
                }
