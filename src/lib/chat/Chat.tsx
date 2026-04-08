@@ -191,7 +191,7 @@ const loadMessages = async (
      console.debug(new Date(), "app:messages_loaded");
 
      if (chatTurns.length > 0) {
-          document.title = chatTurns[0].content;
+          document.title = chatTurns[0].content || data.chat.title;
      }
 
      const files = data.chat.files.map((file: any) => {
@@ -519,7 +519,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           if (focusMode === "academic") {
                return sendAcademicSearch(message);
           }
-          if (loading || !message) return;
+          if (loading || (!message && attachedPaperIds.length === 0)) return;
           setLoading(true);
           setMessageAppeared(false);
 

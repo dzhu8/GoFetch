@@ -36,7 +36,7 @@ const Chat = () => {
                messageEnd.current?.scrollIntoView({ behavior: "auto" });
           };
 
-          if (chatTurns.length === 1) {
+          if (chatTurns.length === 1 && chatTurns[0].content) {
                document.title = `${chatTurns[0].content.substring(0, 30)} - GoFetch`;
           }
 

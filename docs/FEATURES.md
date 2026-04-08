@@ -695,6 +695,8 @@ Files: [agent.ts](src/lib/search/webSearch/agent.ts), [classifier.ts](src/lib/se
 2. **Search**: Queries SearXNG in parallel using the `"general"` category.
 3. **Synthesis**: Deduplicates results by URL, caps at 10 sources, and streams a grounded response using the `webWriterPrompt`.
 
+**`preprocessWebSearch()`** — Preprocessing-only variant for MCP. Runs steps 1–2 (classification + SearXNG search + dedup + cap) and returns `{ standaloneQuery, searchResults, sources }`. No LLM response generation. The classifier step still requires an LLM for query reformulation. The full agent's `executeSearch()` delegates to this function internally.
+
 ### Academic Search (`academicSearch/`)
 
 Files: [agent.ts](src/lib/search/academicSearch/agent.ts), [classifier.ts](src/lib/search/academicSearch/classifier.ts), [filter.ts](src/lib/search/academicSearch/filter.ts), [types.ts](src/lib/search/academicSearch/types.ts).
@@ -706,9 +708,13 @@ Executes a specialized research pipeline:
 3. **Refinement**: Uses the LLM as a judge to filter the top 45 results down to the most relevant ~15 sources based on title and abstract.
 4. **Synthesis**: Streams a technical response with strict inline citation requirements.
 
+**`preprocessAcademicSearch()`** — Preprocessing-only variant for MCP. Runs steps 1–2 (classification + SearXNG search + dedup + cap to 45 + reputable publisher sort) and returns `{ standaloneQuery, filteredResults, sources }`. Skips the LLM-as-judge filtering step — returns all deduplicated results for the external agent to judge relevance itself. The classifier step still requires an LLM for query reformulation. The full agent's `executeSearch()` delegates to this function for the search phase, then applies LLM filtering on top.
+
 ### PDF Context Search (`pdfContext/`)
 
 Files: [agent.ts](src/lib/search/pdfContext/agent.ts). Paper reconstruction logic lives in [`src/lib/paperReconstructor/`](src/lib/paperReconstructor/index.ts) (shared with the upload pipeline).
+
+**`preprocessPdfContext()`** — Preprocessing-only variant for MCP. Fetches paper metadata and sections (`main_text`, `figure_captions`) from the database, reconstructs combined text with paper headers, and builds source metadata. Returns `{ message, reconstructedText, sources }`. No LLM call, no DB writes. The full agent's `execute()` delegates to this function for the data-fetching phase.
 
 **`PdfContextAgent`** provides question-answering grounded exclusively in user-uploaded PDF content:
 

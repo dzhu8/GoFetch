@@ -3,8 +3,8 @@ import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { EventEmitter } from "stream";
 import db from "@/server/db";
-import { chats, messages as messagesSchema } from "@/server/db/schema";
-import { and, eq, gt } from "drizzle-orm";
+import { chats, messages as messagesSchema, papers } from "@/server/db/schema";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
 import modelRegistry from "@/server/providerRegistry";
 import { getSearchHandlers, type SearchAgentLike } from "@/lib/search";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 const messageSchema = z.object({
      messageId: z.string().min(1),
      chatId: z.string().min(1),
-     content: z.string().min(1),
+     content: z.string(),
 });
 
 const chatModelSchema = z.object({
@@ -182,7 +182,7 @@ const handleEmitterEvents = async (
      });
 };
 
-const handleHistorySave = async (message: Message, humanMessageId: string, files: string[]) => {
+const handleHistorySave = async (message: Message, humanMessageId: string, files: string[], attachedPaperIds?: number[]) => {
      const chat = await db.query.chats.findFirst({
           where: eq(chats.id, message.chatId),
      });
@@ -190,11 +190,20 @@ const handleHistorySave = async (message: Message, humanMessageId: string, files
      const fileData: FileDetails[] = files.map(getFileDetails);
 
      if (!chat) {
+          let title = message.content;
+          if (!title && attachedPaperIds && attachedPaperIds.length > 0) {
+               const paperRows = db
+                    .select({ title: papers.title, fileName: papers.fileName })
+                    .from(papers)
+                    .where(inArray(papers.id, attachedPaperIds))
+                    .all();
+               title = paperRows.map((p) => p.title || p.fileName).join(", ");
+          }
           await db
                .insert(chats)
                .values({
                     id: message.chatId,
-                    title: message.content,
+                    title: title || "Untitled",
                     createdAt: new Date().toString(),
                     files: fileData,
                })
@@ -242,7 +251,7 @@ export const POST = async (req: Request) => {
           const body = parseBody.data as Body;
           const { message } = body;
 
-          if (message.content === "") {
+          if (message.content === "" && !(body.attachedPaperIds && body.attachedPaperIds.length > 0)) {
                return Response.json(
                     {
                          message: "Please provide a message to process",
@@ -314,7 +323,7 @@ export const POST = async (req: Request) => {
           const encoder = new TextEncoder();
 
           handleEmitterEvents(stream, writer, encoder, message.chatId);
-          handleHistorySave(message, humanMessageId, body.files);
+          handleHistorySave(message, humanMessageId, body.files, body.attachedPaperIds);
 
           return new Response(responseStream.readable, {
                headers: {

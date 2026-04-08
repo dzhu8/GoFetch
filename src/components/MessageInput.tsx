@@ -7,7 +7,7 @@ import PdfSelector from "./messageActions/PdfSelector";
 import { useChat } from "@/lib/chat/Chat";
 
 const MessageInput = () => {
-     const { loading, sendMessage } = useChat();
+     const { loading, sendMessage, attachedPaperIds } = useChat();
 
      const [message, setMessage] = useState("");
      const [textareaRows, setTextareaRows] = useState(1);
@@ -84,7 +84,7 @@ const MessageInput = () => {
                {mode === "single" && (
                     <div className="flex flex-row items-center space-x-4">
                          <button
-                              disabled={message.trim().length === 0 || loading}
+                              disabled={(message.trim().length === 0 && attachedPaperIds.length === 0) || loading}
                               className="bg-[#24A0ED] text-white disabled:text-black/50 dark:disabled:text-white/50 hover:bg-opacity-85 transition duration-100 disabled:bg-[#e0e0dc79] dark:disabled:bg-[#ececec21] rounded-full p-2"
                          >
                               <ArrowUp className="bg-background" size={17} />
@@ -99,7 +99,7 @@ const MessageInput = () => {
                          </div>
                          <div className="flex flex-row items-center space-x-4">
                               <button
-                                   disabled={message.trim().length === 0 || loading}
+                                   disabled={(message.trim().length === 0 && attachedPaperIds.length === 0) || loading}
                                    className="bg-[#24A0ED] text-white text-black/50 dark:disabled:text-white/50 hover:bg-opacity-85 transition duration-100 disabled:bg-[#e0e0dc79] dark:disabled:bg-[#ececec21] rounded-full p-2"
                               >
                                    <ArrowUp className="bg-background" size={17} />

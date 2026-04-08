@@ -8,6 +8,67 @@ import { WebSearchChunk } from "./types";
 
 const WEB_CATEGORIES = ["general"];
 
+export interface WebSearchSource {
+     pageContent: string;
+     metadata: { title: string; url: string };
+}
+
+export interface WebSearchPreprocessResult {
+     standaloneQuery: string;
+     searchResults: WebSearchChunk[];
+     sources: WebSearchSource[];
+}
+
+/**
+ * Preprocessing-only variant of WebSearchAgent.
+ * Classifies the query, runs SearXNG web search, deduplicates, and caps to 10 results.
+ * No LLM response generation — returns structured context for external consumption (MCP).
+ *
+ * Note: The classifier step requires an LLM for query reformulation.
+ */
+export async function preprocessWebSearch(
+     query: string,
+     history: Array<[string, string]>,
+     llm: BaseChatModel,
+): Promise<WebSearchPreprocessResult> {
+     const { standaloneQuery, searchQueries } = await classifyWebQuery(query, history, llm);
+
+     const allChunks: WebSearchChunk[] = [];
+
+     await Promise.all(
+          searchQueries.map(async (q) => {
+               try {
+                    const { results } = await searchSearxng(q, {
+                         categories: WEB_CATEGORIES,
+                    });
+                    const chunks: WebSearchChunk[] = results.map((r) => ({
+                         content: r.content || r.title,
+                         metadata: { title: r.title, url: r.url },
+                    }));
+                    allChunks.push(...chunks);
+               } catch (err) {
+                    console.warn(`[webSearch] SearXNG query failed for "${q}":`, err);
+               }
+          }),
+     );
+
+     const seen = new Set<string>();
+     let dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
+          if (seen.has(url)) return false;
+          seen.add(url);
+          return true;
+     });
+
+     dedupedChunks = dedupedChunks.slice(0, 10);
+
+     const sources: WebSearchSource[] = dedupedChunks.map((chunk) => ({
+          pageContent: chunk.content,
+          metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
+     }));
+
+     return { standaloneQuery, searchResults: dedupedChunks, sources };
+}
+
 /**
  * Executes the full web search pipeline:
  * 1. Classifies the query to get a standalone version + search queries
@@ -24,53 +85,16 @@ async function executeSearch(
      systemInstructions: string,
 ): Promise<void> {
      try {
-          // Step 1: classify query and generate targeted search queries
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "analyzing", message: "Analyzing query..." } }));
-          const { standaloneQuery, searchQueries } = await classifyWebQuery(query, history, llm);
-
-          // Step 2: search SearXNG in parallel for each query
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "searching", message: "Searching the web..." } }));
-          const allChunks: WebSearchChunk[] = [];
 
-          await Promise.all(
-               searchQueries.map(async (q) => {
-                    try {
-                         const { results } = await searchSearxng(q, {
-                              categories: WEB_CATEGORIES,
-                         });
-                         const chunks: WebSearchChunk[] = results.map((r) => ({
-                              content: r.content || r.title,
-                              metadata: { title: r.title, url: r.url },
-                         }));
-                         allChunks.push(...chunks);
-                    } catch (err) {
-                         console.warn(`[webSearch] SearXNG query failed for "${q}":`, err);
-                    }
-               }),
-          );
-
-          // Deduplicate by URL
-          const seen = new Set<string>();
-          let dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
-               if (seen.has(url)) return false;
-               seen.add(url);
-               return true;
-          });
-
-          // Cap results to avoid context explosion
-          dedupedChunks = dedupedChunks.slice(0, 10);
-
-          // Step 3: emit sources so the client can display them
-          const sources = dedupedChunks.map((chunk) => ({
-               pageContent: chunk.content,
-               metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
-          }));
+          const { standaloneQuery, searchResults, sources } = await preprocessWebSearch(query, history, llm);
 
           emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
 
-          // Step 4: build context string and stream the writer response
+          // Build context string and stream the writer response
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Generating answer..." } }));
-          const context = dedupedChunks
+          const context = searchResults
                .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\nContent: ${chunk.content}`)
                .join("\n\n");
 

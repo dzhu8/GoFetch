@@ -9,7 +9,7 @@ import PdfSelector from "./messageActions/PdfSelector";
 import GoFetchDog from "../../public/assets/GoFetch-dog-1.svg";
 
 const EmptyChatMessageInput = () => {
-     const { sendMessage, focusMode, setFocusMode } = useChat();
+     const { sendMessage, focusMode, setFocusMode, attachedPaperIds } = useChat();
 
      /* const [copilotEnabled, setCopilotEnabled] = useState(false); */
      const [message, setMessage] = useState("");
@@ -92,7 +92,7 @@ const EmptyChatMessageInput = () => {
                                         )}
                                    </div>
                                    <button
-                                        disabled={message.trim().length === 0}
+                                        disabled={message.trim().length === 0 && attachedPaperIds.length === 0}
                                         className="bg-sky-500 text-white disabled:text-black/50 dark:disabled:text-white/50 disabled:bg-[#e0e0dc] dark:disabled:bg-[#ececec21] hover:bg-opacity-85 transition duration-100 rounded-full p-2"
                                    >
                                         <ArrowRight className="bg-background" size={17} />

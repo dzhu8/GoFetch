@@ -29,12 +29,85 @@ function isReputable(url: string): boolean {
      return REPUTABLE_PUBLISHERS.some((publisher) => normalizedUrl.includes(publisher));
 }
 
+export interface AcademicSearchSource {
+     pageContent: string;
+     metadata: { title: string; url: string };
+}
+
+export interface AcademicSearchPreprocessResult {
+     standaloneQuery: string;
+     filteredResults: AcademicSearchChunk[];
+     sources: AcademicSearchSource[];
+}
+
+/**
+ * Preprocessing-only variant of AcademicSearchAgent.
+ * Classifies the query, runs SearXNG academic search (arxiv, google scholar, pubmed),
+ * deduplicates, and caps results. Skips the LLM-as-judge filtering step — returns all
+ * deduplicated results for the external agent to judge relevance itself.
+ * No LLM response generation — returns structured context for external consumption (MCP).
+ *
+ * Note: The classifier step requires an LLM for query reformulation.
+ */
+export async function preprocessAcademicSearch(
+     query: string,
+     history: Array<[string, string]>,
+     llm: BaseChatModel,
+): Promise<AcademicSearchPreprocessResult> {
+     const { standaloneQuery, searchQueries } = await classifyAcademicQuery(query, history, llm);
+
+     const allChunks: AcademicSearchChunk[] = [];
+
+     await Promise.all(
+          searchQueries.map(async (q) => {
+               try {
+                    const { results } = await searchSearxng(q, {
+                         engines: ACADEMIC_ENGINES,
+                    });
+                    const chunks: AcademicSearchChunk[] = results.map((r) => ({
+                         content: r.content || r.title,
+                         metadata: { title: r.title, url: r.url },
+                    }));
+                    allChunks.push(...chunks);
+               } catch (err) {
+                    console.warn(`[academicSearch] SearXNG query failed for "${q}":`, err);
+               }
+          }),
+     );
+
+     const seen = new Set<string>();
+     let dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
+          if (seen.has(url)) return false;
+          seen.add(url);
+          return true;
+     });
+
+     dedupedChunks = dedupedChunks.slice(0, 45);
+
+     // Prioritize reputable publishers
+     dedupedChunks.sort((a, b) => {
+          const aReputable = isReputable(a.metadata.url);
+          const bReputable = isReputable(b.metadata.url);
+          if (aReputable && !bReputable) return -1;
+          if (!aReputable && bReputable) return 1;
+          return 0;
+     });
+
+     const sources: AcademicSearchSource[] = dedupedChunks.map((chunk) => ({
+          pageContent: chunk.content,
+          metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
+     }));
+
+     return { standaloneQuery, filteredResults: dedupedChunks, sources };
+}
+
 /**
  * Executes the full academic search pipeline:
  * 1. Classifies the query to get a standalone version + search queries
  * 2. Queries SearXNG with academic engines in parallel
- * 3. Emits the search results as sources
- * 4. Generates a streamed LLM response using the writer prompt
+ * 3. LLM-as-judge filters irrelevant sources
+ * 4. Emits the search results as sources
+ * 5. Generates a streamed LLM response using the writer prompt
  */
 async function executeSearch(
      emitter: EventEmitter,
@@ -44,43 +117,12 @@ async function executeSearch(
      systemInstructions: string,
 ): Promise<void> {
      try {
-          // Step 1: classify query and generate targeted search queries
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "analyzing", message: "Analyzing query..." } }));
-          const { standaloneQuery, searchQueries } = await classifyAcademicQuery(query, history, llm);
-
-          // Step 2: search SearXNG in parallel for each query
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "searching", message: "Querying academic databases..." } }));
-          const allChunks: AcademicSearchChunk[] = [];
 
-          await Promise.all(
-               searchQueries.map(async (q) => {
-                    try {
-                         const { results } = await searchSearxng(q, {
-                              engines: ACADEMIC_ENGINES,
-                         });
-                         const chunks: AcademicSearchChunk[] = results.map((r) => ({
-                              content: r.content || r.title,
-                              metadata: { title: r.title, url: r.url },
-                         }));
-                         allChunks.push(...chunks);
-                    } catch (err) {
-                         console.warn(`[academicSearch] SearXNG query failed for "${q}":`, err);
-                    }
-               }),
-          );
+          const { standaloneQuery, filteredResults: dedupedChunks } = await preprocessAcademicSearch(query, history, llm);
 
-          // Deduplicate by URL
-          const seen = new Set<string>();
-          let dedupedChunks = allChunks.filter(({ metadata: { url } }) => {
-               if (seen.has(url)) return false;
-               seen.add(url);
-               return true;
-          });
-
-          // Limit initial search results to avoid context explosion in the filter step
-          dedupedChunks = dedupedChunks.slice(0, 45);
-
-          // Step 3: use the LLM as a judge to filter out irrelevant sources
+          // Use the LLM as a judge to filter out irrelevant sources
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "analyzing", message: "Filtering relevant sources..." } }));
           let filteredChunks = await filterRelevantChunks(standaloneQuery, dedupedChunks, llm);
 
@@ -93,7 +135,7 @@ async function executeSearch(
           // Limit to a maximum of 15 relevant sources to avoid context explosion and citation confusion
           filteredChunks = filteredChunks.slice(0, 15);
 
-          // Prioritize reputable publishers
+          // Prioritize reputable publishers (already sorted in preprocess, re-sort after filtering)
           filteredChunks.sort((a, b) => {
                const aReputable = isReputable(a.metadata.url);
                const bReputable = isReputable(b.metadata.url);
@@ -102,7 +144,7 @@ async function executeSearch(
                return 0;
           });
 
-          // Step 4: emit sources so the client can display them
+          // Emit sources so the client can display them
           const sources = filteredChunks.map((chunk) => ({
                pageContent: chunk.content,
                metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
@@ -110,7 +152,7 @@ async function executeSearch(
 
           emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
 
-          // Step 5: build context string and stream the writer response
+          // Build context string and stream the writer response
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Synthesizing answer..." } }));
           const context = filteredChunks
                .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\nAbstract: ${chunk.content}`)
@@ -135,7 +177,6 @@ async function executeSearch(
                if (!text) continue;
 
                if (outputStarted) {
-                    // Check if this chunk contains the closing tag
                     buffer += text;
                     const endIdx = buffer.indexOf("</output>");
                     if (endIdx !== -1) {
@@ -145,7 +186,6 @@ async function executeSearch(
                          }
                          break;
                     }
-                    // Flush buffer but keep a tail that could contain a partial "</output>"
                     const safe = buffer.length - "</output>".length;
                     if (safe > 0) {
                          emitter.emit("data", JSON.stringify({ type: "response", data: buffer.slice(0, safe) }));
