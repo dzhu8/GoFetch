@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
           const scriptPath = path.join(tempDir, "run.py");
           fs.writeFileSync(scriptPath, PYTHON_SCRIPT);
 
-          // Return a stream for progress tracking (similar to related-papers/paddleocr/extract)
+          // Return a stream for progress tracking (similar to paddleocr/extract)
           const stream = new ReadableStream({
                async start(controller) {
                     const send = (data: any) => controller.enqueue(new TextEncoder().encode(JSON.stringify(data) + "\n"));

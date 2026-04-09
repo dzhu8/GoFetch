@@ -185,7 +185,7 @@ const GetRelatedPapers = () => {
                formData.append("pdf", file);
                formData.append("folderId", String(folder.id));
 
-               const res = await fetch("/api/related-papers/paddleocr/extract", { method: "POST", body: formData });
+               const res = await fetch("/api/paddleocr/extract", { method: "POST", body: formData });
                if (!res.ok) {
                     const data = await res.json().catch(() => ({}));
                     throw new Error(data.error || "OCR extraction failed");

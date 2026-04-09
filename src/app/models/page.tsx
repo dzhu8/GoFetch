@@ -417,7 +417,7 @@ const ModelsPage = () => {
                     setInstallLogMap((prev) => ({ ...prev, [key]: "Checking for CUDA..." }));
 
                     try {
-                         const res = await fetch("/api/related-papers/paddleocr/install", {
+                         const res = await fetch("/api/paddleocr/install", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
                          });

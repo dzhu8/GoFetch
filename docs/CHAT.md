@@ -185,7 +185,7 @@ Delegates actual upload work to `PdfParseProvider.startParseJob()`.
 Multi-path related papers flow:
 1. **Method picker modal**: Choose between DOI entry or PDF upload.
 2. **DOI path**: Input field -> `resolvePaperByDoiAction()` -> confirmation card showing S2 ID and cache status -> `buildRelatedPapersGraphAction()`.
-3. **PDF path**: Folder picker -> file picker -> OCR extraction via `/api/related-papers/paddleocr/extract` (streamed NDJSON with page progress) -> `extractDocumentMetadata()` for title/DOI -> `buildRelatedPapersGraphAction()`.
+3. **PDF path**: Folder picker -> file picker -> OCR extraction via `/api/paddleocr/extract` (streamed NDJSON with page progress) -> `extractDocumentMetadata()` for title/DOI -> `buildRelatedPapersGraphAction()`.
 
 Results are added to chat via `addRelatedPapers()` and rendered by `<RelatedPapersPanel>`.
 

@@ -32,7 +32,7 @@ export default function PaddleInstallMonitor() {
 
           const run = async () => {
                try {
-                    const res = await fetch("/api/related-papers/paddleocr/install", {
+                    const res = await fetch("/api/paddleocr/install", {
                          method: "POST",
                          headers: { "Content-Type": "application/json" },
                          body: JSON.stringify({ pythonPath }),
