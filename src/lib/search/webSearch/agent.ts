@@ -4,6 +4,7 @@ import EventEmitter from "events";
 import { searchSearxng } from "@/lib/searxng";
 import { classifyWebQuery, messagesToTuples } from "./classifier";
 import { getWebWriterPrompt } from "@/lib/prompts/webSearch";
+import { formatResultsForPrompt } from "@/lib/search";
 import { WebSearchChunk } from "./types";
 
 const WEB_CATEGORIES = ["general"];
@@ -24,14 +25,23 @@ export interface WebSearchPreprocessResult {
  * Classifies the query, runs SearXNG web search, deduplicates, and caps to 10 results.
  * No LLM response generation — returns structured context for external consumption (MCP).
  *
- * Note: The classifier step requires an LLM for query reformulation.
+ * When `llm` is provided, the classifier reformulates the query for better search results.
+ * When omitted (e.g. Copilot bridge), the raw user query is used directly.
  */
 export async function preprocessWebSearch(
      query: string,
      history: Array<[string, string]>,
-     llm: BaseChatModel,
+     llm?: BaseChatModel,
 ): Promise<WebSearchPreprocessResult> {
-     const { standaloneQuery, searchQueries } = await classifyWebQuery(query, history, llm);
+     let standaloneQuery: string;
+     let searchQueries: string[];
+
+     if (llm) {
+          ({ standaloneQuery, searchQueries } = await classifyWebQuery(query, history, llm));
+     } else {
+          standaloneQuery = query;
+          searchQueries = [query];
+     }
 
      const allChunks: WebSearchChunk[] = [];
 
@@ -94,9 +104,7 @@ async function executeSearch(
 
           // Build context string and stream the writer response
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Generating answer..." } }));
-          const context = searchResults
-               .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\nContent: ${chunk.content}`)
-               .join("\n\n");
+          const context = formatResultsForPrompt(searchResults, "Content");
 
           const writerPrompt = getWebWriterPrompt(context, systemInstructions);
 

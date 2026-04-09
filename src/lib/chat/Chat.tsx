@@ -515,11 +515,29 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           // eslint-disable-next-line react-hooks/exhaustive-deps
      }, [isConfigReady, isReady, initialMessage]);
 
+     const checkSearxng = async (): Promise<boolean> => {
+          try {
+               const res = await fetch("/api/searxng/health");
+               return res.ok;
+          } catch {
+               return false;
+          }
+     };
+
      const sendMessage: ChatContext["sendMessage"] = async (message, messageId, rewrite = false) => {
           if (focusMode === "academic") {
                return sendAcademicSearch(message);
           }
           if (loading || (!message && attachedPaperIds.length === 0)) return;
+
+          // SearXNG is required for web search when no papers are attached
+          if (attachedPaperIds.length === 0) {
+               if (!(await checkSearxng())) {
+                    toast.error("SearXNG is not available. Web search requires a running SearXNG instance.");
+                    return;
+               }
+          }
+
           setLoading(true);
           setMessageAppeared(false);
 
@@ -708,6 +726,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
      const sendAcademicSearch: ChatContext["sendAcademicSearch"] = async (query) => {
           if (loading || !query) return;
+
+          if (!(await checkSearxng())) {
+               toast.error("SearXNG is not available. Academic search requires a running SearXNG instance.");
+               return;
+          }
+
           setLoading(true);
           setMessageAppeared(false);
 

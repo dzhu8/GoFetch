@@ -19,6 +19,29 @@ export interface SearchAgentLike {
      ): Promise<import("events").EventEmitter>;
 }
 
+// ── Shared formatting ─────────────────────────────────────────────────────────
+
+interface SearchChunkLike {
+     content: string;
+     metadata: { title: string; url: string };
+}
+
+/**
+ * Serialize search result chunks into the numbered `Source [n]:` text format
+ * used by the writer prompts. Extracted from the inline formatting in
+ * webSearch/agent.ts and academicSearch/agent.ts to keep it DRY.
+ *
+ * @param contentLabel — label for the content field ("Content" for web, "Abstract" for academic)
+ */
+export function formatResultsForPrompt(
+     chunks: SearchChunkLike[],
+     contentLabel: string = "Content",
+): string {
+     return chunks
+          .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\n${contentLabel}: ${chunk.content}`)
+          .join("\n\n");
+}
+
 // Lazy-loaded search handlers
 let _searchHandlers: Record<string, SearchAgentLike> | null = null;
 

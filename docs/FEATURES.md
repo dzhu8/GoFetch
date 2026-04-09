@@ -34,7 +34,8 @@ Fetches `/api/chats/{chatId}`. On 404, marks `notFound = true`. Otherwise extrac
 The primary message-sending function. Flow:
 
 1. **Guard** -- If academic mode, delegates to `sendAcademicSearch()`. Returns early if loading or message empty.
-2. **State init** -- Sets `loading = true`, `messageAppeared = false`. On first message, updates URL to `/c/{chatId}`.
+2. **SearXNG pre-check** -- When no papers are attached (web search path), calls `GET /api/searxng/health` before navigation. If SearXNG is unavailable, shows a `toast.error` and returns early — the user stays on the current page.
+3. **State init** -- Sets `loading = true`, `messageAppeared = false`. On first message, updates URL to `/c/{chatId}`.
 3. **User message** -- Immediately adds a `UserMessage` to local state.
 4. **POST `/api/chat`** -- Sends message content, chatId, fileIds, chat history (optionally sliced for rewrites), chatModel `{key, providerId}`, embeddingModel `{key, providerId}`, and systemInstructions.
 5. **Stream response** -- Reads `response.body` chunk-by-chunk via `TextDecoder`, parses newline-delimited JSON. Each message has a `type` field:
@@ -46,7 +47,7 @@ The primary message-sending function. Flow:
 
 #### `sendAcademicSearch()` (Academic Mode)
 
-Nearly identical to `sendMessage()` but POSTs to `/api/academic-search` with `query` instead of `content`, has no file support, no auto-suggestions logic, and does not update history until `messageEnd`.
+Nearly identical to `sendMessage()` but POSTs to `/api/academic-search` with `query` instead of `content`, has no file support, no auto-suggestions logic, and does not update history until `messageEnd`. Includes the same SearXNG pre-check — always required since academic search depends on SearXNG.
 
 #### `rewrite()` (Response Regeneration)
 
@@ -84,6 +85,7 @@ The most complex computation in Chat.tsx. Groups `messages` into `Section[]` whe
 | `/api/chat` | POST | Send message, stream response (status/sources/message/messageEnd/error) |
 | `/api/academic-search` | POST | Academic-focused search (same streaming format) |
 | `/api/suggestions` | POST | Generate follow-up suggestions |
+| `/api/searxng/health` | GET | Pre-send SearXNG availability check (3s timeout) |
 
 ### Dependencies
 
@@ -159,7 +161,7 @@ Ensures next chunk doesn't start mid-word. Searches forward up to 50 chars for a
 
 ### Public Entry Point (`index.ts`)
 
-**`chunkFolderRegistration(registration, options?)`** -- Calls `listSupportedTextFiles()` then `chunkFiles()`. This is the main entry point consumed by `src/lib/embed/initial.ts` -> `ensureTextChunkSnapshots()`.
+**`chunkFolderRegistration(registration, options?)`** -- Calls `listSupportedTextFiles()` then `chunkFiles()`. This is the main entry point for folder-level text chunking.
 
 Re-exports all types and functions from submodules.
 
@@ -305,7 +307,7 @@ The `ConfigManager` class (singleton at `/src/server/index.ts`) uses these types
 
 ## 5. `embed/`
 
-Files: [types.ts](src/lib/embed/types.ts), [progress.ts](src/lib/embed/progress.ts), [paperProcess.ts](src/lib/embed/paperProcess.ts), [initial.ts](src/lib/embed/initial.ts).
+Files: [types.ts](src/lib/embed/types.ts), [progress.ts](src/lib/embed/progress.ts), [paperProcess.ts](src/lib/embed/paperProcess.ts).
 
 ### Purpose
 
@@ -342,35 +344,6 @@ Fetches paper chunks from DB, resolves embedding model from settings/registry, e
 ### Paper Deletion Cleanup (`actions/papers.ts`)
 
 `deletePaper()` performs full cleanup: removes the PDF file, the extracted figure image, the `.ocr.json` OCR sidecar, all `paperChunks` rows, and the `papers` DB record. The figure serving route (`/api/papers/[id]/figure`) uses `Cache-Control: no-cache` to prevent browsers from serving stale cached figures when SQLite reuses a deleted paper's rowid for a newly uploaded paper.
-
-### Initial Folder Embeddings (`initial.ts`)
-
-#### `scheduleInitialEmbedding(folder)`
-
-Main async scheduling function with cancellation support:
-
-1. Cancel existing job for the folder (sets `job.cancelled = true`).
-2. Update progress to `"parsing"`.
-3. Call `ensureTextChunkSnapshots(folder)` -- checks `textChunkSnapshots` table; if missing, calls `chunkFolderRegistration(folder)` from `../chunk`, generates SHA256 hashes of file paths, inserts chunk records in transaction.
-4. Call `embedFolderFromSnapshots(folderName, options)`:
-   - `collectTextChunkDocuments()` -- queries `textChunkSnapshots`, formats each chunk with path/format/span/content metadata, creates labels (first 50 chars).
-   - `resolveEmbeddingPreferenceFromSettings()` -- gets embedding model preference.
-   - `deleteExistingInitialEmbeddings(folderName)` -- batch deletes existing "initial" stage embeddings (500-item chunks to avoid SQLite variable limits).
-   - Routes to either `embedWithSummarization()` or `embedDirectly()` based on `getEmbedSummariesPreference()`.
-
-#### `embedWithSummarization()` Path
-
-1. **Summarization** (batch size = 8): For each batch, calls `summarizeDocumentBatch(chatModel, batch)`. Each chunk gets a prompt with file path, format, and original content. The system prompt instructs the LLM to focus on what makes the snippet DISTINCT, include algorithm/function names, keep under 200 words, use searchable natural language, omit code syntax. Falls back to original content on failure. Tracks output tokens.
-2. **Embedding** (batch size = 64): Embeds summaries via `embeddingModel.embedDocuments()`. Stores vectors with metadata: `stage="initial"`, `type="text-chunk"`, format, chunkIndex, label, original content.
-3. **Batch insert** (chunk size = 50): Transaction inserts to `embeddings` table.
-
-#### `embedDirectly()` Path
-
-Skips summarization, embeds original chunk content directly (batch size = 64), same insert pattern.
-
-#### `cancelInitialEmbedding(folderName)`
-
-Sets cancellation flag, clears progress. Multiple cancellation checks throughout the pipeline prevent wasted API calls.
 
 ### Dependencies
 
@@ -509,39 +482,7 @@ Result is added as a `SuggestionMessage` to the messages array, displayed to the
 
 ---
 
-## 8. `outputParsers/`
-
-Files: [fileLinksOutputParser.ts](src/lib/outputParsers/fileLinksOutputParser.ts), [lineOutputParser.ts](src/lib/outputParsers/lineOutputParser.ts).
-
-### Purpose
-
-Custom LangChain output parsers that extract structured information from LLM outputs using XML tag delimiters.
-
-### `LineOutputParser` (default export from `lineOutputParser.ts`)
-
-Extends `BaseOutputParser<string | undefined>` from `@langchain/core/output_parsers`.
-
-**Constructor**: `new LineOutputParser({ key?: string })` -- defaults key to `"questions"`.
-
-**`parse(text)`**: Searches for `<${key}>` and `</${key}>` delimiters. Extracts content between them. Strips leading markdown list markers (regex: `^(\s*(-|\*|\d+\.\s|\d+\)\s|\u2022)\s*)+`). Returns the extracted string, or `undefined` if delimiters not found.
-
-**Usage**: In `codeSearchAgent.ts` (instantiated with `key: "question"`) to extract rephrased questions from LLM output. Falls back to full `llmOutput` if parsing returns undefined.
-
-### `FileLinksOutputParser` (default export from `fileLinksOutputParser.ts`)
-
-Extends `BaseOutputParser<FileInfo[]>`.
-
-**Constructor**: `new FileLinksOutputParser({ key?: string })` -- defaults key to `"links"`.
-
-**`parse(text)`**: Extracts content between `<links>` and `</links>`, splits by newline, strips list markers, extracts filename from path (handles `/` and `\`), detects language from extension via `extensionToLanguage` map (supports 40+ languages/formats). Returns `FileInfo[]` with `{ filename, language }`.
-
-**`extensionToLanguage`** covers: JS/TS ecosystem, web technologies, server-side languages (Python, Java, Go, Rust, Ruby, PHP, Swift), data/config formats, database (SQL), markup, functional languages, and frontend frameworks (Vue, Svelte).
-
-**Status**: Currently unused in the codebase (prepared for future functionality).
-
----
-
-## 9. `prompts/`
+## 8. `prompts/`
 
 Contains: [academicSearch.ts](src/lib/prompts/academicSearch.ts).
 
@@ -596,7 +537,7 @@ User Query -> classifyAcademicQuery (classifier prompt)
 
 ---
 
-## 10. `relatedPapers/`
+## 9. `relatedPapers/`
 
 Files: [abstractEmbedding.ts](src/lib/relatedPapers/abstractEmbedding.ts), [graph.ts](src/lib/relatedPapers/graph.ts).
 
@@ -670,7 +611,7 @@ Filters by `bcThreshold` and `ccThreshold`.
 
 ---
 
-## 11. `search/`
+## 10. `search/`
 
 Files: [index.ts](src/lib/search/index.ts), [baseSearchAgent.ts](src/lib/search/baseSearchAgent.ts), [HNSWSearch.ts](src/lib/search/HNSWSearch.ts), `academicSearch/` subfolder, `webSearch/` subfolder, and `pdfContext/` subfolder.
 
@@ -684,6 +625,7 @@ Uses **lazy loading** with `require()` instead of `import` to defer initializati
 
 - **`getSearchHandlers()`** — Returns singleton `{ default: WebSearchAgent, code: WebSearchAgent }`. The `"code"` key is maintained as an alias for backward compatibility but now routes to the web search pipeline.
 - **`getHNSWSearch()`** — Returns the `HNSWSearch` class constructor (used by library search).
+- **`formatResultsForPrompt(chunks, contentLabel?)`** — Shared helper that serializes search result chunks into the numbered `Source [n]:\nTitle: ...\nURL: ...\n{contentLabel}: ...` text format consumed by writer prompts. Used by `webSearch/agent.ts` (`"Content"`), `academicSearch/agent.ts` (`"Abstract"`), and the Copilot bridge.
 
 ### Abstract Base (`baseSearchAgent.ts`)
 
@@ -705,7 +647,7 @@ Files: [agent.ts](src/lib/search/webSearch/agent.ts), [classifier.ts](src/lib/se
 2. **Search**: Queries SearXNG in parallel using the `"general"` category.
 3. **Synthesis**: Deduplicates results by URL, caps at 10 sources, and streams a grounded response using the `webWriterPrompt`.
 
-**`preprocessWebSearch()`** — Preprocessing-only variant for MCP. Runs steps 1–2 (classification + SearXNG search + dedup + cap) and returns `{ standaloneQuery, searchResults, sources }`. No LLM response generation. The classifier step still requires an LLM for query reformulation. The full agent's `executeSearch()` delegates to this function internally.
+**`preprocessWebSearch(query, history, llm?)`** — Preprocessing-only variant for MCP and Copilot bridge. Runs steps 1–2 (classification + SearXNG search + dedup + cap) and returns `{ standaloneQuery, searchResults, sources }`. No LLM response generation. When `llm` is provided, the classifier reformulates the query for better search results; when omitted (e.g. Copilot bridge), the raw user query is used directly as the SearXNG search query. The full agent's `executeSearch()` delegates to this function internally.
 
 ### Academic Search (`academicSearch/`)
 
@@ -718,7 +660,7 @@ Executes a specialized research pipeline:
 3. **Refinement**: Uses the LLM as a judge to filter the top 45 results down to the most relevant ~15 sources based on title and abstract.
 4. **Synthesis**: Streams a technical response with strict inline citation requirements.
 
-**`preprocessAcademicSearch()`** — Preprocessing-only variant for MCP. Runs steps 1–2 (classification + SearXNG search + dedup + cap to 45 + reputable publisher sort) and returns `{ standaloneQuery, filteredResults, sources }`. Skips the LLM-as-judge filtering step — returns all deduplicated results for the external agent to judge relevance itself. The classifier step still requires an LLM for query reformulation. The full agent's `executeSearch()` delegates to this function for the search phase, then applies LLM filtering on top.
+**`preprocessAcademicSearch(query, history, llm?)`** — Preprocessing-only variant for MCP and Copilot bridge. Runs steps 1–2 (classification + SearXNG search + dedup + cap to 45 + reputable publisher sort) and returns `{ standaloneQuery, filteredResults, sources }`. Skips the LLM-as-judge filtering step — returns all deduplicated results for the external agent to judge relevance itself. When `llm` is provided, the classifier reformulates the query; when omitted (e.g. Copilot bridge), the raw user query is used directly. The full agent's `executeSearch()` delegates to this function for the search phase, then applies LLM filtering on top.
 
 ### PDF Context Search (`pdfContext/`)
 
@@ -764,7 +706,7 @@ Files: [agent.ts](src/lib/search/pdfContext/agent.ts). Paper reconstruction logi
 
 **Integration**: The chat route (`/api/chat`) detects `attachedPaperIds` in the request body and routes to `PdfContextAgent` instead of the default web search agent. The client-side `PdfSelector` component (in `messageActions/`) provides a popover listing all `status = "ready"` papers for toggle-based selection, stored as `attachedPaperIds` in chat context.
 
-## 12. `copilot/`
+## 11. `copilot/`
 
 Files: [bridge.ts](src/lib/copilot/bridge.ts).
 
@@ -784,7 +726,7 @@ When the chat route receives `providerId: "copilot"`:
 
 1. **PDF context** (`attachedPaperIds` present): Calls `preprocessPdfContext()` to fetch paper text from DB, builds the system prompt via `getPdfOrganizerPrompt()`, spawns Copilot with the combined prompt. Sources are emitted immediately.
 
-2. **Web / academic / default**: Builds a prompt using the appropriate writer template (`getWebWriterPrompt` or `getAcademicWriterPrompt`) with conversation history. Since the classifier step requires an LLM for query reformulation, Copilot receives the user's raw query and is expected to use its own knowledge or MCP tools.
+2. **Web / academic / default**: Calls `preprocessWebSearch()` or `preprocessAcademicSearch()` (without an LLM — falls back to the raw user query for SearXNG) to gather real search results, emits sources for the frontend, formats the results via `formatResultsForPrompt()`, builds a grounded prompt using the appropriate writer template (`getWebWriterPrompt` or `getAcademicWriterPrompt`), and spawns Copilot. If SearXNG is unavailable, emits an error event and stops — without search results there is nothing to ground the response on.
 
 ### Configuration
 

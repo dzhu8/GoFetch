@@ -38,7 +38,7 @@ Central chat endpoint. Accepts a JSON body validated by Zod:
 
 **Routing logic:**
 
-1. **Copilot path** (`providerId === "copilot"`): Bypasses model registry, delegates to `handleCopilotChat()` from `src/lib/copilot/bridge.ts`.
+1. **Copilot path** (`providerId === "copilot"`): Bypasses model registry, delegates to `handleCopilotChat()` from `src/lib/copilot/bridge.ts`. For web/academic focus modes, runs SearXNG preprocessing to inject real search results into the Copilot prompt.
 2. **PDF context path** (`attachedPaperIds` present): Lazy-loads `PdfContextAgent`, calls `searchAndAnswer()` with paper IDs.
 3. **Default path**: Loads LLM from provider registry, selects search agent via `getSearchAgent(focusMode)` (web search by default), calls `searchAndAnswer()`.
 
@@ -56,7 +56,11 @@ Central chat endpoint. Accepts a JSON body validated by Zod:
 
 ### `POST /api/academic-search` -- [src/app/api/academic-search/route.ts](src/app/api/academic-search/route.ts)
 
-Academic search endpoint. Same streaming protocol as `/api/chat` but accepts `query` instead of `content`, has no file support, and routes directly to the academic search agent.
+Academic search endpoint. Same streaming protocol as `/api/chat` but accepts `query` instead of `content`, has no file support, and routes directly to the academic search agent. When `providerId === "copilot"`, delegates to `handleCopilotChat()` with `focusMode: "academic"`.
+
+### `GET /api/searxng/health` -- [src/app/api/searxng/health/route.ts](src/app/api/searxng/health/route.ts)
+
+Lightweight SearXNG availability check (3-second timeout). Returns `{ available: true }` (200) or `{ available: false, error }` (503). Called by the chat context before navigation when web or academic search is needed, so users see the error before leaving the home page.
 
 ### `POST /api/suggestions`
 
@@ -282,7 +286,7 @@ All agents extend `BaseSearchAgent` ([src/lib/search/baseSearchAgent.ts](src/lib
 
 ### Copilot Bridge
 
-[src/lib/copilot/bridge.ts](src/lib/copilot/bridge.ts) -- Documented in [FEATURES.md section 12](FEATURES.md). `handleCopilotChat()` preprocesses based on focus mode, builds a prompt from the existing prompt templates, and spawns a headless Copilot CLI.
+[src/lib/copilot/bridge.ts](src/lib/copilot/bridge.ts) -- Documented in [FEATURES.md section 12](FEATURES.md). `handleCopilotChat()` preprocesses based on focus mode (PDF: `preprocessPdfContext()`; web/academic: `preprocessWebSearch()` / `preprocessAcademicSearch()` without an LLM, falling back to raw queries for SearXNG), emits sources for the frontend, builds a grounded prompt from the existing prompt templates, and spawns a headless Copilot CLI. If SearXNG is unavailable for web/academic modes, emits an error and stops.
 
 ---
 

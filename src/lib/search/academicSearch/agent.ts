@@ -5,6 +5,7 @@ import { searchSearxng } from "@/lib/searxng";
 import { classifyAcademicQuery } from "./classifier";
 import { filterRelevantChunks } from "./filter";
 import { getAcademicWriterPrompt } from "@/lib/prompts/academicSearch";
+import { formatResultsForPrompt } from "@/lib/search";
 import { AcademicSearchChunk } from "./types";
 
 const ACADEMIC_ENGINES = ["arxiv", "google scholar", "pubmed"];
@@ -47,14 +48,23 @@ export interface AcademicSearchPreprocessResult {
  * deduplicated results for the external agent to judge relevance itself.
  * No LLM response generation — returns structured context for external consumption (MCP).
  *
- * Note: The classifier step requires an LLM for query reformulation.
+ * When `llm` is provided, the classifier reformulates the query for better search results.
+ * When omitted (e.g. Copilot bridge), the raw user query is used directly.
  */
 export async function preprocessAcademicSearch(
      query: string,
      history: Array<[string, string]>,
-     llm: BaseChatModel,
+     llm?: BaseChatModel,
 ): Promise<AcademicSearchPreprocessResult> {
-     const { standaloneQuery, searchQueries } = await classifyAcademicQuery(query, history, llm);
+     let standaloneQuery: string;
+     let searchQueries: string[];
+
+     if (llm) {
+          ({ standaloneQuery, searchQueries } = await classifyAcademicQuery(query, history, llm));
+     } else {
+          standaloneQuery = query;
+          searchQueries = [query];
+     }
 
      const allChunks: AcademicSearchChunk[] = [];
 
@@ -154,9 +164,7 @@ async function executeSearch(
 
           // Build context string and stream the writer response
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Synthesizing answer..." } }));
-          const context = filteredChunks
-               .map((chunk, i) => `Source [${i + 1}]:\nTitle: ${chunk.metadata.title}\nURL: ${chunk.metadata.url}\nAbstract: ${chunk.content}`)
-               .join("\n\n");
+          const context = formatResultsForPrompt(filteredChunks, "Abstract");
 
           const writerPrompt = getAcademicWriterPrompt(context, systemInstructions);
 

@@ -6,6 +6,7 @@ import { chats, messages as messagesSchema } from "@/server/db/schema";
 import { academicSearches } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import { createAcademicSearchStream } from "@/lib/search/academicSearch/agent";
+import { handleCopilotChat } from "@/lib/copilot/bridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -135,18 +136,6 @@ export const POST = async (req: Request) => {
 
           const body = parseResult.data as Body;
 
-          // Load the chat model lazily to avoid loading native modules at bundle time
-          const modelRegistry = getModelRegistry();
-          const provider = modelRegistry.getProviderById(body.chatModel.providerId);
-          if (!provider) {
-               return Response.json(
-                    { message: `Provider ${body.chatModel.providerId} not found` },
-                    { status: 400 },
-               );
-          }
-
-          const llm = (await provider.provider.loadChatModel(body.chatModel.key)) as BaseChatModel;
-
           // Ensure chat exists in DB for conversation linking
           const existingChat = await db.query.chats.findFirst({
                where: eq(chats.id, body.chatId),
@@ -181,12 +170,34 @@ export const POST = async (req: Request) => {
           }
 
           // Start the academic search stream
-          const stream = createAcademicSearchStream(
-               body.query,
-               body.history,
-               llm,
-               body.systemInstructions ?? "",
-          );
+          let stream: NodeJS.EventEmitter;
+
+          if (body.chatModel.providerId === "copilot") {
+               stream = await handleCopilotChat({
+                    message: body.query,
+                    focusMode: "academic",
+                    history: body.history,
+                    systemInstructions: body.systemInstructions,
+                    model: body.chatModel.key,
+               });
+          } else {
+               const modelRegistry = getModelRegistry();
+               const provider = modelRegistry.getProviderById(body.chatModel.providerId);
+               if (!provider) {
+                    return Response.json(
+                         { message: `Provider ${body.chatModel.providerId} not found` },
+                         { status: 400 },
+                    );
+               }
+
+               const llm = (await provider.provider.loadChatModel(body.chatModel.key)) as BaseChatModel;
+               stream = createAcademicSearchStream(
+                    body.query,
+                    body.history,
+                    llm,
+                    body.systemInstructions ?? "",
+               );
+          }
 
           const responseStream = new TransformStream();
           const writer = responseStream.writable.getWriter();

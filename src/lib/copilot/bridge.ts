@@ -1,6 +1,9 @@
 import { spawn } from "child_process";
 import EventEmitter from "events";
 import { preprocessPdfContext } from "@/lib/search/pdfContext/agent";
+import { preprocessWebSearch } from "@/lib/search/webSearch/agent";
+import { preprocessAcademicSearch } from "@/lib/search/academicSearch/agent";
+import { formatResultsForPrompt } from "@/lib/search";
 import { getPdfOrganizerPrompt } from "@/lib/prompts/pdfContext";
 import { getWebWriterPrompt } from "@/lib/prompts/webSearch";
 import { getAcademicWriterPrompt } from "@/lib/prompts/academicSearch";
@@ -167,9 +170,8 @@ export async function handleCopilotChat(
      }
 
      // ── Generic path (web search / academic / default) ────────────────────
-     // Without an LLM available for the classifier step, we pass the user's
-     // raw query and conversation history directly to Copilot along with the
-     // appropriate writer prompt instructions.
+     // Run SearXNG preprocessing (no LLM — raw query fallback) and inject
+     // real search results into the Copilot prompt so responses are grounded.
      const historyBlock = history.length > 0
           ? history
                  .map(([role, content]) => `${role === "human" ? "User" : "Assistant"}: ${content}`)
@@ -177,23 +179,53 @@ export async function handleCopilotChat(
           : "";
 
      let writerInstructions: string;
-     if (focusMode === "academic") {
-          writerInstructions = getAcademicWriterPrompt(
-               "(No pre-fetched results — use your own knowledge or available tools.)",
-               systemInstructions ?? "",
-          );
-     } else {
-          writerInstructions = getWebWriterPrompt(
-               "(No pre-fetched results — use your own knowledge or available tools.)",
-               systemInstructions ?? "",
-          );
-     }
+     const emitter = new EventEmitter();
 
-     const fullPrompt = [
-          writerInstructions,
-          historyBlock ? `\n<conversation_history>\n${historyBlock}\n</conversation_history>` : "",
-          `\nUser query: ${message}`,
-     ].join("\n");
+     setImmediate(async () => {
+          try {
+               if (focusMode === "academic") {
+                    const { filteredResults, sources } = await preprocessAcademicSearch(message, history);
+                    const context = formatResultsForPrompt(filteredResults, "Abstract");
+                    writerInstructions = getAcademicWriterPrompt(context, systemInstructions ?? "");
 
-     return spawnCopilot(fullPrompt, copilotOpts);
+                    if (sources.length > 0) {
+                         emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
+                    }
+               } else {
+                    const { searchResults, sources } = await preprocessWebSearch(message, history);
+                    const context = formatResultsForPrompt(searchResults, "Content");
+                    writerInstructions = getWebWriterPrompt(context, systemInstructions ?? "");
+
+                    if (sources.length > 0) {
+                         emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
+                    }
+               }
+          } catch (err: any) {
+               const mode = focusMode === "academic" ? "Academic search" : "Web search";
+               emitter.emit(
+                    "data",
+                    JSON.stringify({
+                         type: "error",
+                         data: `SearXNG is not available. ${mode} requires a running SearXNG instance.`,
+                    }),
+               );
+               emitter.emit("end");
+               return;
+          }
+
+          const fullPrompt = [
+               writerInstructions,
+               historyBlock ? `\n<conversation_history>\n${historyBlock}\n</conversation_history>` : "",
+               `\nUser query: ${message}`,
+          ].join("\n");
+
+          const copilotEmitter = spawnCopilot(fullPrompt, copilotOpts);
+
+          // Pipe all Copilot events through to the caller's emitter
+          copilotEmitter.on("data", (d) => emitter.emit("data", d));
+          copilotEmitter.on("end", () => emitter.emit("end"));
+          copilotEmitter.on("error", (e) => emitter.emit("error", e));
+     });
+
+     return emitter;
 }
