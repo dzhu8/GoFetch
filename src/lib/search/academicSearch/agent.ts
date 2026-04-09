@@ -5,7 +5,7 @@ import { searchSearxng } from "@/lib/searxng";
 import { classifyAcademicQuery } from "./classifier";
 import { filterRelevantChunks } from "./filter";
 import { getAcademicWriterPrompt } from "@/lib/prompts/academicSearch";
-import { formatResultsForPrompt } from "@/lib/search";
+import { formatResultsForPrompt, extractCitedSources, remapCitationsInText } from "@/lib/search";
 import { AcademicSearchChunk } from "./types";
 
 const ACADEMIC_ENGINES = ["arxiv", "google scholar", "pubmed"];
@@ -154,15 +154,13 @@ async function executeSearch(
                return 0;
           });
 
-          // Emit sources so the client can display them
           const sources = filteredChunks.map((chunk) => ({
                pageContent: chunk.content,
                metadata: { title: chunk.metadata.title, url: chunk.metadata.url },
           }));
 
-          emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
-
-          // Build context string and stream the writer response
+          // Buffer the full response before displaying — sources are deferred until
+          // we know which ones the model actually cited.
           emitter.emit("data", JSON.stringify({ type: "status", data: { stage: "generating", message: "Synthesizing answer..." } }));
           const context = formatResultsForPrompt(filteredChunks, "Abstract");
 
@@ -178,8 +176,10 @@ async function executeSearch(
                new HumanMessage(standaloneQuery),
           ]);
 
+          // Accumulate the full response (inside <output> tags) without emitting chunks
           let outputStarted = false;
           let buffer = "";
+          let fullResponse = "";
           for await (const chunk of llmStream) {
                const text = typeof chunk.content === "string" ? chunk.content : "";
                if (!text) continue;
@@ -188,16 +188,8 @@ async function executeSearch(
                     buffer += text;
                     const endIdx = buffer.indexOf("</output>");
                     if (endIdx !== -1) {
-                         const finalText = buffer.slice(0, endIdx);
-                         if (finalText) {
-                              emitter.emit("data", JSON.stringify({ type: "response", data: finalText }));
-                         }
+                         fullResponse += buffer.slice(0, endIdx);
                          break;
-                    }
-                    const safe = buffer.length - "</output>".length;
-                    if (safe > 0) {
-                         emitter.emit("data", JSON.stringify({ type: "response", data: buffer.slice(0, safe) }));
-                         buffer = buffer.slice(safe);
                     }
                } else {
                     buffer += text;
@@ -209,6 +201,20 @@ async function executeSearch(
                }
           }
 
+          // Prune to only cited sources and remap citation numbers
+          let finalResponse = fullResponse;
+          let finalSources = sources;
+          if (sources.length > 0 && fullResponse) {
+               const { prunedSources, citationMap } = extractCitedSources(fullResponse, sources);
+               if (prunedSources.length > 0) {
+                    finalSources = prunedSources;
+                    finalResponse = remapCitationsInText(fullResponse, citationMap);
+               }
+          }
+
+          // Emit sources and full response together — client sees them at the same time
+          emitter.emit("data", JSON.stringify({ type: "sources", data: finalSources }));
+          emitter.emit("data", JSON.stringify({ type: "response", data: finalResponse }));
           emitter.emit("end");
      } catch (err: any) {
           console.error("[academicSearch] Search failed:", err);

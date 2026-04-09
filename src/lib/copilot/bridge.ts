@@ -3,7 +3,7 @@ import EventEmitter from "events";
 import { preprocessPdfContext } from "@/lib/search/pdfContext/agent";
 import { preprocessWebSearch } from "@/lib/search/webSearch/agent";
 import { preprocessAcademicSearch } from "@/lib/search/academicSearch/agent";
-import { formatResultsForPrompt } from "@/lib/search";
+import { formatResultsForPrompt, extractCitedSources, remapCitationsInText } from "@/lib/search";
 import { getPdfOrganizerPrompt } from "@/lib/prompts/pdfContext";
 import { getWebWriterPrompt } from "@/lib/prompts/webSearch";
 import { getAcademicWriterPrompt } from "@/lib/prompts/academicSearch";
@@ -12,6 +12,13 @@ import { getAcademicWriterPrompt } from "@/lib/prompts/academicSearch";
 
 const COPILOT_COMMAND = process.env.COPILOT_COMMAND ?? "copilot";
 const COPILOT_MODEL = process.env.COPILOT_MODEL; // e.g. "claude-sonnet-4.5"
+
+/**
+ * Base system instruction for the generic Copilot path (no focus-mode-specific
+ * writer prompt).  Ensures the response renders well in the markdown-to-jsx
+ * chat window regardless of which Copilot-backed model is active.
+ */
+const COPILOT_MARKDOWN_PROMPT = `Respond using Markdown formatting for clarity. Use headings (##), bold, bullet points, numbered lists, and fenced code blocks where appropriate. Start directly with the answer — do not include a top-level title or repeat the question.`;
 
 export interface CopilotOptions {
      model?: string;
@@ -169,16 +176,32 @@ export async function handleCopilotChat(
           return emitter;
      }
 
-     // ── Generic path (web search / academic / default) ────────────────────
-     // Run SearXNG preprocessing (no LLM — raw query fallback) and inject
-     // real search results into the Copilot prompt so responses are grounded.
+     // ── Shared history block ─────────────────────────────────────────────
      const historyBlock = history.length > 0
           ? history
                  .map(([role, content]) => `${role === "human" ? "User" : "Assistant"}: ${content}`)
                  .join("\n")
           : "";
 
+     // ── Code / generic path (no SearXNG needed) ─────────────────────────
+     // When no search-specific focus mode is active, spawn Copilot directly
+     // with a lightweight markdown instruction so the response renders well.
+     if (focusMode !== "academic" && focusMode !== "default") {
+          const fullPrompt = [
+               COPILOT_MARKDOWN_PROMPT,
+               systemInstructions ? `\nAdditional instructions from the user:\n${systemInstructions}` : "",
+               historyBlock ? `\n<conversation_history>\n${historyBlock}\n</conversation_history>` : "",
+               `\nUser query: ${message}`,
+          ].join("\n");
+
+          return spawnCopilot(fullPrompt, copilotOpts);
+     }
+
+     // ── Search path (web / academic) ─────────────────────────────────────
+     // Run SearXNG preprocessing (no LLM — raw query fallback) and inject
+     // real search results into the Copilot prompt so responses are grounded.
      let writerInstructions: string;
+     let academicSources: { pageContent: string; metadata: { title: string; url: string } }[] = [];
      const emitter = new EventEmitter();
 
      setImmediate(async () => {
@@ -187,10 +210,7 @@ export async function handleCopilotChat(
                     const { filteredResults, sources } = await preprocessAcademicSearch(message, history);
                     const context = formatResultsForPrompt(filteredResults, "Abstract");
                     writerInstructions = getAcademicWriterPrompt(context, systemInstructions ?? "");
-
-                    if (sources.length > 0) {
-                         emitter.emit("data", JSON.stringify({ type: "sources", data: sources }));
-                    }
+                    academicSources = sources;
                } else {
                     const { searchResults, sources } = await preprocessWebSearch(message, history);
                     const context = formatResultsForPrompt(searchResults, "Content");
@@ -221,10 +241,40 @@ export async function handleCopilotChat(
 
           const copilotEmitter = spawnCopilot(fullPrompt, copilotOpts);
 
-          // Pipe all Copilot events through to the caller's emitter
-          copilotEmitter.on("data", (d) => emitter.emit("data", d));
-          copilotEmitter.on("end", () => emitter.emit("end"));
-          copilotEmitter.on("error", (e) => emitter.emit("error", e));
+          // For academic mode, buffer the full response, prune sources to only
+          // those actually cited, remap citations, then emit everything together.
+          if (focusMode === "academic" && academicSources.length > 0) {
+               let accumulatedResponse = "";
+               copilotEmitter.on("data", (d) => {
+                    const parsed = JSON.parse(d);
+                    if (parsed.type === "response") {
+                         accumulatedResponse += parsed.data;
+                    } else {
+                         // Forward non-response events (status, error) immediately
+                         emitter.emit("data", d);
+                    }
+               });
+               copilotEmitter.on("end", () => {
+                    let finalSources = academicSources;
+                    let finalResponse = accumulatedResponse;
+                    if (accumulatedResponse && academicSources.length > 0) {
+                         const { prunedSources, citationMap } = extractCitedSources(accumulatedResponse, academicSources);
+                         if (prunedSources.length > 0) {
+                              finalSources = prunedSources;
+                              finalResponse = remapCitationsInText(accumulatedResponse, citationMap);
+                         }
+                    }
+                    emitter.emit("data", JSON.stringify({ type: "sources", data: finalSources }));
+                    emitter.emit("data", JSON.stringify({ type: "response", data: finalResponse }));
+                    emitter.emit("end");
+               });
+               copilotEmitter.on("error", (e) => emitter.emit("error", e));
+          } else {
+               // Pipe all Copilot events through to the caller's emitter
+               copilotEmitter.on("data", (d) => emitter.emit("data", d));
+               copilotEmitter.on("end", () => emitter.emit("end"));
+               copilotEmitter.on("error", (e) => emitter.emit("error", e));
+          }
      });
 
      return emitter;

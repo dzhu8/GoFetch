@@ -42,6 +42,68 @@ export function formatResultsForPrompt(
           .join("\n\n");
 }
 
+// ── Post-generation source pruning ───────────────────────────────────────────
+
+export interface PrunedSourcesResult<T> {
+     /** Compact array containing only the sources the model actually cited. */
+     prunedSources: T[];
+     /** Maps original 1-based citation numbers to new compact 1-based numbers. */
+     citationMap: Record<number, number>;
+}
+
+/**
+ * Parse citation references ([1], [2,3], etc.) from the model's response and
+ * return only the sources that were actually cited, with a mapping from old
+ * citation numbers to new compact numbers.
+ *
+ * Used by the academic search agent and the Copilot bridge to prune the source
+ * list after generation so every displayed source card matches a citation in
+ * the response text.
+ */
+export function extractCitedSources<T>(
+     responseText: string,
+     allSources: T[],
+): PrunedSourcesResult<T> {
+     const citedNumbers = new Set<number>();
+     const regex = /\[(\d+(?:,\s*\d+)*)\]/g;
+     let match;
+     while ((match = regex.exec(responseText)) !== null) {
+          for (const n of match[1].split(",")) {
+               const num = parseInt(n.trim());
+               if (!isNaN(num) && num > 0 && num <= allSources.length) {
+                    citedNumbers.add(num);
+               }
+          }
+     }
+
+     const sortedCited = Array.from(citedNumbers).sort((a, b) => a - b);
+     const citationMap: Record<number, number> = {};
+     const prunedSources = sortedCited.map((oldNum, i) => {
+          citationMap[oldNum] = i + 1;
+          return allSources[oldNum - 1];
+     });
+
+     return { prunedSources, citationMap };
+}
+
+/**
+ * Rewrite `[n]` citation numbers in text using a citationMap (old → new).
+ * Applied server-side so the client receives response text that already
+ * matches the compact pruned source array.
+ */
+export function remapCitationsInText(
+     text: string,
+     citationMap: Record<number, number>,
+): string {
+     return text.replace(/\[(\d+(?:,\s*\d+)*)\]/g, (_, inner: string) => {
+          const remapped = inner.split(",").map((n) => {
+               const num = parseInt(n.trim());
+               return citationMap[num] !== undefined ? String(citationMap[num]) : n.trim();
+          });
+          return `[${remapped.join(",")}]`;
+     });
+}
+
 // Lazy-loaded search handlers
 let _searchHandlers: Record<string, SearchAgentLike> | null = null;
 

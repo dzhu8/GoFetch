@@ -20,16 +20,9 @@ const DEFAULT_CHAT_MODELS: Model[] = [
      { key: "gpt-5.3-codex",      name: "GPT-5.3-Codex" },
      { key: "gpt-5.2-codex",      name: "GPT-5.2-Codex" },
      { key: "gpt-5.2",            name: "GPT-5.2" },
+     { key: "gpt-5.1",            name: "GPT-5.1" },
      { key: "gpt-5-mini",         name: "GPT-5 mini" },
      { key: "gpt-4.1",            name: "GPT-4.1" },
-     { key: "gpt-4o",             name: "GPT-4o" },
-     { key: "raptor-mini",        name: "Raptor mini" },
-     // ── Google ─────────────────────────────────────────────────────────────
-     { key: "gemini-3.1-pro",     name: "Gemini 3.1 Pro" },
-     { key: "gemini-3-flash",     name: "Gemini 3 Flash" },
-     { key: "gemini-2.5-pro",     name: "Gemini 2.5 Pro" },
-     // ── xAI ────────────────────────────────────────────────────────────────
-     { key: "grok-code-fast-1",   name: "Grok Code Fast 1" },
 ];
 
 export class CopilotProvider extends BaseModelProvider<never, never> {

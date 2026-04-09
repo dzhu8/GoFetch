@@ -726,7 +726,11 @@ When the chat route receives `providerId: "copilot"`:
 
 1. **PDF context** (`attachedPaperIds` present): Calls `preprocessPdfContext()` to fetch paper text from DB, builds the system prompt via `getPdfOrganizerPrompt()`, spawns Copilot with the combined prompt. Sources are emitted immediately.
 
-2. **Web / academic / default**: Calls `preprocessWebSearch()` or `preprocessAcademicSearch()` (without an LLM — falls back to the raw user query for SearXNG) to gather real search results, emits sources for the frontend, formats the results via `formatResultsForPrompt()`, builds a grounded prompt using the appropriate writer template (`getWebWriterPrompt` or `getAcademicWriterPrompt`), and spawns Copilot. If SearXNG is unavailable, emits an error event and stops — without search results there is nothing to ground the response on.
+2. **Web search** (`focusMode === "default"`): Calls `preprocessWebSearch()` (without an LLM — raw query fallback) to gather SearXNG results, emits sources, builds a grounded prompt via `getWebWriterPrompt()`, and spawns Copilot. If SearXNG is unavailable, emits an error and stops.
+
+3. **Academic search** (`focusMode === "academic"`): Same as web but uses `preprocessAcademicSearch()` and `getAcademicWriterPrompt()`. The full response is buffered (not streamed). After Copilot finishes, `extractCitedSources()` prunes to only cited sources and `remapCitationsInText()` renumbers citations to match the compact source list. Sources and the complete response are emitted together so the client never sees uncited sources.
+
+4. **Code / generic** (any other `focusMode`, e.g. `"code"`): Spawns Copilot directly with a lightweight markdown formatting instruction (`COPILOT_MARKDOWN_PROMPT`) and the user's message — no SearXNG dependency. This ensures the response renders well in the markdown-to-jsx chat window regardless of which Copilot-backed model is active.
 
 ### Configuration
 
